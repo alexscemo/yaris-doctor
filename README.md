@@ -87,3 +87,7 @@ git tag v0.2.0 && git push origin v0.2.0
 ```
 
 The signing key lives in the repo secrets `KEYSTORE_BASE64` and `KEYSTORE_PASSWORD`. It must never change: an APK signed with a different key can't update the installed app, and reinstalling deletes the logged history.
+
+## License
+
+[MIT](LICENSE)

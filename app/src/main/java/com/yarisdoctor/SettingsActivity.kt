@@ -43,6 +43,7 @@ class SettingsActivity : Activity() {
                     Prefs.put(context, Prefs.ALERTS, it)
                 },
                 *listOfNotNull(liveUpdatesRow()).toTypedArray(),
+                edgeLightRow(),
                 row("Distance units", if (Prefs.km(context)) "Kilometres" else "Miles") { pickUnits() },
             ))
             addView(section("Home hub"))
@@ -128,6 +129,19 @@ class SettingsActivity : Activity() {
             // Not every manufacturer ships that screen: fall back to the app's notification settings instead of crashing
             val fallback = Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, packageName)
             try { startActivity(promoted) } catch (e: ActivityNotFoundException) { startActivity(fallback) }
+        }
+    }
+
+    /** On only when both the setting and Android's "Display over other apps" permission are on. */
+    private fun edgeLightRow(): View {
+        val allowed = Settings.canDrawOverlays(this)
+        val sub = if (Prefs.edge(this) && !allowed) "Off: tap and allow \"Display over other apps\""
+            else "Coral glow around the screen during a regen, also over Google Maps"
+        return toggle("Edge light", sub, Prefs.edge(this) && allowed) { on ->
+            Prefs.put(this, Prefs.EDGE, on)
+            if (on && !Settings.canDrawOverlays(this)) {
+                startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, android.net.Uri.parse("package:$packageName")))
+            }
         }
     }
 

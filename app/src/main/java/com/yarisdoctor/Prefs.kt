@@ -7,6 +7,7 @@ object Prefs {
     const val DONGLE_NAME = "dongle_name"
     const val LOGGING = "logging"
     const val ALERTS = "alerts"
+    const val EDGE = "edge"
     const val KM = "km"
     const val SERVER = "server"
     const val WIFI = "wifi"
@@ -30,7 +31,8 @@ object Prefs {
     fun dongleName(c: Context) = sp(c).getString(DONGLE_NAME, null)
     fun logging(c: Context) = sp(c).getBoolean(LOGGING, true)
     fun alerts(c: Context) = sp(c).getBoolean(ALERTS, true)
-    fun km(c: Context) = sp(c).getBoolean(KM, false)
+    fun edge(c: Context) = sp(c).getBoolean(EDGE, false) // off by default: it needs "Display over other apps"
+    fun km(c: Context) =sp(c).getBoolean(KM, false)
     // Both empty by default: nothing is uploaded until the user points the app at their own hub and Wi-Fi
     fun server(c: Context) = sp(c).getString(SERVER, "")!!
     fun wifi(c: Context) = sp(c).getString(WIFI, "")!!

@@ -45,6 +45,7 @@ class DpfService : Service() {
         getSystemService(PowerManager::class.java)
             .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "yaris:log").apply { setReferenceCounted(false) }
     }
+    private val edge by lazy { EdgeLight(this) }
     private val idle = Semaphore(0)
     private val probe = AlarmManager.OnAlarmListener { wake.acquire(30_000); idle.release() }
     private val worker = Thread(::run, "dpf")
@@ -168,11 +169,13 @@ class DpfService : Service() {
         rec.record(System.currentTimeMillis(), soot, temp, regen, odoM)
         if (rec.inRegen && Prefs.alerts(this)) nm.notify(ID_REGEN, regenNotification(rec.regenStart, rec.regenSootStart, soot, temp))
         else nm.cancel(ID_REGEN)
+        edge.show(rec.inRegen && Prefs.edge(this))
     }
 
     private fun finish(rec: Recorder) {
         rec.close(System.currentTimeMillis(), odoM)
         nm.cancel(ID_REGEN)
+        edge.show(false)
     }
 
     private fun startGps() {

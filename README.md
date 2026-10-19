@@ -37,7 +37,7 @@ From then on it starts at boot. There is nothing to open before a drive.
 
 ## What you get
 
-- **Regen alert:** a high-priority, ongoing notification while the DPF regenerates. It shows a running timer, DPF temperature and soot load, updated every second.
+- **Regen alert:** a high-priority, ongoing notification while the DPF regenerates. It shows a running timer, DPF temperature and soot load, updated every second. On Android 16 it is a Live Update with a burn-off progress bar: Samsung (One UI 8) shows it in the Now Bar, other phones as a status-bar chip. Older Android versions get the normal notification.
 - **Regen history:** for every regen it records the start time, how long it took, soot before and after, and the miles driven since the previous regen ended.
 - **Full log:** soot, temperature and regen state every 5 s while driving (1 s during a regen), stored in a SQLite database on the phone.
 - **App screen:** current soot and miles since the last regen, a 14-day soot chart, a miles-between-regens chart (tap or drag to read values), and the regen history.

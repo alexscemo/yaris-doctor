@@ -4,8 +4,13 @@ import android.Manifest.permission.BLUETOOTH_CONNECT
 import android.app.Activity
 import android.app.AlertDialog
 import android.bluetooth.BluetoothManager
+import android.app.NotificationManager
+import android.content.ActivityNotFoundException
+import android.content.Intent
 import android.content.pm.PackageManager.PERMISSION_GRANTED
+import android.os.Build
 import android.os.Bundle
+import android.provider.Settings
 import android.view.Gravity
 import android.view.View
 import android.widget.EditText
@@ -21,7 +26,6 @@ class SettingsActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        render()
     }
 
     /** Rebuilt after every change so subtitles always show the current value. */
@@ -38,6 +42,7 @@ class SettingsActivity : Activity() {
                 toggle("Regen notification", "Show a live notification while the DPF regenerates", Prefs.alerts(context)) {
                     Prefs.put(context, Prefs.ALERTS, it)
                 },
+                *listOfNotNull(liveUpdatesRow()).toTypedArray(),
                 row("Distance units", if (Prefs.km(context)) "Kilometres" else "Miles") { pickUnits() },
             ))
             addView(section("Home hub"))
@@ -107,6 +112,27 @@ class SettingsActivity : Activity() {
             }
             .setNegativeButton("Cancel", null)
             .show()
+    }
+
+    /**
+     * Android 16+ on any brand: whether the regen notification may be promoted to a Live Update. Samsung (One UI 8)
+     * shows those in the Now Bar; Pixels and others as a status-bar chip.
+     */
+    private fun liveUpdatesRow(): View? {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.BAKLAVA) return null
+        val allowed = getSystemService(NotificationManager::class.java).canPostPromotedNotifications()
+        val where = if (Build.MANUFACTURER.equals("samsung", ignoreCase = true)) "in the Now Bar" else "as a status bar chip"
+        return row("Live Updates", if (allowed) "Regens show live $where" else "Off: tap to allow regens to show live $where") {
+            val promoted = Intent(Settings.ACTION_MANAGE_APP_PROMOTED_NOTIFICATIONS).putExtra(Settings.EXTRA_APP_PACKAGE, packageName)
+            // Not every manufacturer ships that screen: fall back to the app's notification settings instead of crashing
+            val fallback = Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, packageName)
+            try { startActivity(promoted) } catch (e: ActivityNotFoundException) { startActivity(fallback) }
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        render() // the Live Updates row reflects a change made in system settings
     }
 
     private fun syncSummary(): String {

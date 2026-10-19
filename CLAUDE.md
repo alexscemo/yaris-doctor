@@ -36,6 +36,11 @@ The app has never been compiled. Treat the first build as a check of everything,
 - **Distance / "odometer":** the car's odometer PID is unknown, so distance comes from GPS fixes, counted only while a session is connected. Fixes with accuracy over 25 m or speed under 1 m/s are dropped. `odoM` is written only by the GPS callback on the main thread and read by the worker (`@Volatile`). It persists as `sample.odo_m`, and the service restores it at start from `MAX(odo_m)`, so there is no separate prefs store.
 - **`Db`** is a per-process instance (`Db.get`), shared by the service and the activity. Tables `sample` and `regen`. Distance between regens is computed at read time in `regens()` in metres (`gapM`); the UI converts to miles or km per `Prefs.km`. It is this regen's `odo_start` minus the previous regen's `odo_end`. Schema version is 2 (v2 added the `sample(t)` index the charts' range queries rely on). Every schema change needs a step in `onUpgrade`, or it will wipe users' history.
 
+## Regen notification = Android 16 Live Update (Now Bar on Samsung, status chip elsewhere)
+
+- On API 36+, `DpfService.liveUpdate()` adds `setRequestPromotedOngoing(true)`, a coral `ProgressStyle` (share of the starting soot burned off, from `burnPercent()`) and `setShortCriticalText("<soot>%")` for the chip. One UI 8 shows promoted notifications in the Now Bar. Keep the rules or promotion is silently dropped: ongoing, a content title, a non-MIN channel, never `setColorized(true)`, no custom views. The `POST_PROMOTED_NOTIFICATIONS` permission is in the manifest. Settings shows `canPostPromotedNotifications()` and links to the system toggle, falling back to the app's notification settings when a manufacturer lacks that screen. Nothing here is Samsung-only: no Samsung SDK, just the Android 16 API, and the brand is only used for wording.
+- That needs compileSdk 36 (AGP 8.10.1). targetSdk is still 35 on purpose: raising it changes Android 16 behaviour (edge-to-edge, predictive back) and needs on-phone checks.
+
 ## Home hub sync
 
 - The server is a separate public repo, [yaris-doctor-hub](https://github.com/alexscemo/yaris-doctor-hub) (image `ghcr.io/alexscemo/yaris-doctor-hub`). Its `/api/sync` payload shape must stay in step with `Sync.kt` + `Db.samplesAfter()` / `Db.regenRows()`.

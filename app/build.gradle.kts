@@ -5,7 +5,7 @@ plugins {
 
 android {
     namespace = "com.yarisdoctor"
-    compileSdk = 35
+    compileSdk = 36 // Android 16 Live Update APIs; targetSdk stays 35
     defaultConfig {
         applicationId = "com.yarisdoctor"
         minSdk = 31

@@ -18,10 +18,12 @@ import android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
 import android.location.Location
 import android.location.LocationListener
 import android.location.LocationManager
+import android.os.Build
 import android.os.Looper
 import android.os.PowerManager
 import android.os.SystemClock
 import android.util.Log
+import android.annotation.TargetApi
 import java.util.UUID
 import java.util.concurrent.Semaphore
 
@@ -163,7 +165,7 @@ class DpfService : Service() {
 
     private fun publish(rec: Recorder, soot: Int?, temp: Int?, regen: Boolean?) {
         rec.record(System.currentTimeMillis(), soot, temp, regen, odoM)
-        if (rec.inRegen && Prefs.alerts(this)) nm.notify(ID_REGEN, regenNotification(rec.regenStart, soot, temp))
+        if (rec.inRegen && Prefs.alerts(this)) nm.notify(ID_REGEN, regenNotification(rec.regenStart, rec.regenSootStart, soot, temp))
         else nm.cancel(ID_REGEN)
     }
 
@@ -196,7 +198,7 @@ class DpfService : Service() {
             .setOngoing(true)
             .build()
 
-    private fun regenNotification(start: Long, soot: Int?, temp: Int?): Notification =
+    private fun regenNotification(start: Long, sootStart: Int?, soot: Int?, temp: Int?): Notification =
         Notification.Builder(this, CH_REGEN)
             .setSmallIcon(R.drawable.ic_stat_gauge)
             .setColor(getColor(R.color.primary))
@@ -210,7 +212,24 @@ class DpfService : Service() {
             .setCategory(Notification.CATEGORY_STATUS)
             .setVisibility(Notification.VISIBILITY_PUBLIC)
             .setContentIntent(openApp())
+            .apply { if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.BAKLAVA) liveUpdate(this, sootStart, soot) }
             .build()
+
+    /**
+     * Android 16 Live Update (standard Android, any brand): Samsung's One UI 8 shows it in the Now Bar, Pixels and
+     * others as a status-bar chip; below Android 16 this is skipped and the plain notification is unchanged. Rules the
+     * system checks: ongoing, has a title, non-MIN channel, not colorized, no custom views (developer.android.com/
+     * develop/ui/views/notifications/live-update). The user can still turn Live Updates off for the app.
+     */
+    @TargetApi(Build.VERSION_CODES.BAKLAVA)
+    private fun liveUpdate(b: Notification.Builder, sootStart: Int?, soot: Int?) {
+        val burned = burnPercent(sootStart, soot)
+        b.setRequestPromotedOngoing(true)
+            .setStyle(Notification.ProgressStyle()
+                .setProgressSegments(listOf(Notification.ProgressStyle.Segment(100).setColor(getColor(R.color.primary))))
+                .apply { if (burned == null) setProgressIndeterminate(true) else setProgress(burned) })
+        if (soot != null) b.setShortCriticalText("$soot%") // chip: icon + up to ~7 chars
+    }
 
     companion object {
         private val SPP: UUID = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB")

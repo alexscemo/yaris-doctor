@@ -180,6 +180,7 @@ class SettingsActivity : Activity() {
         val sw = Switch(this).apply {
             isChecked = on
             contentDescription = title
+            ui.styleSwitch(this)
             setPadding(ui.px(16), 0, 0, 0)
             setOnCheckedChangeListener { _, checked -> onChange(checked) }
         }

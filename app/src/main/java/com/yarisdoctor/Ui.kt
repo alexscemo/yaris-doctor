@@ -1,6 +1,7 @@
 package com.yarisdoctor
 
 import android.app.Activity
+import android.content.res.ColorStateList
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.util.TypedValue
@@ -11,6 +12,7 @@ import android.view.WindowInsets
 import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
+import android.widget.Switch
 import android.widget.TextView
 
 /**
@@ -101,6 +103,13 @@ class Ui(private val a: Activity) {
         addView(text(Type.DISPLAY_SM, R.color.ink, title).apply { setPadding(px(if (start == null) 0 else 4), 0, 0, 0) },
             LinearLayout.LayoutParams(0, -2, 1f))
         if (end != null) addView(end)
+    }
+
+    /** Opaque tints: the theme's default track is the accent at ~30% alpha, which vanishes on cream. */
+    fun styleSwitch(sw: Switch) {
+        val states = arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf())
+        sw.thumbTintList = ColorStateList(states, intArrayOf(color(R.color.on_primary), color(R.color.on_primary)))
+        sw.trackTintList = ColorStateList(states, intArrayOf(color(R.color.primary), color(R.color.muted_soft)))
     }
 
     fun divider(colorId: Int = R.color.hairline_soft) = View(a).apply {

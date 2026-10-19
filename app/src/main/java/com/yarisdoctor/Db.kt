@@ -6,12 +6,13 @@ import android.database.Cursor
 import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
 
-class Db private constructor(ctx: Context) : SQLiteOpenHelper(ctx, "yaris.db", null, 2) {
+/** [name] null = in-memory database (Debug mode), gone when closed. */
+class Db private constructor(ctx: Context, name: String?) : SQLiteOpenHelper(ctx, name, null, 2) {
 
     data class Sample(val t: Long, val soot: Int?, val temp: Int?, val regen: Boolean)
 
-    /** [miles]: driven between the previous regen's end and this one's start; null for the first logged regen. */
-    data class Regen(val start: Long, val end: Long?, val miles: Double?, val sootStart: Int?, val sootEnd: Int?)
+    /** [gapM]: metres driven between the previous regen's end and this one's start; null for the first logged regen. */
+    data class Regen(val start: Long, val end: Long?, val gapM: Double?, val sootStart: Int?, val sootEnd: Int?)
 
     override fun onCreate(db: SQLiteDatabase) {
         // odo_m: GPS distance accumulated by this app (metres), our stand-in for the odometer
@@ -56,8 +57,8 @@ class Db private constructor(ctx: Context) : SQLiteOpenHelper(ctx, "yaris.db", n
         var prevEnd: Double? = null
         readableDatabase.rawQuery("SELECT start_t, end_t, odo_start, odo_end, soot_start, soot_end FROM regen ORDER BY start_t", null).use {
             while (it.moveToNext()) {
-                val miles = prevEnd?.let { p -> (it.getDouble(2) - p) / METRES_PER_MILE }
-                rows += Regen(it.getLong(0), if (it.isNull(1)) null else it.getLong(1), miles, it.intOrNull(4), it.intOrNull(5))
+                val gapM = prevEnd?.let { p -> it.getDouble(2) - p }
+                rows += Regen(it.getLong(0), if (it.isNull(1)) null else it.getLong(1), gapM, it.intOrNull(4), it.intOrNull(5))
                 if (!it.isNull(3)) prevEnd = it.getDouble(3)
             }
         }
@@ -75,9 +76,9 @@ class Db private constructor(ctx: Context) : SQLiteOpenHelper(ctx, "yaris.db", n
             out
         }
 
-    fun milesSinceRegen(): Double? =
+    fun metresSinceRegen(): Double? =
         readableDatabase.rawQuery("SELECT odo_end FROM regen WHERE odo_end IS NOT NULL ORDER BY start_t DESC LIMIT 1", null).use {
-            if (it.moveToFirst()) (odometer() - it.getDouble(0)) / METRES_PER_MILE else null
+            if (it.moveToFirst()) odometer() - it.getDouble(0) else null
         }
 
     private fun Cursor.intOrNull(i: Int): Int? = if (isNull(i)) null else getInt(i)
@@ -85,7 +86,19 @@ class Db private constructor(ctx: Context) : SQLiteOpenHelper(ctx, "yaris.db", n
     companion object {
         const val METRES_PER_MILE = 1609.344
         private const val SAMPLE_T_INDEX = "CREATE INDEX IF NOT EXISTS sample_t ON sample(t)"
-        private var instance: Db? = null
-        @Synchronized fun get(ctx: Context) = instance ?: Db(ctx.applicationContext).also { instance = it }
+        private var real: Db? = null
+        private var debug: Db? = null
+
+        /** In Debug mode: a fresh in-memory database seeded with fake history; yaris.db is never touched. */
+        @Synchronized fun get(ctx: Context): Db {
+            val c = ctx.applicationContext
+            if (!Prefs.debug) return real ?: Db(c, "yaris.db").also { real = it }
+            return debug ?: Db(c, null).also { debug = it; Sim.seed(it, System.currentTimeMillis()) }
+        }
+
+        @Synchronized fun dropDebug() {
+            debug?.close()
+            debug = null
+        }
     }
 }

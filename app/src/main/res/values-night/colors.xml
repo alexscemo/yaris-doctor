@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Dark mode: canvas becomes surface-dark, cards step up to surface-dark-elevated, text uses on-dark. -->
+<resources>
+    <color name="canvas">#181715</color>
+    <color name="surface_card">#252320</color>
+    <color name="hairline">#252320</color>
+    <color name="hairline_soft">#1f1e1b</color>
+    <color name="ink">#faf9f5</color>
+    <color name="body">#faf9f5</color>
+    <color name="muted">#a09d96</color>
+    <color name="muted_soft">#8e8b82</color>
+    <color name="instrument">#252320</color>
+    <color name="chart_grid">#1f1e1b</color>
+</resources>

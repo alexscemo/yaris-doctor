@@ -1,6 +1,7 @@
 package com.yarisdoctor
 
 import android.Manifest.permission.ACCESS_FINE_LOCATION
+import android.Manifest.permission.BLUETOOTH_CONNECT
 import android.app.AlarmManager
 import android.app.Notification
 import android.app.NotificationChannel
@@ -9,6 +10,7 @@ import android.app.PendingIntent
 import android.app.Service
 import android.bluetooth.BluetoothManager
 import android.bluetooth.BluetoothSocket
+import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager.PERMISSION_GRANTED
 import android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE
@@ -30,7 +32,7 @@ import java.util.concurrent.Semaphore
 class DpfService : Service() {
 
     @Volatile private var running = true
-    @Volatile private var odoM = 0.0 // only written on the main thread (GPS callback)
+    @Volatile private var odoM = 0.0 // written by the GPS callback (main thread), or by simulate() when GPS is off
     @Volatile private var socket: BluetoothSocket? = null
     private var lastFix: Location? = null
     private val db by lazy { Db.get(this) }
@@ -100,9 +102,10 @@ class DpfService : Service() {
     }
 
     private fun session() {
+        if (Prefs.debug) return simulate()
         val adapter = getSystemService(BluetoothManager::class.java).adapter
         if (adapter == null || !adapter.isEnabled) return
-        val s = adapter.getRemoteDevice(DONGLE_MAC).createRfcommSocketToServiceRecord(SPP)
+        val s = adapter.getRemoteDevice(Prefs.dongle(this)).createRfcommSocketToServiceRecord(SPP)
         socket = s
         s.use {
             s.connect()
@@ -111,8 +114,7 @@ class DpfService : Service() {
             elm.init()
             startGps()
             nm.notify(ID_SERVICE, status("Logging"))
-            var regenId = -1L
-            var regenStart = 0L
+            val rec = Recorder(db)
             var fails = 0
             var seen = false
             try {
@@ -128,27 +130,42 @@ class DpfService : Service() {
                     }
                     fails = 0
                     seen = true
-                    val now = System.currentTimeMillis()
-                    val isRegen = regen ?: (regenId >= 0) // keep last state on a failed read, like DPFViewer
-                    db.sample(now, soot, temp, isRegen, odoM)
-                    if (isRegen && regenId < 0) {
-                        regenId = db.regenStart(now, odoM, soot)
-                        regenStart = now
-                    } else if (!isRegen && regenId >= 0) {
-                        db.regenEnd(regenId, now, odoM, soot)
-                        regenId = -1
-                        nm.cancel(ID_REGEN)
-                    }
-                    if (isRegen) nm.notify(ID_REGEN, regenNotification(regenStart, soot, temp))
-                    Thread.sleep(if (isRegen) 1000 else 5000)
+                    publish(rec, soot, temp, regen)
+                    Thread.sleep(if (rec.inRegen) 1000 else 5000)
                 }
             } finally {
-                // Engine off or link lost mid-regen: close the record at the last moment we saw it
-                if (regenId >= 0) db.regenEnd(regenId, System.currentTimeMillis(), odoM, null)
-                nm.cancel(ID_REGEN)
+                finish(rec)
                 stopGps()
             }
         }
+    }
+
+    /** Debug mode: random readings into the in-memory Db (see Db.get) until the service is stopped. */
+    private fun simulate() {
+        nm.notify(ID_SERVICE, status("Debug mode: simulated dongle"))
+        val sim = Sim.live()
+        val rec = Recorder(db)
+        try {
+            while (running) {
+                val r = sim.next()
+                odoM += sim.metresPerTick
+                publish(rec, r.soot, r.temp, r.regen)
+                Thread.sleep(1000)
+            }
+        } finally {
+            finish(rec)
+        }
+    }
+
+    private fun publish(rec: Recorder, soot: Int?, temp: Int?, regen: Boolean?) {
+        rec.record(System.currentTimeMillis(), soot, temp, regen, odoM)
+        if (rec.inRegen && Prefs.alerts(this)) nm.notify(ID_REGEN, regenNotification(rec.regenStart, soot, temp))
+        else nm.cancel(ID_REGEN)
+    }
+
+    private fun finish(rec: Recorder) {
+        rec.close(System.currentTimeMillis(), odoM)
+        nm.cancel(ID_REGEN)
     }
 
     private fun startGps() {
@@ -167,7 +184,8 @@ class DpfService : Service() {
 
     private fun status(text: String): Notification =
         Notification.Builder(this, CH_SERVICE)
-            .setSmallIcon(android.R.drawable.stat_sys_data_bluetooth)
+            .setSmallIcon(R.drawable.ic_stat_gauge)
+            .setColor(getColor(R.color.primary))
             .setContentTitle("Yaris Doctor")
             .setContentText(text)
             .setContentIntent(openApp())
@@ -176,8 +194,9 @@ class DpfService : Service() {
 
     private fun regenNotification(start: Long, soot: Int?, temp: Int?): Notification =
         Notification.Builder(this, CH_REGEN)
-            .setSmallIcon(android.R.drawable.stat_sys_warning)
-            .setContentTitle("DPF regenerating - keep driving")
+            .setSmallIcon(R.drawable.ic_stat_gauge)
+            .setColor(getColor(R.color.primary))
+            .setContentTitle("DPF regenerating · keep driving")
             .setContentText("DPF ${temp ?: "?"}°C · soot ${soot ?: "?"}%")
             .setWhen(start)
             .setUsesChronometer(true)
@@ -190,7 +209,6 @@ class DpfService : Service() {
             .build()
 
     companion object {
-        const val DONGLE_MAC = "66:1E:32:7A:2E:72" // same dongle as DPFViewer's address[]
         private val SPP: UUID = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB")
         private const val PROBE_MS = 60_000L
         private const val CH_SERVICE = "service"
@@ -198,5 +216,18 @@ class DpfService : Service() {
         private const val ID_SERVICE = 1
         private const val ID_REGEN = 2
         private const val TAG = "DpfService"
+
+        /** Starts logging if it is enabled and allowed; a no-op when already running. */
+        fun start(c: Context) {
+            if (Prefs.logging(c) && c.checkSelfPermission(BLUETOOTH_CONNECT) == PERMISSION_GRANTED) {
+                c.startForegroundService(Intent(c, DpfService::class.java))
+            }
+        }
+
+        /** Applies changed settings (dongle, logging, Debug mode): a new instance re-reads them. */
+        fun restart(c: Context) {
+            c.stopService(Intent(c, DpfService::class.java))
+            start(c)
+        }
     }
 }

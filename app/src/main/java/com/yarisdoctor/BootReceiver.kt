@@ -5,7 +5,5 @@ import android.content.Context
 import android.content.Intent
 
 class BootReceiver : BroadcastReceiver() {
-    override fun onReceive(context: Context, intent: Intent) {
-        context.startForegroundService(Intent(context, DpfService::class.java))
-    }
+    override fun onReceive(context: Context, intent: Intent) = DpfService.start(context)
 }

@@ -25,12 +25,13 @@ Requires **Android 12 or newer**.
 ## Setup
 
 1. **Pair the dongle** in Android's Bluetooth settings with the ignition on. The PIN is usually `1234` or `0000`.
-2. **Set your dongle's address.** The app connects to one hardcoded MAC address, `DONGLE_MAC` in [`DpfService.kt`](app/src/main/java/com/yarisdoctor/DpfService.kt). The released APK uses the author's dongle, so for a different dongle change it and build your own (see [Building](#building)).
-3. **Open the app once and allow everything it asks for:**
+2. **Open the app and allow everything it asks for:**
    - **Nearby devices (Bluetooth)**: needed to talk to the dongle.
    - **Location → "Allow all the time"**: GPS is how distance between regens is measured. Without it, logging still works but miles stay at 0.
    - **Notifications**: for the regen alert.
    - **Unrestricted battery use**: otherwise Android kills the background service.
+
+3. **Pick your dongle:** tap the settings icon (top right) → **Bluetooth dongle**, and choose it from your paired devices.
 
 From then on it starts at boot. There is nothing to open before a drive.
 
@@ -39,7 +40,9 @@ From then on it starts at boot. There is nothing to open before a drive.
 - **Regen alert:** a high-priority, ongoing notification while the DPF regenerates. It shows a running timer, DPF temperature and soot load, updated every second.
 - **Regen history:** for every regen it records the start time, how long it took, soot before and after, and the miles driven since the previous regen ended.
 - **Full log:** soot, temperature and regen state every 5 s while driving (1 s during a regen), stored in a SQLite database on the phone.
-- **App screen:** the last reading, miles since the last regen, and the regen history, newest first.
+- **App screen:** current soot and miles since the last regen, a 14-day soot chart, a miles-between-regens chart (tap or drag to read values), and the regen history.
+- **Settings** (icon, top right): dongle, background logging on/off, regen notification on/off, miles or kilometres.
+- **Debug mode** (Settings → Developer): a simulated dongle feeds random but plausible data, with 14 days of fake history and a regen every few minutes, so you can try the screen and the notification without the car. Nothing is saved to your real log. Debug mode turns itself off when the phone restarts or Android closes the app.
 
 A small, low-priority notification ("Waiting for dongle" / "Logging") is always present. Android requires one for any app that runs in the background continuously.
 

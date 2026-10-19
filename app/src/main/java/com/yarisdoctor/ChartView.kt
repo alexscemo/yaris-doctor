@@ -6,6 +6,7 @@ import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.RectF
+import android.graphics.Typeface
 import android.view.MotionEvent
 import android.view.View
 import kotlin.math.abs
@@ -14,25 +15,21 @@ import kotlin.math.log10
 import kotlin.math.min
 import kotlin.math.pow
 
-/** Light/dark tokens from the dataviz reference palette (series = categorical slot 1, blue). */
-class Palette(val surface: Int, val text: Int, val secondary: Int, val muted: Int, val grid: Int, val baseline: Int, val series: Int) {
-    companion object {
-        val LIGHT = Palette(0xFFFCFCFB.toInt(), 0xFF0B0B0B.toInt(), 0xFF52514E.toInt(), 0xFF898781.toInt(), 0xFFE1E0D9.toInt(), 0xFFC3C2B7.toInt(), 0xFF2A78D6.toInt())
-        val DARK = Palette(0xFF1A1A19.toInt(), 0xFFF0EFEC.toInt(), 0xFFC3C2B7.toInt(), 0xFF898781.toInt(), 0xFF2C2C2A.toInt(), 0xFF383835.toInt(), 0xFF3987E5.toInt())
-    }
-}
-
 /**
  * Single-series chart: a 2dp line on a time axis, or columns by index. The top row reads out the
  * latest point, or the touched one (tap/drag horizontally to inspect).
  */
-class ChartView(ctx: Context, private val columns: Boolean, private val p: Palette) : View(ctx) {
+class ChartView(ctx: Context, private val columns: Boolean, private val p: Colors) : View(ctx) {
+
+    /** Resolved colour tokens; see Ui.chartColors(). [surface] is the card the chart sits on. */
+    class Colors(val surface: Int, val series: Int, val marker: Int, val grid: Int, val baseline: Int, val axisText: Int, val readout: Int)
 
     private var xs = LongArray(0)
     private var ys = FloatArray(0)
     private var readoutOf: (Int) -> String = { "" }
     private var axisLabel: (Long) -> String = { "" }
     private var sel = -1
+    private var selX: Long? = null // touched point's x, so it survives refreshes that shift indices
     private var downX = 0f
     private var downY = 0f
     private var yMax = 1f
@@ -45,8 +42,11 @@ class ChartView(ctx: Context, private val columns: Boolean, private val p: Palet
     private val ring = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = p.surface }
     private val grid = Paint().apply { strokeWidth = 1f; color = p.grid }
     private val axis = Paint().apply { strokeWidth = 1f; color = p.baseline }
-    private val muted = Paint(Paint.ANTI_ALIAS_FLAG).apply { textSize = 11 * d; color = p.muted }
-    private val readout = Paint(Paint.ANTI_ALIAS_FLAG).apply { textSize = 13 * d; color = p.text }
+    private val dotPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = p.marker }
+    private val muted = Paint(Paint.ANTI_ALIAS_FLAG).apply { textSize = 11 * d; color = p.axisText }
+    private val readout = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        textSize = 13 * d; color = p.readout; typeface = Typeface.create(Typeface.SANS_SERIF, 500, false)
+    }
     private val path = Path()
     private val rect = RectF()
 
@@ -58,7 +58,7 @@ class ChartView(ctx: Context, private val columns: Boolean, private val p: Palet
 
     fun set(xs: LongArray, ys: FloatArray, readoutOf: (Int) -> String, axisLabel: (Long) -> String) {
         this.xs = xs; this.ys = ys; this.readoutOf = readoutOf; this.axisLabel = axisLabel
-        sel = -1
+        sel = selX?.let { xs.indexOf(it) } ?: -1
         yMax = niceMax(ys.maxOrNull() ?: 0f)
         contentDescription = if (ys.isEmpty()) "No data yet" else "Latest: " + readoutOf(ys.lastIndex)
         invalidate()
@@ -93,7 +93,7 @@ class ChartView(ctx: Context, private val columns: Boolean, private val p: Palet
         if (sel >= 0) c.drawLine(xOf(i), top, xOf(i), bottom, axis)
         // 8dp marker with a 2dp surface ring
         c.drawCircle(xOf(i), yOf(ys[i]), 6 * d, ring)
-        c.drawCircle(xOf(i), yOf(ys[i]), 4 * d, fill)
+        c.drawCircle(xOf(i), yOf(ys[i]), 4 * d, dotPaint)
     }
 
     private fun drawColumns(c: Canvas) {
@@ -136,6 +136,7 @@ class ChartView(ctx: Context, private val columns: Boolean, private val p: Palet
 
     private fun select(x: Float) {
         sel = ys.indices.minBy { abs(xOf(it) - x) }
+        selX = xs[sel]
         invalidate()
     }
 

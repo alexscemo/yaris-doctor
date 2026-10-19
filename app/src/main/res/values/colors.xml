@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- DESIGN.md tokens (light). values-night/colors.xml re-maps the same names for dark mode. -->
+<resources>
+    <color name="primary">#cc785c</color>
+    <color name="on_primary">#ffffff</color>
+    <color name="canvas">#faf9f5</color>
+    <color name="surface_card">#efe9de</color>
+    <color name="hairline">#e6dfd8</color>
+    <color name="hairline_soft">#ebe6df</color>
+    <color name="ink">#141413</color>
+    <color name="body">#3d3d3a</color>
+    <color name="muted">#6c6a64</color>
+    <color name="muted_soft">#8e8b82</color>
+    <!-- Dark instrument card (product-mockup-card-dark) -->
+    <color name="instrument">#181715</color>
+    <color name="on_instrument">#faf9f5</color>
+    <color name="on_instrument_soft">#a09d96</color>
+    <color name="accent_teal">#5db8a6</color>
+    <!-- Chart gridlines sit on surface_card -->
+    <color name="chart_grid">#e6dfd8</color>
+</resources>

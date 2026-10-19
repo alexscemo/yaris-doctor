@@ -1,14 +1,15 @@
 package com.yarisdoctor
 
 import android.content.Context
+import android.graphics.BlurMaskFilter
 import android.graphics.Canvas
-import android.graphics.LinearGradient
 import android.graphics.Paint
+import android.graphics.Path
 import android.graphics.PixelFormat
-import android.graphics.Shader
 import android.os.Handler
 import android.os.Looper
 import android.provider.Settings
+import android.view.RoundedCorner
 import android.view.View
 import android.view.WindowManager
 import android.view.WindowManager.LayoutParams
@@ -45,28 +46,28 @@ class EdgeLight(private val c: Context) {
         layoutInDisplayCutoutMode = LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
     }
 
-    /** Four edge gradients, accent to transparent. */
+    /** Blurred accent stroke along the screen outline, following the display's own rounded corners. */
     private class Glow(c: Context) : View(c) {
-        private val color = c.getColor(R.color.primary)
         private val depth = 14f * resources.displayMetrics.density
-        private val paints = List(4) { Paint() }
+        private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = c.getColor(R.color.primary)
+            style = Paint.Style.STROKE
+            strokeWidth = depth * 2 // half of it lies off-screen: a 14dp rim that the blur fades inward
+            maskFilter = BlurMaskFilter(depth / 2, BlurMaskFilter.Blur.NORMAL)
+        }
+        private val outline = Path()
 
         override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
-            val clear = color and 0x00FFFFFF
-            fun shader(x0: Float, y0: Float, x1: Float, y1: Float) = LinearGradient(x0, y0, x1, y1, color, clear, Shader.TileMode.CLAMP)
-            paints[0].shader = shader(0f, 0f, 0f, depth)                    // top
-            paints[1].shader = shader(0f, h.toFloat(), 0f, h - depth)       // bottom
-            paints[2].shader = shader(0f, 0f, depth, 0f)                    // left
-            paints[3].shader = shader(w.toFloat(), 0f, w - depth, 0f)       // right
+            // Corner radii the display reports (Android 12+), per corner and for the current rotation; 0 = square
+            fun r(pos: Int) = (display?.getRoundedCorner(pos)?.radius ?: 0).toFloat()
+            val tl = r(RoundedCorner.POSITION_TOP_LEFT)
+            val tr = r(RoundedCorner.POSITION_TOP_RIGHT)
+            val br = r(RoundedCorner.POSITION_BOTTOM_RIGHT)
+            val bl = r(RoundedCorner.POSITION_BOTTOM_LEFT)
+            outline.reset()
+            outline.addRoundRect(0f, 0f, w.toFloat(), h.toFloat(), floatArrayOf(tl, tl, tr, tr, br, br, bl, bl), Path.Direction.CW)
         }
 
-        override fun onDraw(canvas: Canvas) {
-            val w = width.toFloat()
-            val h = height.toFloat()
-            canvas.drawRect(0f, 0f, w, depth, paints[0])
-            canvas.drawRect(0f, h - depth, w, h, paints[1])
-            canvas.drawRect(0f, 0f, depth, h, paints[2])
-            canvas.drawRect(w - depth, 0f, w, h, paints[3])
-        }
+        override fun onDraw(canvas: Canvas) = canvas.drawPath(outline, paint)
     }
 }

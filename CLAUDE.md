@@ -43,7 +43,7 @@ The app has never been compiled. Treat the first build as a check of everything,
 
 ## Edge light
 
-`EdgeLight` adds a full-screen `TYPE_APPLICATION_OVERLAY` view (four coral edge gradients) while a regen runs and `Prefs.edge` is on. It needs `SYSTEM_ALERT_WINDOW`, which is opt-in from Settings. The window is `FLAG_NOT_TOUCHABLE` with `alpha = 0.8f`: Android 12+ blocks touches through untrusted overlays above 0.8 opacity, so raising it would freeze Google Maps. Window calls are posted to the main thread because `publish()` runs on the worker.
+`EdgeLight` adds a full-screen `TYPE_APPLICATION_OVERLAY` view (a blurred coral stroke along the screen outline, its corners taken from `Display.getRoundedCorner()`, square where the display reports none) while a regen runs and `Prefs.edge` is on. It needs `SYSTEM_ALERT_WINDOW`, which is opt-in from Settings. The window is `FLAG_NOT_TOUCHABLE` with `alpha = 0.8f`: Android 12+ blocks touches through untrusted overlays above 0.8 opacity, so raising it would freeze Google Maps. Window calls are posted to the main thread because `publish()` runs on the worker.
 
 ## Home hub sync
 

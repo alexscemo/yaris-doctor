@@ -1,0 +1,46 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+
+permissions:
+  contents: write # gh release create
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      VERSION_CODE: ${{ github.run_number }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      # No committed wrapper jar, so pin Gradle here (matches gradle-wrapper.properties)
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: 8.11.1
+
+      - run: gradle test assembleDebug
+      - uses: actions/upload-artifact@v4
+        with:
+          name: debug-apk
+          path: app/build/outputs/apk/debug/*.apk
+
+      - name: Signed release for Obtainium
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          export KEYSTORE_PATH="$RUNNER_TEMP/release.p12"
+          export VERSION_NAME="${GITHUB_REF_NAME#v}"
+          echo "$KEYSTORE_BASE64" | base64 -d > "$KEYSTORE_PATH"
+          gradle assembleRelease
+          cp app/build/outputs/apk/release/app-release.apk "yaris-doctor-$GITHUB_REF_NAME.apk"
+          gh release create "$GITHUB_REF_NAME" "yaris-doctor-$GITHUB_REF_NAME.apk" --generate-notes

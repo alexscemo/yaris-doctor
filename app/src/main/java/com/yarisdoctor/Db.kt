@@ -56,6 +56,20 @@ class Db private constructor(ctx: Context, name: String?) : SQLiteOpenHelper(ctx
         }, "id = ?", arrayOf(id.toString()))
     }
 
+    /**
+     * Regens left open because the process was killed mid-burn (no finally ran, so Recorder never closed them): ends each
+     * at its last regen reading before the next regen, like the hub's close_if_stale. Call before a new session starts.
+     */
+    fun closeOrphanRegens() = writableDatabase.execSQL(
+        """
+        UPDATE regen SET (end_t, odo_end, soot_end) = (
+            SELECT COALESCE(MAX(s.t), regen.start_t), s.odo_m, s.soot FROM sample s
+            WHERE s.regen = 1 AND s.t >= regen.start_t
+              AND s.t < COALESCE((SELECT MIN(r.start_t) FROM regen r WHERE r.start_t > regen.start_t), 9223372036854775807))
+        WHERE end_t IS NULL
+        """,
+    )
+
     fun odometer(): Double =
         readableDatabase.rawQuery("SELECT COALESCE(MAX(odo_m), 0) FROM sample", null).use { it.moveToFirst(); it.getDouble(0) }
 

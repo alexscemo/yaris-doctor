@@ -29,6 +29,7 @@ The app has never been compiled. Treat the first build as a check of everything,
   - **Connected:** holds a non-reference-counted wakelock, starts GPS and polls `21 DD` / `21 F1` / `21 DF` every 5 s, or every 1 s during regen.
   - **Ignition off:** the dongle may stay powered, so ECU silence counts as ignition off. The session ends after 1 dead cycle if no data was ever seen (a quick probe), or after 3 dead cycles mid-drive.
   - **Regen interrupted by disconnect:** the `finally` block closes the regen row and cancels the notification.
+  - **Process killed mid-regen:** no `finally` runs, so the row stays open. `onCreate()` calls `Db.closeOrphanRegens()`, which ends each open regen at its last regen sample before the next regen, the same rule as the hub's `close_if_stale`.
 - **`Recorder`** turns readings into `sample`/`regen` rows (regen open/close transitions). It is shared by the real session, Debug mode and the fake history, so there is one copy of the regen logic.
 - **Settings** live in `Prefs` (SharedPreferences) and are edited in `SettingsActivity`. Changes the service must see (dongle, logging, Debug mode) go through `DpfService.restart()`, which stops the service so a fresh instance re-reads them. `DpfService.start()` is the only start path (activity, boot) and respects the logging toggle and the Bluetooth permission.
 - **Debug mode** (`Prefs.debug`) is a process-lifetime flag, deliberately never persisted. While it is on, `Db.get()` returns an in-memory `Db` (name `null`) seeded by `Sim.seed()` with 14 days of history, and `DpfService.simulate()` feeds `Sim.live()` readings instead of opening Bluetooth. `yaris.db` is never touched. Turning it off calls `Db.dropDebug()`.
@@ -82,4 +83,3 @@ The app has never been compiled. Treat the first build as a check of everything,
 
 - A regen interrupted by switching off and then resumed on the next drive is stored as two rows.
 - Some ELM327 clones need the `createRfcommSocket(1)` reflection fallback; it is not implemented.
-- Android 16 promoted "Live Update" notifications are not used (needs compileSdk 36).

@@ -72,6 +72,8 @@ class DpfService : Service() {
             startForeground(ID_SERVICE, status("Waiting for dongle"), FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE)
         }
         odoM = db.odometer()
+        // A previous process killed mid-regen never closed its row; it would show "Ongoing" forever
+        Db.real(this).closeOrphanRegens()
         Sync.watch(this)
         worker.start()
     }

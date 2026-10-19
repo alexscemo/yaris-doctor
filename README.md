@@ -46,6 +46,14 @@ From then on it starts at boot. There is nothing to open before a drive.
 
 A small, low-priority notification ("Waiting for dongle" / "Logging") is always present. Android requires one for any app that runs in the background continuously.
 
+## Home hub (optional)
+
+Run **[Yaris Doctor Hub](https://github.com/alexscemo/yaris-doctor-hub)** on a home server (one Docker container) to
+keep every phone's log in one place. If two people drive the car, their trips add up, and you get a dashboard in the
+browser. In the app, **Settings → Home hub**: set the **Hub address** (e.g. `192.168.1.50`) and your **Home Wi-Fi name**.
+Both are empty by default, and nothing leaves the phone until both are set. After that, new data uploads by itself
+about a minute after you get home; **Sync now** forces it. Debug-mode data is never uploaded.
+
 ## How it works
 
 - **Finding the car.** An ELM327 dongle never connects to the phone on its own, so the app checks about once a minute and tries to connect. It uses an alarm, so this still happens while the phone is asleep. If the dongle answers but the engine ECU doesn't (ignition off, dongle still powered), it disconnects within seconds so a parked car doesn't drain the phone.

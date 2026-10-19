@@ -36,6 +36,13 @@ The app has never been compiled. Treat the first build as a check of everything,
 - **Distance / "odometer":** the car's odometer PID is unknown, so distance comes from GPS fixes, counted only while a session is connected. Fixes with accuracy over 25 m or speed under 1 m/s are dropped. `odoM` is written only by the GPS callback on the main thread and read by the worker (`@Volatile`). It persists as `sample.odo_m`, and the service restores it at start from `MAX(odo_m)`, so there is no separate prefs store.
 - **`Db`** is a per-process instance (`Db.get`), shared by the service and the activity. Tables `sample` and `regen`. Distance between regens is computed at read time in `regens()` in metres (`gapM`); the UI converts to miles or km per `Prefs.km`. It is this regen's `odo_start` minus the previous regen's `odo_end`. Schema version is 2 (v2 added the `sample(t)` index the charts' range queries rely on). Every schema change needs a step in `onUpgrade`, or it will wipe users' history.
 
+## Home hub sync
+
+- The server is a separate public repo, [yaris-doctor-hub](https://github.com/alexscemo/yaris-doctor-hub) (image `ghcr.io/alexscemo/yaris-doctor-hub`). Its `/api/sync` payload shape must stay in step with `Sync.kt` + `Db.samplesAfter()` / `Db.regenRows()`.
+- `Sync.maybe()` is called once a minute from the service's idle loop. It uploads only when `Prefs.server` and `Prefs.wifi` are both set (both empty by default) and the current SSID matches. SSID comes from `Sync.watch()`'s NetworkCallback with `FLAG_INCLUDE_LOCATION_INFO`, which needs fine + background location. It uploads when there are new samples (by SQLite `rowid`) or the regen signature changed, and waits 15 min after a failure. It always reads `Db.real()`, so Debug data never leaves the phone. `usesCleartextTraffic` is on because hubs are plain-http LAN servers.
+- `hubUrl()` normalises what the user types ("192.168.1.50" → `http://192.168.1.50:8765`); it is unit-tested in `SyncTest`.
+- versionCode is `run_number + 2000`, which keeps it above the retired private `-home` builds (1000+). Never lower the offset.
+
 ## Facts from the car (do not change without on-car confirmation)
 
 - Payload char offsets and scales: soot `[38,40)` ×2 (%), regen flag char `[33]` == 1, DPF temp `[16,20)` ×0.625 (°C). They were found by trial and error in DPFViewer `BT.h` and are covered by `ElmTest`.

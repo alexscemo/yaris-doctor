@@ -68,6 +68,7 @@ class DpfService : Service() {
             startForeground(ID_SERVICE, status("Waiting for dongle"), FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE)
         }
         odoM = db.odometer()
+        Sync.watch(this)
         worker.start()
     }
 
@@ -75,6 +76,7 @@ class DpfService : Service() {
 
     override fun onDestroy() {
         running = false
+        Sync.unwatch(this)
         alarms.cancel(probe)
         try { socket?.close() } catch (e: Exception) {}
         idle.release()
@@ -95,6 +97,8 @@ class DpfService : Service() {
                 if (wake.isHeld) wake.release()
             }
             if (!running) break
+            // On the home Wi-Fi after a drive: push new data to the hub (no-op elsewhere, when unset, or nothing new)
+            try { Sync.maybe(this) } catch (e: Exception) { Log.d(TAG, "sync check failed: $e") }
             nm.notify(ID_SERVICE, status("Waiting for dongle"))
             alarms.set(AlarmManager.ELAPSED_REALTIME_WAKEUP, SystemClock.elapsedRealtime() + PROBE_MS, "yaris:probe", probe, null)
             try { idle.acquire() } catch (e: InterruptedException) { break }

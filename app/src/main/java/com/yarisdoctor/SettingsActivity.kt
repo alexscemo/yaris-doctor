@@ -8,6 +8,7 @@ import android.content.pm.PackageManager.PERMISSION_GRANTED
 import android.os.Bundle
 import android.view.Gravity
 import android.view.View
+import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.Switch
@@ -38,6 +39,34 @@ class SettingsActivity : Activity() {
                     Prefs.put(context, Prefs.ALERTS, it)
                 },
                 row("Distance units", if (Prefs.km(context)) "Kilometres" else "Miles") { pickUnits() },
+            ))
+            addView(section("Home hub"))
+            addView(group(
+                row("Driver name", Prefs.driver(context)) {
+                    ask("Driver name", "Shown on the hub dashboard next to your trips", Prefs.driver(context)) {
+                        if (it.isNotBlank()) Prefs.put(context, Prefs.DRIVER, it.trim().take(40))
+                    }
+                },
+                row("Hub address", Prefs.server(context).ifBlank { "Not set: uploads are off" }) {
+                    ask("Hub address", "Your Yaris Doctor Hub on the home network, e.g. 192.168.1.50 (port $DEFAULT_HUB_PORT is assumed)", Prefs.server(context)) {
+                        Prefs.put(context, Prefs.SERVER, hubUrl(it))
+                    }
+                },
+                row("Home Wi-Fi name", Prefs.wifi(context).ifBlank { "Not set: uploads are off" }) {
+                    // Pre-fill with the network the phone is on now, the usual answer
+                    ask("Home Wi-Fi name", "Uploads only happen on this Wi-Fi network (needs location \"Allow all the time\")",
+                        Prefs.wifi(context).ifBlank { Sync.ssid.orEmpty() }) {
+                        Prefs.put(context, Prefs.WIFI, it.trim())
+                    }
+                },
+                row("Sync now", syncSummary()) {
+                    if (Prefs.server(context).isBlank()) return@row toast("Set the hub address first")
+                    toast("Syncing…")
+                    Thread {
+                        val result = Sync.run(applicationContext)
+                        runOnUiThread { toast(result); render() }
+                    }.start()
+                },
             ))
             addView(section("Developer"))
             addView(group(
@@ -76,6 +105,31 @@ class SettingsActivity : Activity() {
                 DpfService.restart(this)
                 render()
             }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    private fun syncSummary(): String {
+        val ok = Prefs.long(this, Prefs.SYNC_OK_AT)
+        val last = if (ok == 0L) "Never synced" else "Last synced " +
+            android.text.format.DateUtils.getRelativeTimeSpanString(ok, System.currentTimeMillis(), 60_000L)
+        return Prefs.str(this, Prefs.SYNC_STATUS)?.let { "$last · $it" } ?: last
+    }
+
+    /** Text prompt in the themed dialog; [onOk] gets the entered text. */
+    private fun ask(title: String, hint: String, current: String, onOk: (String) -> Unit) {
+        val input = EditText(this).apply {
+            setText(current)
+            setSingleLine()
+            setSelection(current.length)
+        }
+        val box = ui.column(ui.text(Type.BODY_SM, R.color.muted, hint), input).apply {
+            setPadding(ui.px(24), ui.px(8), ui.px(24), 0)
+        }
+        AlertDialog.Builder(this)
+            .setTitle(title)
+            .setView(box)
+            .setPositiveButton("Save") { _, _ -> onOk(input.text.toString()); render() }
             .setNegativeButton("Cancel", null)
             .show()
     }

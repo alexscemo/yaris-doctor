@@ -12,9 +12,9 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
-    env:
-      VERSION_CODE: ${{ github.run_number }}
     steps:
+      # Offset keeps versionCode above the retired private builds (1000+), so phones that had one can still update
+      - run: echo "VERSION_CODE=$((GITHUB_RUN_NUMBER + 2000))" >> "$GITHUB_ENV"
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
         with:

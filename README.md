@@ -6,6 +6,16 @@ When the car starts and the dongle powers up, the app connects by itself and log
 
 It replaces DPFViewer, an earlier ESP32 + TFT dashboard that read the same values.
 
+<p align="center">
+  <img src="docs/screenshots/main-regen.png" width="200" alt="Main screen during a regen: Keep driving callout, soot load, miles since last regen, soot chart, with the coral edge light">
+  <img src="docs/screenshots/history.png" width="200" alt="Miles-between-regens chart and regen history">
+  <img src="docs/screenshots/settings.png" width="200" alt="Settings: dongle, logging, notifications, edge light, units and DPF codes">
+</p>
+<p align="center">
+  <img src="docs/screenshots/notification.png" width="400" alt="Regen notification with temperature, soot and burn-off progress">
+</p>
+<p align="center"><sub>Screenshots in Debug mode (simulated data) on an Android 16 emulator sized like a Galaxy S25.</sub></p>
+
 ## Install
 
 Scan with your phone to add it to [Obtainium](https://github.com/ImranR98/Obtainium), which installs it and keeps it updated from this repo's releases:

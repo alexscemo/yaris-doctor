@@ -60,8 +60,22 @@ The app has never been compiled. Treat the first build as a check of everything,
 
 ## Facts from the car (do not change without on-car confirmation)
 
-- The three requests (`21DD` soot, `21F1` temperature, `21DF` regen) are defaults in `Prefs.PID_DEFAULTS`. Users can change them in Settings → DPF codes for other Yaris years; `pidCode()` only lets 2–4 hex bytes through, so no `AT` command reaches the dongle. The byte positions are configurable the same way (`Prefs.byte()`, defaults in `Prefs.BYTE_DEFAULTS`, checked by `bytePos()`). The session reads codes and positions once at connect, so a change restarts the service. The scales are fixed.
-- Default byte positions and scales (byte 0 = the echoed `61`): soot byte 19 ×2 (%), DPF temp bytes 8–9 ×0.625 (°C), regen flag = low nibble of byte 16 == 1. These equal DPFViewer's char offsets 38, 16 and 33. They were found by trial and error in DPFViewer `BT.h` and are covered by `ElmTest`.
+- The three requests (`21DD` soot, `21F1` temperature, `21DF` regen) are defaults in `Prefs.PID_DEFAULTS`. Users can change them in Settings → DPF codes for other Yaris years; `pidCode()` only lets 2–4 hex bytes through, so no `AT` command reaches the dongle. Byte positions and formulas are configurable the same way:
+  - Positions: `Prefs.byte()`, defaults in `Prefs.BYTE_DEFAULTS`, checked by `bytePos()`.
+  - Formulas: `Prefs.formula()`, defaults in `Prefs.FORMULA_DEFAULTS`, checked by `formulaText()`.
+  - `Formula` in `Elm.kt` is a small Torque-style parser:
+    - `A`–`D` are bytes from the position on.
+    - Operators are `+ - * /`, `&` (lowest precedence) and brackets.
+    - It evaluates to null past the reply's end or when the result isn't finite.
+  - Results are truncated to Int. The regen flag is on when its formula gives exactly 1.
+
+  The session reads codes, positions and formulas once at connect, so a change restarts the service.
+- Defaults (byte 0 = the echoed `61`):
+  - soot: byte 19, `A*2` (%)
+  - DPF temp: byte 8, `(A*256+B)*0.625` (°C)
+  - regen: byte 16, `A&15`, on when it is 1
+
+  These equal DPFViewer's char offsets 38, 16 and 33. `ElmTest.decodersUseDpfViewerOffsets` pins them. They were found by trial and error in DPFViewer `BT.h` and are covered by `ElmTest`.
 - Dongle MAC `66:1E:32:7A:2E:72`, PIN `1234`. It must be paired in Android settings first.
 
 ## Known gaps

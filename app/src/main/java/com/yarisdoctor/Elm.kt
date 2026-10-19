@@ -70,11 +70,89 @@ fun pidCode(s: String, default: String): String? {
 /** Blank → [default]; otherwise a byte position 0–63 of the reply, or null if it isn't one. */
 fun bytePos(s: String, default: Int): Int? = if (s.isBlank()) default else s.trim().toIntOrNull()?.takeIf { it in 0..63 }
 
-// [byte] counts reply bytes from 0, including the echoed mode/PID (byte 0 = 0x61); 2 hex chars per byte.
-// Defaults and scale factors are the ones found on the car with DPFViewer (BT.h), which used char offsets 38, 16 and 33.
-private fun hexAt(p: String, byte: Int, chars: Int, skip: Int = 0): Int? =
-    if (p.length >= byte * 2 + skip + chars) p.substring(byte * 2 + skip, byte * 2 + skip + chars).toIntOrNull(16) else null
+/**
+ * Torque-style formula over reply bytes: `A` is the byte at the reading's position, `B` the next one, then `C`, `D`.
+ * Supports numbers, + - * / & (bitwise AND, lowest precedence) and brackets. Evaluates to null when a byte is past the
+ * end of the reply or the result isn't finite (e.g. division by zero).
+ */
+class Formula private constructor(private val expr: Expr) {
+    /** [byte] counts reply bytes from 0, including the echoed mode/PID (byte 0 = 0x61); 2 hex chars per byte. */
+    fun eval(payload: String, byte: Int): Double? = expr { k ->
+        val at = (byte + k) * 2
+        if (payload.length >= at + 2) payload.substring(at, at + 2).toIntOrNull(16) else null
+    }?.takeIf { it.isFinite() }
 
-fun sootOf(p: String, byte: Int = 19): Int? = hexAt(p, byte, 2)?.times(2)
-fun tempOf(p: String, byte: Int = 8): Int? = hexAt(p, byte, 4)?.let { (it * 0.625).toInt() } // 2 bytes, big-endian
-fun regenOf(p: String, byte: Int = 16): Boolean? = hexAt(p, byte, 1, skip = 1)?.let { it == 1 } // low nibble of the byte
+    companion object {
+        /** null when [text] isn't a valid formula. */
+        fun parse(text: String): Formula? =
+            try { Formula(Parser(text.filterNot { it.isWhitespace() }.uppercase()).all()) } catch (e: IllegalArgumentException) { null }
+    }
+}
+
+/** Blank → [default]; otherwise the formula as typed, or null if it doesn't parse. */
+fun formulaText(s: String, default: String): String? = if (s.isBlank()) default else s.trim().takeIf { Formula.parse(it) != null }
+
+private typealias Expr = ((Int) -> Int?) -> Double?
+
+private class Parser(private val s: String) {
+    private var i = 0
+
+    fun all(): Expr = and().also { require(i == s.length) }
+
+    private fun and(): Expr {
+        var l = sum()
+        while (eat('&')) l = op(l, sum()) { x, y -> (x.toLong() and y.toLong()).toDouble() }
+        return l
+    }
+
+    private fun sum(): Expr {
+        var l = product()
+        while (true) l = when {
+            eat('+') -> op(l, product()) { x, y -> x + y }
+            eat('-') -> op(l, product()) { x, y -> x - y }
+            else -> return l
+        }
+    }
+
+    private fun product(): Expr {
+        var l = unary()
+        while (true) l = when {
+            eat('*') -> op(l, unary()) { x, y -> x * y }
+            eat('/') -> op(l, unary()) { x, y -> x / y }
+            else -> return l
+        }
+    }
+
+    private fun unary(): Expr = if (eat('-')) unary().let { e -> { v -> e(v)?.unaryMinus() } } else atom()
+
+    private fun atom(): Expr {
+        if (eat('(')) return and().also { require(eat(')')) }
+        val c = s.getOrNull(i) ?: throw IllegalArgumentException("formula ends early")
+        if (c in 'A'..'D') {
+            i++
+            return { v -> v(c - 'A')?.toDouble() }
+        }
+        val start = i
+        while (i < s.length && (s[i].isDigit() || s[i] == '.')) i++
+        val n = s.substring(start, i).toDoubleOrNull() ?: throw IllegalArgumentException("unexpected '$c'")
+        return { _ -> n }
+    }
+
+    private fun eat(c: Char) = (s.getOrNull(i) == c).also { if (it) i++ }
+
+    private fun op(a: Expr, b: Expr, f: (Double, Double) -> Double): Expr = { v ->
+        val x = a(v)
+        val y = b(v)
+        if (x == null || y == null) null else f(x, y)
+    }
+}
+
+// Defaults (Prefs.BYTE_DEFAULTS / FORMULA_DEFAULTS) are the ones found on the car with DPFViewer (BT.h), which used char
+// offsets 38, 16 and 33. Results are truncated like DPFViewer's int casts; the regen flag is on when its formula gives 1.
+private val SOOT = Formula.parse(Prefs.FORMULA_DEFAULTS.getValue(Prefs.PID_SOOT))!!
+private val TEMP = Formula.parse(Prefs.FORMULA_DEFAULTS.getValue(Prefs.PID_TEMP))!!
+private val REGEN = Formula.parse(Prefs.FORMULA_DEFAULTS.getValue(Prefs.PID_REGEN))!!
+
+fun sootOf(p: String, byte: Int = 19, f: Formula = SOOT): Int? = f.eval(p, byte)?.toInt()
+fun tempOf(p: String, byte: Int = 8, f: Formula = TEMP): Int? = f.eval(p, byte)?.toInt()
+fun regenOf(p: String, byte: Int = 16, f: Formula = REGEN): Boolean? = f.eval(p, byte)?.let { it == 1.0 }

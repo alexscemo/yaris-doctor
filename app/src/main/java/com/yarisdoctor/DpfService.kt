@@ -129,14 +129,19 @@ class DpfService : Service() {
             val byteSoot = Prefs.byte(this, Prefs.PID_SOOT)
             val byteTemp = Prefs.byte(this, Prefs.PID_TEMP)
             val byteRegen = Prefs.byte(this, Prefs.PID_REGEN)
+            // Saved formulas were checked in Settings; fall back to the default rather than stop logging
+            fun formula(key: String) = Formula.parse(Prefs.formula(this, key)) ?: Formula.parse(Prefs.FORMULA_DEFAULTS.getValue(key))!!
+            val fSoot = formula(Prefs.PID_SOOT)
+            val fTemp = formula(Prefs.PID_TEMP)
+            val fRegen = formula(Prefs.PID_REGEN)
             var fails = 0
             var seen = false
             try {
                 // Ignition off (dongle may stay powered on the OBD port): give up after 1 dead cycle on a probe, 3 mid-drive
                 while (running && fails < (if (seen) 3 else 1)) {
-                    val soot = elm.send(pidSoot)?.let { sootOf(it, byteSoot) }
-                    val temp = elm.send(pidTemp)?.let { tempOf(it, byteTemp) }
-                    val regen = elm.send(pidRegen)?.let { regenOf(it, byteRegen) }
+                    val soot = elm.send(pidSoot)?.let { sootOf(it, byteSoot, fSoot) }
+                    val temp = elm.send(pidTemp)?.let { tempOf(it, byteTemp, fTemp) }
+                    val regen = elm.send(pidRegen)?.let { regenOf(it, byteRegen, fRegen) }
                     if (soot == null && temp == null && regen == null) {
                         fails++
                         Thread.sleep(2000)

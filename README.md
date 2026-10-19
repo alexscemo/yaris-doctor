@@ -64,13 +64,13 @@ from October 2026 or later (it adds `/api/export`).
 - **Finding the car.** An ELM327 dongle never connects to the phone on its own, so the app checks about once a minute and tries to connect. It uses an alarm, so this still happens while the phone is asleep. If the dongle answers but the engine ECU doesn't (ignition off, dongle still powered), it disconnects within seconds so a parked car doesn't drain the phone.
 - **Reading the ECU.** The app sets the dongle to talk to the engine ECU (`AT SH 7E0`, `AT CRA 7E8`, CAN 11-bit 500 kbps). It then polls three Toyota mode-21 PIDs:
 
-  | PID | Value | Decoding (reply bytes counted from 0, including the echoed `61 xx`) |
-  |---|---|---|
-  | `21 DD` | Soot load (%) | byte 19 × 2 |
-  | `21 F1` | DPF temperature (°C) | bytes 8–9 × 0.625 |
-  | `21 DF` | Regen active | low digit of byte 16 == `1` |
+  | PID | Value | Byte (from 0, incl. the echoed `61 xx`) | Formula |
+  |---|---|---|---|
+  | `21 DD` | Soot load (%) | 19 | `A*2` |
+  | `21 F1` | DPF temperature (°C) | 8 | `(A*256+B)*0.625` |
+  | `21 DF` | Regen active | 16 | `A&15` (regen when it gives 1) |
 
-  These positions were found by trial and error on one car (see DPFViewer). Other Yaris engines or model years may differ. In **Settings → DPF codes** you can set each reading's PID and byte position (leave a field blank to go back to the default). The scale factors stay fixed.
+  These were found by trial and error on one car (see DPFViewer). Other Yaris engines or model years may differ. In **Settings → DPF codes** you can set each reading's PID, byte position and formula (leave a field blank to go back to the default). Formulas work like Torque's: `A` is the byte at the position, `B` the next, then `C`, `D`, with numbers, `+ - * /`, `&` (bitwise AND) and brackets. Results are rounded down.
 - **Distance.** The car's odometer PID isn't known, so distance comes from the phone's GPS, counted only while the dongle is connected. Fixes that are inaccurate or stationary are ignored to avoid GPS drift.
 - **Engine off mid-regen.** The regen is closed at the moment the connection drops, and the notification is cleared.
 

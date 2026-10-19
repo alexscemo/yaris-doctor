@@ -48,9 +48,9 @@ class SettingsActivity : Activity() {
             ))
             addView(section("DPF codes"))
             addView(group(
-                pidRow("Soot load", Prefs.PID_SOOT, "the soot load (1 byte, × 2 = %)"),
-                pidRow("DPF temperature", Prefs.PID_TEMP, "the temperature (2 bytes, × 0.625 = °C)"),
-                pidRow("Regeneration flag", Prefs.PID_REGEN, "the regen flag (its low digit is 1 during a regen)"),
+                pidRow("Soot load", Prefs.PID_SOOT, "the soot load (formula gives %)"),
+                pidRow("DPF temperature", Prefs.PID_TEMP, "the temperature (formula gives °C)"),
+                pidRow("Regeneration flag", Prefs.PID_REGEN, "the regen flag (formula gives 1 during a regen)"),
             ))
             addView(section("Home hub"))
             addView(group(
@@ -106,26 +106,29 @@ class SettingsActivity : Activity() {
         setContentView(root)
     }
 
-    /** The OBD request for one reading and where its value sits in the reply; other Yaris years may differ. Blank = default. */
+    /** The OBD request for one reading, where its value sits in the reply and how to turn it into a number. Blank = default. */
     private fun pidRow(title: String, key: String, what: String): View {
         val defCode = Prefs.PID_DEFAULTS.getValue(key)
         val defByte = Prefs.BYTE_DEFAULTS.getValue(key)
+        val defFormula = Prefs.FORMULA_DEFAULTS.getValue(key)
         val code = Prefs.pid(this, key)
         val byte = Prefs.byte(this, key)
-        val sub = "$code · byte $byte" + if (code == defCode && byte == defByte) " (default)" else ""
+        val formula = Prefs.formula(this, key)
+        val isDefault = code == defCode && byte == defByte && formula == defFormula
+        val sub = "$code · byte $byte · $formula" + if (isDefault) " (default)" else ""
         return row(title, sub) {
             val codeIn = EditText(this).apply { setText(code); setSingleLine(); hint = defCode }
             val byteIn = EditText(this).apply {
                 setText(byte.toString()); setSingleLine(); hint = defByte.toString()
                 inputType = android.text.InputType.TYPE_CLASS_NUMBER
             }
+            val formulaIn = EditText(this).apply { setText(formula); setSingleLine(); hint = defFormula }
+            fun label(s: String, top: Int = 12) = ui.text(Type.BODY_SM, R.color.muted, s).apply { setPadding(0, ui.px(top), 0, 0) }
             val box = ui.column(
-                ui.text(Type.BODY_SM, R.color.muted, "OBD code the app asks the car for (default $defCode)"), codeIn,
-                ui.text(Type.BODY_SM, R.color.muted, "Byte in the reply that holds $what, counting the reply's first byte as 0 (default $defByte)").apply {
-                    setPadding(0, ui.px(12), 0, 0)
-                },
-                byteIn,
-                ui.text(Type.BODY_SM, R.color.muted, "Leave a field blank for its default.").apply { setPadding(0, ui.px(8), 0, 0) },
+                label("OBD code the app asks the car for (default $defCode)", 0), codeIn,
+                label("Byte in the reply where $what starts, counting the reply's first byte as 0 (default $defByte)"), byteIn,
+                label("Formula: A is that byte, B the next, then C, D. Use + − * / & and brackets (default $defFormula)"), formulaIn,
+                label("Leave a field blank for its default.", 8),
             ).apply { setPadding(ui.px(24), ui.px(8), ui.px(24), 0) }
             AlertDialog.Builder(this)
                 .setTitle(title)
@@ -135,8 +138,11 @@ class SettingsActivity : Activity() {
                         ?: return@setPositiveButton toast("Not a valid code: use 2–4 hex bytes, like $defCode")
                     val newByte = bytePos(byteIn.text.toString(), defByte)
                         ?: return@setPositiveButton toast("Not a valid byte: use a number from 0 to 63")
+                    val newFormula = formulaText(formulaIn.text.toString(), defFormula)
+                        ?: return@setPositiveButton toast("Not a valid formula: use A–D, numbers, + − * / & and brackets, like $defFormula")
                     Prefs.put(this, key, newCode)
                     Prefs.putByte(this, key, newByte)
+                    Prefs.putFormula(this, key, newFormula)
                     DpfService.restart(this) // a running session read the old values at connect
                     render()
                 }

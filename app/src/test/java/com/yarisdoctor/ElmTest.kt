@@ -36,6 +36,23 @@ class ElmTest {
         assertNull(sootOf("61DD"))
     }
 
+    @Test fun formulasParseAndEvaluate() {
+        val p = "61DD" + "2A" + "0190" + "13" // bytes 2 = 0x2A, 3-4 = 0x0190, 5 = 0x13
+        fun f(s: String) = Formula.parse(s)!!
+        assertEquals(42.0 * 3 + 1, f("A*3+1").eval(p, 2)!!, 0.0)       // * before +
+        assertEquals(42.0 * 4, f("a * (3 + 1)").eval(p, 2)!!, 0.0)    // brackets, spaces, lower case
+        assertEquals(250.0, f("(A*256+B)*0.625").eval(p, 3)!!, 0.0)
+        assertEquals(3.0, f("A & 15").eval(p, 5)!!, 0.0)                // & binds loosest
+        assertEquals(-42.0, f("-A").eval(p, 2)!!, 0.0)
+        assertNull(f("A/0").eval(p, 2))                                // not finite
+        assertNull(f("A+B").eval(p, 5))                                // B is past the end
+        for (bad in listOf("", "A*", "(A", "A)", "E", "2..5", "A B", "ATZ")) assertNull(bad, Formula.parse(bad))
+        assertEquals("A*2", formulaText(" ", "A*2"))
+        assertNull(formulaText("A*", "A*2"))
+        assertEquals(41, sootOf(p, 2, f("A-1")))
+        assertEquals(false, regenOf(p, 5)) // default A&15 = 3, not 1
+    }
+
     @Test fun decodersReadOtherBytePositions() {
         val p = "61DD" + "2A" + "0190" + "01" // bytes 0-1 echo, 2 = soot, 3-4 = temp, 5 = regen
         assertEquals(84, sootOf(p, 2))

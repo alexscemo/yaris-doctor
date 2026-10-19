@@ -30,6 +30,9 @@ object Prefs {
     /** Byte position of each value in its reply (see sootOf/tempOf/regenOf), keyed like the codes: "<pid key>_byte". */
     val BYTE_DEFAULTS = mapOf(PID_SOOT to 19, PID_TEMP to 8, PID_REGEN to 16)
 
+    /** Formula per reading (see Formula): A = byte at the position, B the next. Regen: low digit of the byte, 1 = on. */
+    val FORMULA_DEFAULTS = mapOf(PID_SOOT to "A*2", PID_TEMP to "(A*256+B)*0.625", PID_REGEN to "A&15")
+
     // DPFViewer's dongle, kept as the default so existing installs keep connecting
     private const val DEFAULT_DONGLE = "66:1E:32:7A:2E:72"
 
@@ -45,6 +48,8 @@ object Prefs {
     fun pid(c: Context, key: String) = sp(c).getString(key, null) ?: PID_DEFAULTS.getValue(key)
     fun byte(c: Context, key: String) = sp(c).getInt("${key}_byte", BYTE_DEFAULTS.getValue(key))
     fun putByte(c: Context, key: String, value: Int) = sp(c).edit().putInt("${key}_byte", value).apply()
+    fun formula(c: Context, key: String) = sp(c).getString("${key}_formula", null) ?: FORMULA_DEFAULTS.getValue(key)
+    fun putFormula(c: Context, key: String, value: String) = sp(c).edit().putString("${key}_formula", value).apply()
     fun edge(c: Context) = sp(c).getBoolean(EDGE, false) // off by default: it needs "Display over other apps"
     fun km(c: Context) =sp(c).getBoolean(KM, false)
     // Both empty by default: nothing is uploaded until the user points the app at their own hub and Wi-Fi

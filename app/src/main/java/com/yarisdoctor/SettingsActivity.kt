@@ -123,7 +123,8 @@ class SettingsActivity : Activity() {
         val allowed = getSystemService(NotificationManager::class.java).canPostPromotedNotifications()
         val where = if (Build.MANUFACTURER.equals("samsung", ignoreCase = true)) "in the Now Bar" else "as a status bar chip"
         return row("Live Updates", if (allowed) "Regens show live $where" else "Off: tap to allow regens to show live $where") {
-            val promoted = Intent(Settings.ACTION_MANAGE_APP_PROMOTED_NOTIFICATIONS).putExtra(Settings.EXTRA_APP_PACKAGE, packageName)
+            // Settings.ACTION_MANAGE_APP_PROMOTED_NOTIFICATIONS, which the API 36 SDK doesn't have yet (added in 36.1)
+            val promoted = Intent("android.settings.MANAGE_APP_PROMOTED_NOTIFICATIONS").putExtra(Settings.EXTRA_APP_PACKAGE, packageName)
             // Not every manufacturer ships that screen: fall back to the app's notification settings instead of crashing
             val fallback = Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, packageName)
             try { startActivity(promoted) } catch (e: ActivityNotFoundException) { startActivity(fallback) }

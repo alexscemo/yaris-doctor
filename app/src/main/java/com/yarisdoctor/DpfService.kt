@@ -19,6 +19,7 @@ import android.location.Location
 import android.location.LocationListener
 import android.location.LocationManager
 import android.os.Build
+import android.os.Bundle
 import android.os.Looper
 import android.os.PowerManager
 import android.os.SystemClock
@@ -224,7 +225,8 @@ class DpfService : Service() {
     @TargetApi(Build.VERSION_CODES.BAKLAVA)
     private fun liveUpdate(b: Notification.Builder, sootStart: Int?, soot: Int?) {
         val burned = burnPercent(sootStart, soot)
-        b.setRequestPromotedOngoing(true)
+        // setRequestPromotedOngoing() only exists from Android 16 QPR (API 36.1); the extra it sets works on every API 36 build
+        b.addExtras(Bundle().apply { putBoolean(EXTRA_REQUEST_PROMOTED_ONGOING, true) })
             .setStyle(Notification.ProgressStyle()
                 .setProgressSegments(listOf(Notification.ProgressStyle.Segment(100).setColor(getColor(R.color.primary))))
                 .apply { if (burned == null) setProgressIndeterminate(true) else setProgress(burned) })
@@ -239,6 +241,7 @@ class DpfService : Service() {
         private const val ID_SERVICE = 1
         private const val ID_REGEN = 2
         private const val TAG = "DpfService"
+        private const val EXTRA_REQUEST_PROMOTED_ONGOING = "android.requestPromotedOngoing" // = Notification/NotificationCompat constant
 
         /** Starts logging if it is enabled and allowed; a no-op when already running. */
         fun start(c: Context) {

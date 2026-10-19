@@ -55,18 +55,22 @@ browser. In the app, **Settings → Home hub**: set the **Hub address** (e.g. `1
 Both are empty by default, and nothing leaves the phone until both are set. After that, new data uploads by itself
 about a minute after you get home; **Sync now** forces it. Debug-mode data is never uploaded.
 
+Sync works both ways. While at home, the app also downloads what the other phones logged, so your own screen shows the
+whole car: the latest soot reading, regens and the distance since the last one, whoever was driving. This needs a hub
+from October 2026 or later (it adds `/api/export`).
+
 ## How it works
 
 - **Finding the car.** An ELM327 dongle never connects to the phone on its own, so the app checks about once a minute and tries to connect. It uses an alarm, so this still happens while the phone is asleep. If the dongle answers but the engine ECU doesn't (ignition off, dongle still powered), it disconnects within seconds so a parked car doesn't drain the phone.
 - **Reading the ECU.** The app sets the dongle to talk to the engine ECU (`AT SH 7E0`, `AT CRA 7E8`, CAN 11-bit 500 kbps). It then polls three Toyota mode-21 PIDs:
 
-  | PID | Value | Decoding (hex payload, character offsets) |
+  | PID | Value | Decoding (reply bytes counted from 0, including the echoed `61 xx`) |
   |---|---|---|
-  | `21 DD` | Soot load (%) | chars 38–39 × 2 |
-  | `21 F1` | DPF temperature (°C) | chars 16–19 × 0.625 |
-  | `21 DF` | Regen active | char 33 == `1` |
+  | `21 DD` | Soot load (%) | byte 19 × 2 |
+  | `21 F1` | DPF temperature (°C) | bytes 8–9 × 0.625 |
+  | `21 DF` | Regen active | low digit of byte 16 == `1` |
 
-  These offsets were found by trial and error on one car (see DPFViewer). Other Yaris engines or model years may differ.
+  These positions were found by trial and error on one car (see DPFViewer). Other Yaris engines or model years may differ. In **Settings → DPF codes** you can set each reading's PID and byte position (leave a field blank to go back to the default). The scale factors stay fixed.
 - **Distance.** The car's odometer PID isn't known, so distance comes from the phone's GPS, counted only while the dongle is connected. Fixes that are inaccurate or stationary are ignored to avoid GPS drift.
 - **Engine off mid-regen.** The regen is closed at the moment the connection drops, and the notification is cleared.
 

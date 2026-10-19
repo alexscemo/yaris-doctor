@@ -24,6 +24,7 @@ import java.net.URL
 object Sync {
     private const val BATCH = 2000
     private const val RETRY_MS = 15 * 60_000L // after a failure (away from home, hub down), don't retry every minute
+    private const val PULL_MS = 10 * 60_000L
     private const val TAG = "Sync"
 
     /** Current Wi-Fi SSID, kept by [watch]; null when not on Wi-Fi or the name is hidden (no location permission). */
@@ -57,7 +58,9 @@ object Sync {
         if (Prefs.server(c).isBlank() || home.isBlank() || ssid != home) return
         val db = Db.real(c)
         val pending = db.maxSampleRowid() > Prefs.long(c, Prefs.SYNCED_ROWID) || db.regenSignature() != Prefs.str(c, Prefs.SYNCED_REGENS)
-        if (!pending) return
+        // Other phones' drives reach the hub whenever they get home, so check for them now and then even with nothing to send
+        val pullDue = System.currentTimeMillis() - Prefs.long(c, Prefs.PULLED_AT) > PULL_MS
+        if (!pending && !pullDue) return
         val failedRecently = Prefs.long(c, Prefs.SYNC_TRIED_AT) > Prefs.long(c, Prefs.SYNC_OK_AT) &&
             System.currentTimeMillis() - Prefs.long(c, Prefs.SYNC_TRIED_AT) < RETRY_MS
         if (!failedRecently) run(c)
@@ -77,7 +80,7 @@ object Sync {
             while (true) {
                 val batch = db.samplesAfter(after, BATCH)
                 if (batch.length() == 0 && regens == null) break
-                post(c, JSONObject()
+                request(c, "/api/sync", JSONObject()
                     .put("device_id", Prefs.deviceId(c))
                     .put("name", Prefs.driver(c))
                     .put("samples", batch)
@@ -91,8 +94,20 @@ object Sync {
                 if (batch.length() < BATCH) break
             }
             Prefs.put(c, Prefs.SYNCED_REGENS, signature)
+            // Then download what the other phones logged, so this phone's screen shows the whole car
+            var cursor = Prefs.long(c, Prefs.PULLED_ROWID)
+            var got = 0
+            do {
+                val page = request(c, "/api/export?device=${Prefs.deviceId(c)}&after=$cursor", null)
+                val samples = page.getJSONArray("samples")
+                db.putPeers(samples, page.getJSONArray("regens"))
+                cursor = page.getLong("next")
+                Prefs.put(c, Prefs.PULLED_ROWID, cursor)
+                got += samples.length()
+            } while (page.getBoolean("more"))
+            Prefs.put(c, Prefs.PULLED_AT, System.currentTimeMillis())
             Prefs.put(c, Prefs.SYNC_OK_AT, System.currentTimeMillis())
-            "Synced $sent new readings"
+            "Sent $sent new readings, received $got from other phones"
         } catch (e: Exception) {
             Log.d(TAG, "sync failed: $e")
             "Hub not reachable (${e.javaClass.simpleName})"
@@ -103,21 +118,24 @@ object Sync {
         return status
     }
 
-    private fun post(c: Context, body: JSONObject) {
+    /** POSTs [body] as JSON, or GETs when it is null; returns the hub's JSON reply. */
+    private fun request(c: Context, path: String, body: JSONObject?): JSONObject {
         val hub = Prefs.server(c)
         if (hub.isBlank()) throw IOException("no hub address set")
-        val conn = URL("$hub/api/sync").openConnection() as HttpURLConnection
+        val conn = URL("$hub$path").openConnection() as HttpURLConnection
         try {
-            conn.requestMethod = "POST"
             conn.connectTimeout = 3_000
             conn.readTimeout = 30_000
-            conn.doOutput = true
-            conn.setRequestProperty("Content-Type", "application/json")
-            conn.outputStream.use { it.write(body.toString().toByteArray()) }
+            if (body != null) {
+                conn.requestMethod = "POST"
+                conn.doOutput = true
+                conn.setRequestProperty("Content-Type", "application/json")
+                conn.outputStream.use { it.write(body.toString().toByteArray()) }
+            }
             if (conn.responseCode != 200) {
                 throw IOException("hub said ${conn.responseCode}: " + (conn.errorStream?.bufferedReader()?.readText() ?: ""))
             }
-            conn.inputStream.close()
+            return JSONObject(conn.inputStream.bufferedReader().use { it.readText() })
         } finally {
             conn.disconnect()
         }

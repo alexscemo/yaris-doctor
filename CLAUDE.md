@@ -49,12 +49,19 @@ The app has never been compiled. Treat the first build as a check of everything,
 
 - The server is a separate public repo, [yaris-doctor-hub](https://github.com/alexscemo/yaris-doctor-hub) (image `ghcr.io/alexscemo/yaris-doctor-hub`). Its `/api/sync` payload shape must stay in step with `Sync.kt` + `Db.samplesAfter()` / `Db.regenRows()`.
 - `Sync.maybe()` is called once a minute from the service's idle loop. It uploads only when `Prefs.server` and `Prefs.wifi` are both set (both empty by default) and the current SSID matches. SSID comes from `Sync.watch()`'s NetworkCallback with `FLAG_INCLUDE_LOCATION_INFO`, which needs fine + background location. It uploads when there are new samples (by SQLite `rowid`) or the regen signature changed, and waits 15 min after a failure. It always reads `Db.real()`, so Debug data never leaves the phone. `usesCleartextTraffic` is on because hubs are plain-http LAN servers.
+- **Two-way:** after uploading, `Sync.run()` pages through the hub's `GET /api/export?device=<own id>&after=<cursor>` (cursor `Prefs.PULLED_ROWID`, the hub's sample rowid). It stores the other phones' rows in `peer_sample` / `peer_regen` (schema v3) through `Db.putPeers()`, ignoring re-sent samples and replacing the whole peer regen list. `Sync.maybe()` also pulls every 10 min on the home Wi-Fi when there is nothing to send. Changing the hub address resets both cursors.
+- **The main screen shows the whole car:**
+  - `lastSample`, `sootSeries`, `regens` and `metresSinceRegen` read own and peer rows together.
+  - Car distance between two instants is `driven()`: the sum of each phone's odometer progress, as in the hub's `distance_m`.
+  - `mergeRegens()` (tested in `SyncTest`) counts a hand-over burn once, but never merges open regens.
+  - `odometer()` stays own-only, because the service restores its GPS odometer from it.
 - `hubUrl()` normalises what the user types ("192.168.1.50" → `http://192.168.1.50:8765`); it is unit-tested in `SyncTest`.
 - versionCode is `run_number + 2000`, which keeps it above the retired private `-home` builds (1000+). Never lower the offset.
 
 ## Facts from the car (do not change without on-car confirmation)
 
-- Payload char offsets and scales: soot `[38,40)` ×2 (%), regen flag char `[33]` == 1, DPF temp `[16,20)` ×0.625 (°C). They were found by trial and error in DPFViewer `BT.h` and are covered by `ElmTest`.
+- The three requests (`21DD` soot, `21F1` temperature, `21DF` regen) are defaults in `Prefs.PID_DEFAULTS`. Users can change them in Settings → DPF codes for other Yaris years; `pidCode()` only lets 2–4 hex bytes through, so no `AT` command reaches the dongle. The byte positions are configurable the same way (`Prefs.byte()`, defaults in `Prefs.BYTE_DEFAULTS`, checked by `bytePos()`). The session reads codes and positions once at connect, so a change restarts the service. The scales are fixed.
+- Default byte positions and scales (byte 0 = the echoed `61`): soot byte 19 ×2 (%), DPF temp bytes 8–9 ×0.625 (°C), regen flag = low nibble of byte 16 == 1. These equal DPFViewer's char offsets 38, 16 and 33. They were found by trial and error in DPFViewer `BT.h` and are covered by `ElmTest`.
 - Dongle MAC `66:1E:32:7A:2E:72`, PIN `1234`. It must be paired in Android settings first.
 
 ## Known gaps

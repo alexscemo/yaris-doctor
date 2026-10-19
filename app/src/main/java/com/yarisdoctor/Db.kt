@@ -9,7 +9,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 /** [name] null = in-memory database (Debug mode), gone when closed. */
-class Db private constructor(ctx: Context, name: String?) : SQLiteOpenHelper(ctx, name, null, 2) {
+class Db private constructor(ctx: Context, name: String?) : SQLiteOpenHelper(ctx, name, null, 3) {
 
     data class Sample(val t: Long, val soot: Int?, val temp: Int?, val regen: Boolean)
 
@@ -21,11 +21,22 @@ class Db private constructor(ctx: Context, name: String?) : SQLiteOpenHelper(ctx
         db.execSQL("CREATE TABLE sample(t INTEGER, soot INTEGER, temp INTEGER, regen INTEGER, odo_m REAL)")
         db.execSQL("CREATE TABLE regen(id INTEGER PRIMARY KEY, start_t INTEGER, end_t INTEGER, odo_start REAL, odo_end REAL, soot_start INTEGER, soot_end INTEGER)")
         db.execSQL(SAMPLE_T_INDEX)
+        createPeers(db)
     }
 
     override fun onUpgrade(db: SQLiteDatabase, old: Int, new: Int) {
         // v2: time index for the charts' range queries
         if (old < 2) db.execSQL(SAMPLE_T_INDEX)
+        // v3: other phones' logs, downloaded from the hub
+        if (old < 3) createPeers(db)
+    }
+
+    /** Copies of the other phones' rows (from the hub); this phone's own log stays in sample/regen. */
+    private fun createPeers(db: SQLiteDatabase) {
+        db.execSQL("CREATE TABLE peer_sample(device TEXT, phone_rowid INTEGER, t INTEGER, soot INTEGER, temp INTEGER, regen INTEGER, odo_m REAL, PRIMARY KEY(device, phone_rowid))")
+        db.execSQL("CREATE INDEX peer_sample_t ON peer_sample(t)")
+        db.execSQL("CREATE INDEX peer_sample_device_t ON peer_sample(device, t)")
+        db.execSQL("CREATE TABLE peer_regen(device TEXT, id INTEGER, start_t INTEGER, end_t INTEGER, soot_start INTEGER, soot_end INTEGER)")
     }
 
     fun sample(t: Long, soot: Int?, temp: Int?, regen: Boolean, odoM: Double) {
@@ -48,29 +59,33 @@ class Db private constructor(ctx: Context, name: String?) : SQLiteOpenHelper(ctx
     fun odometer(): Double =
         readableDatabase.rawQuery("SELECT COALESCE(MAX(odo_m), 0) FROM sample", null).use { it.moveToFirst(); it.getDouble(0) }
 
-    fun lastSample(): Sample? =
-        readableDatabase.rawQuery("SELECT t, soot, temp, regen FROM sample ORDER BY t DESC LIMIT 1", null).use {
+    /** The car's latest reading, from this phone or another one. */
+    fun lastSample(): Sample? = listOf("sample", "peer_sample").mapNotNull { table ->
+        readableDatabase.rawQuery("SELECT t, soot, temp, regen FROM $table ORDER BY t DESC LIMIT 1", null).use {
             if (it.moveToFirst()) Sample(it.getLong(0), it.intOrNull(1), it.intOrNull(2), it.getInt(3) == 1) else null
         }
+    }.maxByOrNull { it.t }
 
-    /** Oldest first. */
+    /** Every phone's regens, oldest first, the same burn seen by two phones counted once; gaps are car distance. */
     fun regens(): List<Regen> {
         val rows = mutableListOf<Regen>()
-        var prevEnd: Double? = null
-        readableDatabase.rawQuery("SELECT start_t, end_t, odo_start, odo_end, soot_start, soot_end FROM regen ORDER BY start_t", null).use {
-            while (it.moveToNext()) {
-                val gapM = prevEnd?.let { p -> it.getDouble(2) - p }
-                rows += Regen(it.getLong(0), if (it.isNull(1)) null else it.getLong(1), gapM, it.intOrNull(4), it.intOrNull(5))
-                if (!it.isNull(3)) prevEnd = it.getDouble(3)
-            }
+        readableDatabase.rawQuery(
+            "SELECT start_t, end_t, soot_start, soot_end FROM regen UNION ALL SELECT start_t, end_t, soot_start, soot_end FROM peer_regen ORDER BY start_t", null,
+        ).use {
+            while (it.moveToNext()) rows += Regen(it.getLong(0), if (it.isNull(1)) null else it.getLong(1), null, it.intOrNull(2), it.intOrNull(3))
         }
-        return rows
+        val phones = phones()
+        var prevEnd: Long? = null
+        return mergeRegens(rows).map { r ->
+            r.copy(gapM = prevEnd?.let { driven(phones, it, r.start) }).also { if (r.end != null) prevEnd = r.end }
+        }
     }
 
-    /** Soot averaged per 10-minute bucket since [since] (epoch ms), oldest first. */
+    /** Soot averaged per 10-minute bucket since [since] (epoch ms), oldest first, from every phone. */
     fun sootSeries(since: Long): List<Pair<Long, Float>> =
         readableDatabase.rawQuery(
-            "SELECT (t / 600000) * 600000 AS b, AVG(soot) FROM sample WHERE t >= ? AND soot IS NOT NULL GROUP BY b ORDER BY b",
+            "SELECT (t / 600000) * 600000 AS b, AVG(soot) FROM (SELECT t, soot FROM sample WHERE t >= ?1 UNION ALL SELECT t, soot FROM peer_sample WHERE t >= ?1) " +
+                "WHERE soot IS NOT NULL GROUP BY b ORDER BY b",
             arrayOf(since.toString()),
         ).use {
             val out = ArrayList<Pair<Long, Float>>(it.count)
@@ -78,10 +93,62 @@ class Db private constructor(ctx: Context, name: String?) : SQLiteOpenHelper(ctx
             out
         }
 
+    /** Car distance since the last finished regen, by any phone. */
     fun metresSinceRegen(): Double? =
-        readableDatabase.rawQuery("SELECT odo_end FROM regen WHERE odo_end IS NOT NULL ORDER BY start_t DESC LIMIT 1", null).use {
-            if (it.moveToFirst()) odometer() - it.getDouble(0) else null
+        readableDatabase.rawQuery("SELECT MAX(t) FROM (SELECT MAX(end_t) AS t FROM regen UNION ALL SELECT MAX(end_t) FROM peer_regen)", null).use {
+            if (it.moveToFirst() && !it.isNull(0)) driven(phones(), it.getLong(0), Long.MAX_VALUE) else null
         }
+
+    /** null = this phone, then the other phones' ids. Cached: the DISTINCT scans every peer row, and only putPeers changes it. */
+    @Volatile private var phones: List<String?>? = null
+
+    private fun phones(): List<String?> = phones ?: (listOf<String?>(null) +
+        readableDatabase.rawQuery("SELECT DISTINCT device FROM peer_sample", null).use { c -> List(c.count) { c.moveToNext(); c.getString(0) } })
+        .also { phones = it }
+
+    /** Metres the car drove between two instants: each phone's own GPS odometer only grows, so add up their progress. */
+    private fun driven(phones: List<String?>, t0: Long, t1: Long): Double =
+        phones.sumOf { maxOf(0.0, (odoAt(it, t1) ?: 0.0) - (odoAt(it, t0) ?: 0.0)) }
+
+    /** A phone's odometer at [t]: its last reading by then, else its first reading (it hadn't driven yet). */
+    private fun odoAt(phone: String?, t: Long): Double? {
+        val (from, args) = if (phone == null) "sample WHERE" to emptyArray<String>() else "peer_sample WHERE device = ? AND" to arrayOf(phone)
+        fun one(sql: String, vararg a: String) = readableDatabase.rawQuery(sql, a).use { if (it.moveToFirst() && !it.isNull(0)) it.getDouble(0) else null }
+        return one("SELECT odo_m FROM $from t <= ? ORDER BY t DESC LIMIT 1", *args, t.toString())
+            ?: one("SELECT odo_m FROM $from 1 ORDER BY t LIMIT 1", *args)
+    }
+
+    /**
+     * Stores one page of the hub's export: other phones' samples (re-sent rows are ignored) and their full regen list,
+     * which replaces the old one because regens gain an end time later.
+     */
+    fun putPeers(samples: JSONArray, regens: JSONArray) {
+        val db = writableDatabase
+        db.beginTransaction()
+        try {
+            for (i in 0 until samples.length()) {
+                val r = samples.getJSONArray(i) // device, phone_rowid, t, soot, temp, regen, odo_m
+                db.insertWithOnConflict("peer_sample", null, ContentValues().apply {
+                    put("device", r.getString(0)); put("phone_rowid", r.getLong(1)); put("t", r.getLong(2))
+                    put("soot", r.intOrNull(3)); put("temp", r.intOrNull(4)); put("regen", r.getInt(5) == 1); put("odo_m", r.optDouble(6, 0.0))
+                }, SQLiteDatabase.CONFLICT_IGNORE)
+            }
+            db.delete("peer_regen", null, null)
+            for (i in 0 until regens.length()) {
+                val r = regens.getJSONArray(i) // device, id, start_t, end_t, soot_start, soot_end
+                db.insert("peer_regen", null, ContentValues().apply {
+                    put("device", r.getString(0)); put("id", r.getLong(1)); put("start_t", r.getLong(2))
+                    put("end_t", if (r.isNull(3)) null else r.getLong(3)); put("soot_start", r.intOrNull(4)); put("soot_end", r.intOrNull(5))
+                })
+            }
+            db.setTransactionSuccessful()
+        } finally {
+            db.endTransaction()
+            phones = null
+        }
+    }
+
+    private fun JSONArray.intOrNull(i: Int): Int? = if (isNull(i)) null else getInt(i)
 
     /** Sample rows after [rowid] for the hub, as [rowid, t, soot, temp, regen, odo_m]. */
     fun samplesAfter(rowid: Long, limit: Int): JSONArray =
@@ -119,6 +186,8 @@ class Db private constructor(ctx: Context, name: String?) : SQLiteOpenHelper(ctx
     private fun Cursor.intOrNull(i: Int): Int? = if (isNull(i)) null else getInt(i)
 
     companion object {
+        /** Regens from two phones (dongle hand-over mid-burn) closer than this are the same burn; matches the hub. */
+        const val MERGE_SLACK_MS = 2 * 60_000L
         const val METRES_PER_MILE = 1609.344
         private const val SAMPLE_T_INDEX = "CREATE INDEX IF NOT EXISTS sample_t ON sample(t)"
         private var real: Db? = null
@@ -139,4 +208,21 @@ class Db private constructor(ctx: Context, name: String?) : SQLiteOpenHelper(ctx
             debug = null
         }
     }
+}
+
+/**
+ * [rows] sorted by start. A finished regen that starts within [Db.MERGE_SLACK_MS] of the previous finished one's end
+ * is the same burn seen by another phone. Open regens are never merged, so a phone killed mid-burn can't swallow later ones.
+ */
+fun mergeRegens(rows: List<Db.Regen>): List<Db.Regen> {
+    val out = mutableListOf<Db.Regen>()
+    for (r in rows) {
+        val last = out.lastOrNull()
+        if (last?.end != null && r.end != null && r.start <= last.end + Db.MERGE_SLACK_MS) {
+            if (r.end > last.end) out[out.lastIndex] = last.copy(end = r.end, sootEnd = r.sootEnd)
+        } else {
+            out += r
+        }
+    }
+    return out
 }

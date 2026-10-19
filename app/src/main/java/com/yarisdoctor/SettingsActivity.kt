@@ -46,6 +46,12 @@ class SettingsActivity : Activity() {
                 edgeLightRow(),
                 row("Distance units", if (Prefs.km(context)) "Kilometres" else "Miles") { pickUnits() },
             ))
+            addView(section("DPF codes"))
+            addView(group(
+                pidRow("Soot load", Prefs.PID_SOOT, "the soot load (1 byte, × 2 = %)"),
+                pidRow("DPF temperature", Prefs.PID_TEMP, "the temperature (2 bytes, × 0.625 = °C)"),
+                pidRow("Regeneration flag", Prefs.PID_REGEN, "the regen flag (its low digit is 1 during a regen)"),
+            ))
             addView(section("Home hub"))
             addView(group(
                 row("Driver name", Prefs.driver(context)) {
@@ -55,7 +61,14 @@ class SettingsActivity : Activity() {
                 },
                 row("Hub address", Prefs.server(context).ifBlank { "Not set: uploads are off" }) {
                     ask("Hub address", "Your Yaris Doctor Hub on the home network, e.g. 192.168.1.50 (port $DEFAULT_HUB_PORT is assumed)", Prefs.server(context)) {
-                        Prefs.put(context, Prefs.SERVER, hubUrl(it))
+                        val url = hubUrl(it)
+                        if (url != Prefs.server(context)) {
+                            // A different hub: send everything again and download from its start; duplicates are ignored both ways
+                            Prefs.put(context, Prefs.SYNCED_ROWID, 0L)
+                            Prefs.put(context, Prefs.SYNCED_REGENS, null)
+                            Prefs.put(context, Prefs.PULLED_ROWID, 0L)
+                        }
+                        Prefs.put(context, Prefs.SERVER, url)
                     }
                 },
                 row("Home Wi-Fi name", Prefs.wifi(context).ifBlank { "Not set: uploads are off" }) {
@@ -91,6 +104,45 @@ class SettingsActivity : Activity() {
         }
         ui.fitSystemBars(root)
         setContentView(root)
+    }
+
+    /** The OBD request for one reading and where its value sits in the reply; other Yaris years may differ. Blank = default. */
+    private fun pidRow(title: String, key: String, what: String): View {
+        val defCode = Prefs.PID_DEFAULTS.getValue(key)
+        val defByte = Prefs.BYTE_DEFAULTS.getValue(key)
+        val code = Prefs.pid(this, key)
+        val byte = Prefs.byte(this, key)
+        val sub = "$code · byte $byte" + if (code == defCode && byte == defByte) " (default)" else ""
+        return row(title, sub) {
+            val codeIn = EditText(this).apply { setText(code); setSingleLine(); hint = defCode }
+            val byteIn = EditText(this).apply {
+                setText(byte.toString()); setSingleLine(); hint = defByte.toString()
+                inputType = android.text.InputType.TYPE_CLASS_NUMBER
+            }
+            val box = ui.column(
+                ui.text(Type.BODY_SM, R.color.muted, "OBD code the app asks the car for (default $defCode)"), codeIn,
+                ui.text(Type.BODY_SM, R.color.muted, "Byte in the reply that holds $what, counting the reply's first byte as 0 (default $defByte)").apply {
+                    setPadding(0, ui.px(12), 0, 0)
+                },
+                byteIn,
+                ui.text(Type.BODY_SM, R.color.muted, "Leave a field blank for its default.").apply { setPadding(0, ui.px(8), 0, 0) },
+            ).apply { setPadding(ui.px(24), ui.px(8), ui.px(24), 0) }
+            AlertDialog.Builder(this)
+                .setTitle(title)
+                .setView(box)
+                .setPositiveButton("Save") { _, _ ->
+                    val newCode = pidCode(codeIn.text.toString(), defCode)
+                        ?: return@setPositiveButton toast("Not a valid code: use 2–4 hex bytes, like $defCode")
+                    val newByte = bytePos(byteIn.text.toString(), defByte)
+                        ?: return@setPositiveButton toast("Not a valid byte: use a number from 0 to 63")
+                    Prefs.put(this, key, newCode)
+                    Prefs.putByte(this, key, newByte)
+                    DpfService.restart(this) // a running session read the old values at connect
+                    render()
+                }
+                .setNegativeButton("Cancel", null)
+                .show()
+        }
     }
 
     private fun pickDongle() {

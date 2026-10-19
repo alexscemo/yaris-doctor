@@ -57,7 +57,24 @@ fun parse(raw: String): String? {
     return out.toString()
 }
 
-// Char offsets and scale factors are the ones found on the car with DPFViewer (BT.h).
-fun sootOf(p: String): Int? = if (p.length >= 40) p.substring(38, 40).toIntOrNull(16)?.times(2) else null
-fun regenOf(p: String): Boolean? = if (p.length >= 34) p.substring(33, 34).toIntOrNull(16)?.let { it == 1 } else null
-fun tempOf(p: String): Int? = if (p.length >= 20) p.substring(16, 20).toIntOrNull(16)?.let { (it * 0.625).toInt() } else null
+/**
+ * Normalises a user-typed OBD request ("21 dd" → "21DD"): 2–4 hex bytes, so a typo or an "AT" command can't reach the
+ * dongle. Blank → [default]; anything else invalid → null.
+ */
+fun pidCode(s: String, default: String): String? {
+    val code = s.filterNot { it.isWhitespace() }.uppercase()
+    if (code.isEmpty()) return default
+    return code.takeIf { it.length % 2 == 0 && it.length in 4..8 && it.all { c -> c in '0'..'9' || c in 'A'..'F' } }
+}
+
+/** Blank → [default]; otherwise a byte position 0–63 of the reply, or null if it isn't one. */
+fun bytePos(s: String, default: Int): Int? = if (s.isBlank()) default else s.trim().toIntOrNull()?.takeIf { it in 0..63 }
+
+// [byte] counts reply bytes from 0, including the echoed mode/PID (byte 0 = 0x61); 2 hex chars per byte.
+// Defaults and scale factors are the ones found on the car with DPFViewer (BT.h), which used char offsets 38, 16 and 33.
+private fun hexAt(p: String, byte: Int, chars: Int, skip: Int = 0): Int? =
+    if (p.length >= byte * 2 + skip + chars) p.substring(byte * 2 + skip, byte * 2 + skip + chars).toIntOrNull(16) else null
+
+fun sootOf(p: String, byte: Int = 19): Int? = hexAt(p, byte, 2)?.times(2)
+fun tempOf(p: String, byte: Int = 8): Int? = hexAt(p, byte, 4)?.let { (it * 0.625).toInt() } // 2 bytes, big-endian
+fun regenOf(p: String, byte: Int = 16): Boolean? = hexAt(p, byte, 1, skip = 1)?.let { it == 1 } // low nibble of the byte

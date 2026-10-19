@@ -8,6 +8,9 @@ object Prefs {
     const val LOGGING = "logging"
     const val ALERTS = "alerts"
     const val EDGE = "edge"
+    const val PID_SOOT = "pid_soot"
+    const val PID_TEMP = "pid_temp"
+    const val PID_REGEN = "pid_regen"
     const val KM = "km"
     const val SERVER = "server"
     const val WIFI = "wifi"
@@ -17,7 +20,15 @@ object Prefs {
     const val SYNC_STATUS = "sync_status"
     const val SYNC_OK_AT = "sync_ok_at"
     const val SYNC_TRIED_AT = "sync_tried_at"
+    const val PULLED_ROWID = "pulled_rowid"
+    const val PULLED_AT = "pulled_at"
     private const val DEVICE_ID = "device_id"
+
+    /** OBD requests per reading, defaulting to the ones DPFViewer found on the owner's Yaris; other years may differ. */
+    val PID_DEFAULTS = mapOf(PID_SOOT to "21DD", PID_TEMP to "21F1", PID_REGEN to "21DF")
+
+    /** Byte position of each value in its reply (see sootOf/tempOf/regenOf), keyed like the codes: "<pid key>_byte". */
+    val BYTE_DEFAULTS = mapOf(PID_SOOT to 19, PID_TEMP to 8, PID_REGEN to 16)
 
     // DPFViewer's dongle, kept as the default so existing installs keep connecting
     private const val DEFAULT_DONGLE = "66:1E:32:7A:2E:72"
@@ -31,6 +42,9 @@ object Prefs {
     fun dongleName(c: Context) = sp(c).getString(DONGLE_NAME, null)
     fun logging(c: Context) = sp(c).getBoolean(LOGGING, true)
     fun alerts(c: Context) = sp(c).getBoolean(ALERTS, true)
+    fun pid(c: Context, key: String) = sp(c).getString(key, null) ?: PID_DEFAULTS.getValue(key)
+    fun byte(c: Context, key: String) = sp(c).getInt("${key}_byte", BYTE_DEFAULTS.getValue(key))
+    fun putByte(c: Context, key: String, value: Int) = sp(c).edit().putInt("${key}_byte", value).apply()
     fun edge(c: Context) = sp(c).getBoolean(EDGE, false) // off by default: it needs "Display over other apps"
     fun km(c: Context) =sp(c).getBoolean(KM, false)
     // Both empty by default: nothing is uploaded until the user points the app at their own hub and Wi-Fi

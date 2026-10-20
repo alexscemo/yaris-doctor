@@ -8,6 +8,7 @@ import org.junit.Test
 /** Idle payloads from the Techstream capture (NLP130_engine_PIDs.xlsx, LIDs sheet) and the values Techstream showed. */
 class PidTest {
     private fun pid(name: String, lid: String) = PIDS.single { it.name == name && it.lid == lid }
+    private fun Pid.shown(payload: String) = decode(payload)?.let(::format) // what All data shows
 
     @Test fun tableIsWholeAndConsistent() {
         assertEquals(102, PIDS.size)
@@ -33,11 +34,11 @@ class PidTest {
 
     @Test fun flagsEnumsAndSigns() {
         val e6 = "18800C4104"
-        assertEquals("ON", pid("Neutral Position SW Signal", "E6").text(e6))
-        assertEquals("OK", pid("EGR Close Lrn. Status", "E6").text(e6))
-        assertEquals("OFF", pid("Engine Oil Volume (Overfill)", "E6").text(e6))
-        assertEquals("Standby", pid("DPNR/DPF Status Reju(PM)", "DF").text("08D004FF008CE9483E00143200 0F00".replace(" ", "")))
-        assertEquals("Operate", pid("DPNR/DPF Status Reju(PM)", "DF").text("08D004FF008CE9483E02143200 0F00".replace(" ", "")))
+        assertEquals("ON", pid("Neutral Position SW Signal", "E6").shown(e6))
+        assertEquals("OK", pid("EGR Close Lrn. Status", "E6").shown(e6))
+        assertEquals("OFF", pid("Engine Oil Volume (Overfill)", "E6").shown(e6))
+        assertEquals("Standby", pid("DPNR/DPF Status Reju(PM)", "DF").shown("08D004FF008CE9483E00143200 0F00".replace(" ", "")))
+        assertEquals("Operate", pid("DPNR/DPF Status Reju(PM)", "DF").shown("08D004FF008CE9483E02143200 0F00".replace(" ", "")))
         // 0xFFBA as a signed 16-bit field = -70 → -7.0 deg
         assertEquals(-7.0, pid("Pilot 1 Injection Timing", "AD").decode("0".repeat(16) + "FFBA" + "0".repeat(32))!!, 1e-9)
         assertNull(pid("Engine Speed", "0C").decode("0C"))

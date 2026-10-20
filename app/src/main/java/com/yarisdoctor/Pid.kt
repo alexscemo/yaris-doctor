@@ -27,8 +27,6 @@ class Pid(
     }
 
     /** What the user sees: the enum label, or the number with Techstream's decimals and the unit. */
-    fun text(payload: String): String? = decode(payload)?.let(::format)
-
     fun format(v: Double): String {
         enum?.let { return it.getOrNull(v.toInt()) ?: "? (${v.toInt()})" }
         return "%.${decimals}f".format(v) + if (unit.isEmpty()) "" else " $unit"

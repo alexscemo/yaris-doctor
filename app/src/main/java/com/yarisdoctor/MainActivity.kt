@@ -16,6 +16,7 @@ import android.os.PowerManager
 import android.provider.Settings
 import android.view.Gravity
 import android.view.View
+import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
@@ -41,6 +42,7 @@ class MainActivity : Activity() {
     private lateinit var soot: TextView
     private lateinit var sootSub: TextView
     private lateinit var miles: TextView
+    private lateinit var sootFill: SootView
     private lateinit var milesSub: TextView
     private lateinit var sootChart: ChartView
     private lateinit var regenChart: ChartView
@@ -50,10 +52,11 @@ class MainActivity : Activity() {
     private lateinit var health: LinearLayout
     private var healthKey: String? = null
     private val allData by lazy { AllData(this, ui) }
+    private val rules by lazy { RulesTab(this, ui) }
     private lateinit var overview: View
     private lateinit var scroll: ScrollView
     private lateinit var tabs: LinearLayout
-    private var allTab = false
+    private var tab = 0 // index into TABS
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -87,10 +90,18 @@ class MainActivity : Activity() {
         sootSub = ui.text(Type.BODY_SM, R.color.on_instrument_soft)
         miles = ui.text(Type.DISPLAY_MD, R.color.on_instrument)
         milesSub = ui.text(Type.BODY_SM, R.color.on_instrument_soft)
-        val instrument = ui.card(R.color.instrument, 24).apply {
+        val stats = ui.card(R.color.instrument, 24).apply {
             orientation = LinearLayout.HORIZONTAL
+            background = null // the frame below draws the card, with the soot behind the numbers
             addView(stat("Soot load", soot, sootSub), LinearLayout.LayoutParams(0, -2, 1f))
             addView(stat("Since last regen", miles, milesSub), LinearLayout.LayoutParams(0, -2, 1f).apply { marginStart = ui.px(16) })
+        }
+        sootFill = SootView(this, ui.color(R.color.soot_fill), ui.color(R.color.primary))
+        val instrument = FrameLayout(this).apply {
+            background = ui.shape(R.color.instrument, 12)
+            clipToOutline = true
+            addView(sootFill, FrameLayout.LayoutParams(-1, -1))
+            addView(stats, FrameLayout.LayoutParams(-1, -2))
         }
 
         // Charts: cream feature-cards
@@ -116,7 +127,7 @@ class MainActivity : Activity() {
         overview = content
         scroll = ScrollView(this)
         tabs = LinearLayout(this).apply { setPadding(ui.px(16), 0, ui.px(16), ui.px(8)) }
-        showTab(false)
+        showTab(0)
         val root = ui.column(ui.topBar("Yaris Doctor", end = settings), tabs).apply {
             addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
         }
@@ -149,20 +160,21 @@ class MainActivity : Activity() {
         super.onPause()
     }
 
-    private fun showTab(all: Boolean) {
-        allTab = all
+    private fun showTab(i: Int) {
+        tab = i
         tabs.removeAllViews()
-        for ((label, on) in listOf("Overview" to !all, "All data" to all)) {
-            tabs.addView(ui.chip(label, on) { if (!on) showTab(!all) }, LinearLayout.LayoutParams(-2, -2).apply { marginEnd = ui.px(8) })
+        TABS.forEachIndexed { k, label ->
+            tabs.addView(ui.chip(label, k == i) { if (k != tab) showTab(k) }, LinearLayout.LayoutParams(-2, -2).apply { marginEnd = ui.px(8) })
         }
         scroll.removeAllViews()
-        scroll.addView(if (all) allData.view else overview)
+        scroll.addView(when (i) { 1 -> allData.view; 2 -> rules.view; else -> overview })
         scroll.scrollTo(0, 0)
         refresh()
     }
 
     private fun refresh() {
-        if (allTab) return allData.refresh()
+        if (tab == 1) return allData.refresh()
+        if (tab == 2) return // the rules don't change
         val db = Db.get(this)
         val last = db.lastSample()
         val regens = db.regens()
@@ -199,6 +211,7 @@ class MainActivity : Activity() {
         val unit = if (km) "km" else "mi"
 
         soot.text = last?.soot?.let { "$it%" } ?: "—"
+        sootFill.setSoot(last?.soot)
         sootSub.text = last?.let { if (live) "now" else "at ${fmt(it.t)}" } ?: "no readings yet"
         val gaps = regens.mapNotNull { it.gapM }
         miles.text = db.metresSinceRegen()?.let { "%.0f $unit".format(it / perUnit) } ?: "—"
@@ -304,5 +317,6 @@ class MainActivity : Activity() {
 
     companion object {
         private const val DAY_MS = 86_400_000L
+        private val TABS = listOf("Overview", "All data", "Rules")
     }
 }

@@ -11,4 +11,7 @@
     <color name="muted_soft">#8e8b82</color>
     <color name="instrument">#252320</color>
     <color name="chart_grid">#1f1e1b</color>
+    <color name="flash_up">#26422c</color>
+    <color name="flash_down">#4a2a22</color>
+    <color name="soot_fill">#36332f</color>
 </resources>

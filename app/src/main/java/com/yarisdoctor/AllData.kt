@@ -1,6 +1,9 @@
 package com.yarisdoctor
 
+import android.animation.ValueAnimator
 import android.app.Activity
+import android.graphics.Color
+import android.graphics.drawable.GradientDrawable
 import android.text.Editable
 import android.text.TextWatcher
 import android.view.Gravity
@@ -20,6 +23,7 @@ class AllData(private val a: Activity, private val ui: Ui) {
     private var query = ""
     private var open: Pid? = null
     private val values = HashMap<String, TextView>() // pid id → value text of the rows on screen
+    private val last = HashMap<String, Double>()       // pid id → value at the previous refresh, to flash changes
     private val rows = ui.column()
     private val header = ui.text(Type.BODY_SM, R.color.muted)
     private val chips = LinearLayout(a)
@@ -66,7 +70,11 @@ class AllData(private val a: Activity, private val ui: Ui) {
         if (shown.isEmpty()) rows.addView(ui.text(Type.BODY_MD, R.color.muted, "No value matches.").apply { setPadding(0, ui.px(16), 0, 0) })
         shown.forEachIndexed { i, p ->
             if (i > 0) rows.addView(ui.divider())
-            val value = ui.text(Type.TITLE_SM, R.color.ink, "—").apply { gravity = Gravity.END }
+            val value = ui.text(Type.TITLE_SM, R.color.ink, "—").apply {
+                gravity = Gravity.END
+                setPadding(ui.px(8), ui.px(2), ui.px(8), ui.px(2))
+                background = GradientDrawable().apply { cornerRadius = ui.px(6).toFloat(); setColor(Color.TRANSPARENT) }
+            }
             values[p.id] = value
             rows.addView(LinearLayout(a).apply {
                 gravity = Gravity.CENTER_VERTICAL
@@ -101,7 +109,14 @@ class AllData(private val a: Activity, private val ui: Ui) {
             System.currentTimeMillis() - newest <= 30_000 -> "Live from the engine ECU · ${PIDS.size} values"
             else -> "From the last drive, ${fmt(newest)}"
         }
-        for (p in PIDS) values[p.id]?.text = latest[p.lid]?.let { p.text(it.second) } ?: "—"
+        for (p in PIDS) {
+            val v = latest[p.lid]?.let { p.decode(it.second) }
+            val view = values[p.id]
+            view?.text = v?.let(p::format) ?: "—"
+            if (v == null) continue
+            val before = last.put(p.id, v)
+            if (view != null && before != null && v != before) flash(view, v > before)
+        }
         open?.let { p ->
             val series = db.frameSeries(p.lid, 30 * 60_000L).mapNotNull { (t, hex) -> p.decode(hex)?.let { t to it } }
             chart.set(
@@ -109,6 +124,17 @@ class AllData(private val a: Activity, private val ui: Ui) {
                 { i -> "${time(series[i].first)} · ${p.format(series[i].second)}" },
                 ::time,
             )
+        }
+    }
+
+    /** Green-tinted for a value that went up, red-tinted for down, fading out over a second. */
+    private fun flash(view: TextView, up: Boolean) {
+        val bg = view.background as GradientDrawable
+        val c = ui.color(if (up) R.color.flash_up else R.color.flash_down)
+        ValueAnimator.ofArgb(c, c and 0x00FFFFFF).apply {
+            duration = 1200
+            addUpdateListener { bg.setColor(it.animatedValue as Int) }
+            start()
         }
     }
 

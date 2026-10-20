@@ -16,6 +16,11 @@
     <color name="on_instrument">#faf9f5</color>
     <color name="on_instrument_soft">#a09d96</color>
     <color name="accent_teal">#5db8a6</color>
+    <!-- All data: a value that just went up / down flashes behind its text (ink stays readable on both) -->
+    <color name="flash_up">#d6ecd5</color>
+    <color name="flash_down">#f3d6cd</color>
+    <!-- Overview: soot filling the instrument card; on_instrument_soft keeps 4.5:1 on it -->
+    <color name="soot_fill">#33302c</color>
     <!-- Chart gridlines sit on surface_card -->
     <color name="chart_grid">#e6dfd8</color>
 </resources>

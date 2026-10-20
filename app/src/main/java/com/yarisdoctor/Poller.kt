@@ -71,5 +71,17 @@ class Poller(private val send: (String) -> String?) {
         val SLOW = listOf("211F", "2121", "2130", "2131", "2133", "214D", "214E", "21E1")
         const val SLOW_MS = 5 * 60_000L
         const val PARK_AFTER = 5
+        /** Shortest cycle; a cycle whose requests take longer simply runs longer. */
+        const val CYCLE_MS = 2_000L
+        const val REGEN_CYCLE_MS = 1_000L
+        /** Two MEDIUM requests per cycle, so each comes round every this many ms. */
+        val MEDIUM_MS = (MEDIUM.size + 1) / 2 * CYCLE_MS
+
+        /** How often [lid]'s request is sent while driving, for the Rules tab. */
+        fun pollRate(lid: String): String = when ("21$lid") {
+            in FAST -> "every ${CYCLE_MS / 1000} s"
+            in MEDIUM -> "about every ${MEDIUM_MS / 1000} s"
+            else -> "every ${SLOW_MS / 60_000} min"
+        }
     }
 }

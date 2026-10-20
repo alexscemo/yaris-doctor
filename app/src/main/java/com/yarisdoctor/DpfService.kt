@@ -190,7 +190,7 @@ class DpfService : Service() {
                         lastSample = t
                     }
                     checks(t, checker.check(t, replies, odoM, rec.inRegen))
-                    Thread.sleep(((if (rec.inRegen) 1000 else 2000) - (System.currentTimeMillis() - t)).coerceAtLeast(0))
+                    Thread.sleep(((if (rec.inRegen) Poller.REGEN_CYCLE_MS else Poller.CYCLE_MS) - (System.currentTimeMillis() - t)).coerceAtLeast(0))
                 }
             } finally {
                 // The regen row and live alerts stay open: run() closes them unless the link comes back within REGEN_GAP_MS

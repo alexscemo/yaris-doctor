@@ -24,7 +24,7 @@ class SimTest {
         val got = p.cycle(0, emptyList())
         assertTrue(got.keys.containsAll(Poller.FAST))
         for ((code, reply) in got) assertEquals(frames[code], reply)
-        fun v(name: String) = PIDS.first { it.name == name }.let { it.text(frames.getValue("21${it.lid}").substring(4)) }
+        fun v(name: String) = PIDS.first { it.name == name }.let { p -> p.decode(frames.getValue("21${p.lid}").substring(4))?.let(p::format) }
         assertEquals("64 %", v("PM Accumulation Ratio"))
         assertEquals("Operate", v("DPNR/DPF Status Reju(PM)"))
         assertEquals("600.0 °C", v("Exhaust Temperature B1S2"))

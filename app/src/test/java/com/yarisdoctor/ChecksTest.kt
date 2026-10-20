@@ -87,4 +87,16 @@ class ChecksTest {
         assertEquals(setOf("dtc"), diffAlerts(mapOf("dtc" to "x"), emptyList()).close)
         assertTrue(diffAlerts(mapOf("dtc" to "x"), emptyList()).open.isEmpty())
     }
+
+    @Test fun rulesTabDescribesEveryRuleAndItsInputsExist() {
+        val keys = Checker.RULES.map { it.key } + TREND_RULES.map { it.first }
+        assertEquals(keys.size, keys.toSet().size)
+        for (r in Checker.RULES) {
+            assertTrue(r.key, r.title.isNotBlank() && r.about.isNotBlank() && r.uses.isNotEmpty())
+            for (name in r.uses) assertTrue("${r.key} reads unknown value $name", PIDS.any { it.name == name })
+        }
+        assertEquals("every 2 s", Poller.pollRate("0C"))
+        assertEquals("about every 18 s", Poller.pollRate("AD"))
+        assertEquals("every 5 min", Poller.pollRate("E1"))
+    }
 }

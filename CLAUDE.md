@@ -44,11 +44,17 @@ CI (`.github/workflows/build.yml`) runs `gradle test assembleDebug` on every pus
     - Values older than 6 min are ignored.
     - The rate rules (coolant rise in 2 min, soot rise over 10 km of GPS distance outside regens) keep their own short history.
   - **History checks:** `trends()` checks the regen history: interval under 150 km, last 3 regens under 10 min. The service recomputes it at start and whenever a regen closes.
-  - **Thresholds:** each rule's comment names its source. "Estimate" marks the ones taken from other Toyota diesels or generic OBD logic, because no 1ND-TV figure was found. Tighten them once real drives show the normal range.
+  - **Rules tab:** every `Checker.Rule` carries a `title`, an `about` (condition, threshold, source) and `uses` (the `PIDS` names it reads). The **Rules** tab (`RulesTab`, third chip on the main screen) lists them with their hold time and each input's poll rate from `Poller.pollRate()`; `TREND_RULES` describes the `trends()` checks. A new rule must fill all three, and `ChecksTest` fails if a `uses` name isn't in the table.
+  - **Thresholds:** each rule's `about` names its source. "Estimate" marks the ones taken from other Toyota diesels or generic OBD logic, because no 1ND-TV figure was found. Tighten them once real drives show the normal range.
   - **Alerts:** `Db.syncAlerts()` (table `alert`, schema v5) keeps one open row per active key. It closes the row when the key goes away and returns newly opened keys. The service notifies each of those once per drive on the low-importance "Health warnings" channel.
   - **`diffAlerts()`:** the open/close/update decision is a pure function in `Checks.kt`, tested in `ChecksTest`. `Db.syncAlerts()` only applies it.
   - **When alerts close:** a drive outlives a Bluetooth drop, like a regen does. `checker`, `notified` and the open live alerts live on the service. `run()` resets them, and closes the live alerts, once the ECU has been silent (`lastSeen`) for more than `REGEN_GAP_MS`. So a flaky dongle neither re-notifies a warning nor splits its row. Regen-history alerts stay open while they apply.
   - **Overview:** the status card at the top shows "All good", "Warning" or "Check the car now", with the open alerts and those seen in the last 7 days.
+- **Motion:**
+  - **All data:** values that changed since the last refresh fade from `flash_up` (green tint) or `flash_down` (red tint) over 1.2 s.
+  - **Overview:** the instrument card's background is a `SootView`: `soot_fill` rises from the bottom to the soot %. A change animates the level and, for 4 s, shows specks settling when soot went up, or coral embers lifting when it went down.
+  - **Reduced motion:** with system animations off, the level jumps and no particles are drawn. The view only redraws while something moves.
+  - **Contrast:** `on_instrument_soft` keeps 4.5:1 on `soot_fill`, so text stays readable at any level.
 - **`frame` table** (schema v4): `t`, `lid`, `hex` = the payload after `61 <lid>`, decoded on read. `DpfService.thin()` keeps one frame per lid per minute for data older than 30 days. Each stretch is thinned once, tracked by `Prefs.THINNED_TO`.
 - **`Recorder`** turns readings into `sample`/`regen` rows (regen open/close transitions). It is shared by the real session, Debug mode and the fake history, so there is one copy of the regen logic.
 - **Settings** live in `Prefs` (SharedPreferences) and are edited in `SettingsActivity`. Changes the service must see (dongle, logging, Debug mode) go through `DpfService.restart()`, which stops the service so a fresh instance re-reads them. `DpfService.start()` is the only start path (activity, boot) and respects the logging toggle and the Bluetooth permission.

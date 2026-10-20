@@ -100,6 +100,37 @@ class Checker {
                 val bad = (1..4).filter { abs(v("Injection Feedback Val #$it") ?: 0.0) > 3.0 }
                 if (bad.isEmpty()) null else "Injector ${bad.joinToString(", ")} needs over ±3 mm³ of correction at idle: worn or blocked injector?"
             },
+            Rule("egr_tracking", "EGR valve off target", WARN, 15_000, "Estimate: the EGR valve more than 20 % away from the position the ECU asks for, for 15 s. Shops diagnose a sticking or sooted valve by comparing commanded and actual position; in the Techstream capture they agree within 2 % at idle and drift apart only for a few seconds while revving.", listOf("Target EGR Position", "Actual EGR Valve Pos.", "Engine Speed")) {
+                val target = v("Target EGR Position") ?: return@Rule null
+                val actual = v("Actual EGR Valve Pos.") ?: return@Rule null
+                if (running && abs(target - actual) > 20) "The EGR valve is at ${f0(actual)} % but the ECU asks for ${f0(target)} %: it may be sticking or sooted up." else null
+            },
+            Rule("egr_bypass_warm", "EGR cooler bypassed when warm", WARN, 180_000, "Estimate: the EGR cooler still bypassed after 3 min of driving above 50 km/h with the engine warm (75 °C+). The ECU bypasses the cooler to warm up faster and switches by coolant temperature and load (Toyota 1KD manual); the capture already switched to the cooler under load at 45 °C.", listOf("EGR Cooler Bypass Position", "Coolant Temp", "Vehicle Speed")) {
+                val c = v("Coolant Temp") ?: return@Rule null
+                if (v("EGR Cooler Bypass Position") == 3.0 && c >= 75 && (v("Vehicle Speed") ?: 0.0) > 50) "The EGR cooler is still bypassed with the engine at ${f0(c)} °C: the bypass valve may be stuck open." else null
+            },
+            Rule("throttle_tracking", "Intake throttle off target", WARN, 10_000, "Estimate: the diesel intake throttle more than 15 % away from its target for 10 s, a sign of a sticking or sooted throttle. Same commanded-versus-actual check as the EGR valve.", listOf("Target Throttle Position", "Actual Throttle Position", "Engine Speed")) {
+                val target = v("Target Throttle Position") ?: return@Rule null
+                val actual = v("Actual Throttle Position") ?: return@Rule null
+                if (running && abs(target - actual) > 15) "The intake throttle is at ${f0(actual)} % but the ECU asks for ${f0(target)} %: it may be sticking." else null
+            },
+            Rule("turbo_vanes", "Turbo vanes off target", WARN, 10_000, "Estimate: the variable turbo's vanes more than 15 % away from their command for 10 s. Sooted, sticking vanes are a common cause of low boost on diesels; the capture shows command and position within 1 %.", listOf("VN Turbo Command", "Actual VN Position", "Engine Speed")) {
+                val cmd = v("VN Turbo Command") ?: return@Rule null
+                val actual = v("Actual VN Position") ?: return@Rule null
+                if (running && abs(cmd - actual) > 15) "The turbo vanes are at ${f0(actual)} % against a command of ${f0(cmd)} %: they may be sticking." else null
+            },
+            Rule("learn_status", "Closed-position learning not done", WARN, 300_000, "The ECU still reports the EGR valve or intake throttle closed position as not learned (NG) after 5 min warm. It is normal briefly after a battery disconnect; the ECU relearns at idle.", listOf("EGR Close Lrn. Status", "Diesel Throttle Learn Status", "Coolant Temp", "Engine Speed")) {
+                val bad = listOfNotNull("EGR valve".takeIf { v("EGR Close Lrn. Status") == 0.0 }, "intake throttle".takeIf { v("Diesel Throttle Learn Status") == 0.0 })
+                if (running && warm && bad.isNotEmpty()) "The ECU hasn't learned the ${bad.joinToString(" and ")} closed position. Let the engine idle for a few minutes." else null
+            },
+            Rule("idle_rpm", "Idle speed unusual", WARN, 60_000, "Estimate: a warm idle (stopped, accelerator released) under 650 or over 1100 rpm for a minute. Owners report about 800 rpm warm, up to about 1000 with lights or A/C on (Toyota Owners Club).", listOf("Engine Speed", "Vehicle Speed", "Accel Position", "Coolant Temp")) {
+                val rpm = v("Engine Speed") ?: return@Rule null
+                if (warm && rpm > 400 && v("Vehicle Speed") == 0.0 && v("Accel Position") == 0.0 && (rpm < 650 || rpm > 1100)) "The engine idles at ${f0(rpm)} rpm (about 800 is normal)." else null
+            },
+            Rule("dpf_pressure_flow", "DPF pressure too low", WARN, 30_000, "Estimate: DPF pressure under 0.3 kPa with high exhaust flow (MAF 25 g/s+). A filter always resists some flow (the capture read 1.8 kPa at 21 g/s), so near zero points at a split pressure-sensor hose or a damaged filter (DPF efficiency codes like P2002).", listOf("DPF Differential Pressure", "MAF")) {
+                val dp = v("DPF Differential Pressure") ?: return@Rule null
+                if ((v("MAF") ?: 0.0) >= 25 && dp < 0.3 && !inRegen) "DPF pressure reads only ${f1(dp)} kPa at high flow: check the pressure-sensor hoses, or the filter may be damaged." else null
+            },
             Rule("oil_overfill", "Oil level too high", WARN, 10_000, "The ECU's oil overfill flag is on. On a DPF diesel that is often fuel from regens thinning the oil.", listOf("Engine Oil Volume (Overfill)")) { if (on("Engine Oil Volume (Overfill)")) "The ECU reports the oil level too high. On a DPF diesel that is often fuel from regens thinning the oil: check the dipstick." else null },
             Rule("ecu_coolant_high", "ECU: coolant too hot", CRIT, 0, "The ECU's own coolant-too-hot flag is on.", listOf("Engine Coolant Temp High")) { if (on("Engine Coolant Temp High")) "The ECU flags the coolant temperature as too high." else null },
             Rule("ecu_boost_low", "ECU: boost too low", WARN, 0, "The ECU's own low-boost flag is on.", listOf("Boost Pressure Low")) { if (on("Boost Pressure Low")) "The ECU flags boost pressure as too low." else null },

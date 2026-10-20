@@ -37,6 +37,7 @@ CI (`.github/workflows/build.yml`) runs `gradle test assembleDebug` on every pus
   - A cycle stops after 3 misses with nothing answered (ignition off would otherwise wait out every timeout).
   - Codes outside the table (a user's own DPF codes) pass through unchecked.
   `PollerTest` checks that FAST + MEDIUM + SLOW cover the table exactly.
+  Values a rule compares with each other must be read in the same cycle, so they belong in FAST. Example: `212C` / `21EA`, the EGR target and actual position compared by `egr_tracking`. MEDIUM codes are read in different cycles, seconds apart.
 - **Tabs:** `MainActivity` has two chips under the top bar (`Ui.chip`). "Overview" is the original screen. "All data" is `AllData`: every `PIDS` item, filtered by category chip (categories come from the generator's keyword list) and by name search, showing the latest value per lid via `Db.latestFrames()`. Tapping a row opens a chart of the last 30 minutes that lid was read (`Db.frameSeries()`). Only the visible tab refreshes. `PID_IDLE` (also generated) holds the captured idle payloads. They are test fixtures, and `Sim.frames()` patches the simulated soot, temps, regen, rpm, speed and coolant into them so Debug mode fills the tab.
 - **Health checks** (`Checks.kt`, tested in `ChecksTest`) run on the phone; the hub will only display them.
   - **Live checks:** `Checker` is one per drive. The service feeds it each cycle's replies, and it returns `Finding`s.

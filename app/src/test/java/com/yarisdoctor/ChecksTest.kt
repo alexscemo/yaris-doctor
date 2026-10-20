@@ -40,6 +40,46 @@ class ChecksTest {
         assertEquals(CRIT, f.level)
     }
 
+    private val warm = Triple("05", 0, 85 + 40)
+
+    /** True when [key] is not active at first but is once [holdMs] has passed, with the same readings throughout. */
+    private fun firesAfter(key: String, holdMs: Long, r: Map<String, String>): Boolean {
+        val c = Checker()
+        val early = key in keys(c.check(0, r, 0.0, false)) || key in keys(c.check(holdMs - 2_000, r, 0.0, false))
+        return !early && key in keys(c.check(holdMs, r, 0.0, false))
+    }
+
+    @Test fun warmIdleCaptureOnlyFlagsTheStoredCode() {
+        val c = Checker()
+        c.check(0, replies(warm), 0.0, false)
+        assertEquals(setOf("dtc"), keys(c.check(600_000, replies(warm), 0.0, false)))
+    }
+
+    @Test fun egrAndActuatorsOffTarget() {
+        assertTrue(firesAfter("egr_tracking", 15_000, replies(Triple("EA", 2, 230))))              // 90 % against 55 %
+        assertTrue(firesAfter("throttle_tracking", 10_000, replies(Triple("DD", 2, 0x50))))        // 80 % against 41 %
+        assertTrue(firesAfter("turbo_vanes", 10_000, replies(Triple("DD", 11, 100))))              // 50 % against 100 %
+        // A few seconds off target while revving is normal
+        val c = Checker()
+        c.check(0, replies(Triple("EA", 2, 230)), 0.0, false)
+        c.check(6_000, replies(), 0.0, false)
+        assertTrue("egr_tracking" !in keys(c.check(16_000, replies(Triple("EA", 2, 230)), 0.0, false)))
+    }
+
+    @Test fun egrCoolerStillBypassedWhenWarmAndDriving() {
+        val driving = replies(warm, Triple("0D", 0, 80)) // the captured bypass byte is 3 = Bypass
+        assertTrue(firesAfter("egr_bypass_warm", 180_000, driving))
+        assertTrue("egr_bypass_warm" !in keys(Checker().let { it.check(0, replies(Triple("0D", 0, 80)), 0.0, false); it.check(200_000, replies(Triple("0D", 0, 80)), 0.0, false) }))
+        val cooler = replies(warm, Triple("0D", 0, 80), Triple("EA", 5, 1))
+        assertTrue("egr_bypass_warm" !in keys(Checker().let { it.check(0, cooler, 0.0, false); it.check(200_000, cooler, 0.0, false) }))
+    }
+
+    @Test fun learningIdleAndDpfFlow() {
+        assertTrue(firesAfter("learn_status", 300_000, replies(warm, Triple("E6", 2, 0x04))))       // EGR closed position NG
+        assertTrue(firesAfter("idle_rpm", 60_000, replies(warm, Triple("0C", 0, 0x14), Triple("0C", 1, 0x50)))) // 1300 rpm
+        assertTrue(firesAfter("dpf_pressure_flow", 30_000, replies(Triple("10", 0, 0x0B), Triple("10", 1, 0xB8), Triple("EF", 0, 0x05), Triple("EF", 1, 0x1A))))
+    }
+
     @Test fun ecuOverfillFlagWarns() {
         val c = Checker()
         val overfill = replies(Triple("E6", 3, 0x41 or 0x20)) // bit 26 = 0x20 of payload byte 3
@@ -96,7 +136,7 @@ class ChecksTest {
             for (name in r.uses) assertTrue("${r.key} reads unknown value $name", PIDS.any { it.name == name })
         }
         assertEquals("every 2 s", Poller.pollRate("0C"))
-        assertEquals("about every 18 s", Poller.pollRate("AD"))
+        assertEquals("about every 16 s", Poller.pollRate("AD"))
         assertEquals("every 5 min", Poller.pollRate("E1"))
     }
 }

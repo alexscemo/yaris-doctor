@@ -38,6 +38,7 @@ class Elm(private val input: InputStream, private val output: OutputStream) {
 }
 
 private val ERRORS = listOf("UNABLETOCONNECT", "NODATA", "STOPPED", "ERROR")
+private val READ_SERVICES = setOf("21", "22", "01")
 
 /** Port of ELMduino get_response() + parseMultiLineResponse(). */
 fun parse(raw: String): String? {
@@ -58,13 +59,16 @@ fun parse(raw: String): String? {
 }
 
 /**
- * Normalises a user-typed OBD request ("21 dd" → "21DD"): 2–4 hex bytes, so a typo or an "AT" command can't reach the
- * dongle. Blank → [default]; anything else invalid → null.
+ * Normalises a user-typed OBD request ("21 dd" → "21DD"): 2–4 hex bytes starting with a read service (21 Toyota/KWP,
+ * 22 UDS, 01 OBD), so a typo, an "AT" command or an ECU-changing service (11 reset, 30/31 actuators, 3B write) can't
+ * reach the car; it is sent every cycle while driving. Blank → [default]; anything else invalid → null.
  */
 fun pidCode(s: String, default: String): String? {
     val code = s.filterNot { it.isWhitespace() }.uppercase()
     if (code.isEmpty()) return default
-    return code.takeIf { it.length % 2 == 0 && it.length in 4..8 && it.all { c -> c in '0'..'9' || c in 'A'..'F' } }
+    return code.takeIf {
+        it.length % 2 == 0 && it.length in 4..8 && it.all { c -> c in '0'..'9' || c in 'A'..'F' } && it.take(2) in READ_SERVICES
+    }
 }
 
 /** Blank → [default]; otherwise a byte position 0–63 of the reply, or null if it isn't one. */

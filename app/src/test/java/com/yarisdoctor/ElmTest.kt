@@ -25,6 +25,9 @@ class ElmTest {
         assertNull(pidCode("ATZ", "21DF"))
         assertNull(pidCode("21D", "21DF"))
         assertNull(pidCode("21", "21DF"))
+        assertEquals("010C", pidCode("01 0c", "21DF"))
+        // Services that change the ECU never pass, even well-formed: reset, clear DTCs, actuator / routine, write
+        for (bad in listOf("1101", "0400", "3001", "3101", "3B0102", "2E1234")) assertNull(bad, pidCode(bad, "21DF"))
     }
 
     @Test fun decodersUseDpfViewerOffsets() {

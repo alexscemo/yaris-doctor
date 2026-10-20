@@ -183,12 +183,19 @@ class DpfService : Service() {
         nm.notify(ID_SERVICE, status("Debug mode: simulated dongle"))
         val sim = Sim.live()
         val rec = Recorder(db) // its own, never kept open across sessions like the real one
+        var thinnedTo = 0L
         try {
             while (running) {
                 val r = sim.next()
                 odoM += sim.metresPerTick
                 publish(rec, r.soot, r.temp, r.regen)
-                db.frames(System.currentTimeMillis(), sim.frames(r))
+                val t = System.currentTimeMillis()
+                db.frames(t, sim.frames(r))
+                // The debug Db lives in RAM: keep 30 min at full rate, older frames one per minute, or a day of it runs out of memory
+                if (t - 30 * 60_000L - thinnedTo >= 60_000L) {
+                    db.thinFrames(thinnedTo, t - 30 * 60_000L)
+                    thinnedTo = t - 30 * 60_000L
+                }
                 Thread.sleep(1000)
             }
         } finally {

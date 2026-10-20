@@ -135,7 +135,7 @@ class SettingsActivity : Activity() {
                 .setView(box)
                 .setPositiveButton("Save") { _, _ ->
                     val newCode = pidCode(codeIn.text.toString(), defCode)
-                        ?: return@setPositiveButton toast("Not a valid code: use 2–4 hex bytes, like $defCode")
+                        ?: return@setPositiveButton toast("Not a valid code: use 2–4 hex bytes starting with 21, 22 or 01 (read requests only), like $defCode")
                     val newByte = bytePos(byteIn.text.toString(), defByte)
                         ?: return@setPositiveButton toast("Not a valid byte: use a number from 0 to 63")
                     val newFormula = formulaText(formulaIn.text.toString(), defFormula)

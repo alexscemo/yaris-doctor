@@ -70,7 +70,7 @@ CI (`.github/workflows/build.yml`) runs `gradle test assembleDebug` on every pus
 
 ## Facts from the car (do not change without on-car confirmation)
 
-- The three requests (`21DD` soot, `21F1` temperature, `21DF` regen) are defaults in `Prefs.PID_DEFAULTS`. Users can change them in Settings → DPF codes for other Yaris years; `pidCode()` only lets 2–4 hex bytes through, so no `AT` command reaches the dongle. Byte positions and formulas are configurable the same way:
+- The three requests (`21DD` soot, `21F1` temperature, `21DF` regen) are defaults in `Prefs.PID_DEFAULTS`. Users can change them in Settings → DPF codes for other Yaris years; `pidCode()` only lets 2–4 hex bytes starting with a read service (`21`, `22`, `01`) through, so no `AT` command or ECU-changing service (reset, actuators, writes) reaches the car. Byte positions and formulas are configurable the same way:
   - Positions: `Prefs.byte()`, defaults in `Prefs.BYTE_DEFAULTS`, checked by `bytePos()`.
   - Formulas: `Prefs.formula()`, defaults in `Prefs.FORMULA_DEFAULTS`, checked by `formulaText()`.
   - `Formula` in `Elm.kt` is a small Torque-style parser:

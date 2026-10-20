@@ -57,7 +57,8 @@ object Prefs {
     fun dongleName(c: Context) = sp(c).getString(DONGLE_NAME, null)
     fun logging(c: Context) = sp(c).getBoolean(LOGGING, true)
     fun alerts(c: Context) = sp(c).getBoolean(ALERTS, true)
-    fun pid(c: Context, key: String) = sp(c).getString(key, null) ?: PID_DEFAULTS.getValue(key)
+    // Re-checked on read: a code saved before pidCode() allowed only read services must not reach the car
+    fun pid(c: Context, key: String) = pidCode(sp(c).getString(key, null) ?: "", PID_DEFAULTS.getValue(key)) ?: PID_DEFAULTS.getValue(key)
     fun byte(c: Context, key: String) = sp(c).getInt("${key}_byte", BYTE_DEFAULTS.getValue(key))
     fun putByte(c: Context, key: String, value: Int) = sp(c).edit().putInt("${key}_byte", value).apply()
     fun formula(c: Context, key: String) = sp(c).getString("${key}_formula", null) ?: FORMULA_DEFAULTS.getValue(key)

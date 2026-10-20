@@ -48,6 +48,24 @@ class Sim(
 
     private fun nextTrigger() = 65f + rnd.nextFloat() * 20
 
+    /**
+     * Replies to the whole table for [r], as Poller.cycle returns them: the captured idle payloads with the DPF values,
+     * revs, speed and coolant swapped in, so the All data tab has something to show in Debug mode.
+     */
+    fun frames(r: Reading): Map<String, String> = PID_IDLE.mapValues { (lid, idle) ->
+        val b = idle.chunked(2).toMutableList()
+        fun put(at: Int, v: Int, n: Int = 1) { for (i in 0 until n) b[at + i] = "%02X".format(v shr (8 * (n - 1 - i)) and 0xFF) }
+        when (lid) {
+            "05" -> put(0, 85 + 40 + rnd.nextInt(4))
+            "0C" -> put(0, (if (r.regen) 1800 else 800 + rnd.nextInt(1700)) * 4, 2)
+            "0D" -> put(0, rnd.nextInt(110))
+            "DD" -> put(17, (r.soot / 2).coerceIn(0, 255))
+            "DF" -> put(9, if (r.regen) 2 else 0)
+            "F1" -> { put(4, (r.temp * 1.6 + 40).toInt(), 2); put(6, (r.temp * 1.6).toInt(), 2) }
+        }
+        "61$lid" + b.joinToString("")
+    }.mapKeys { "21${it.key}" }
+
     companion object {
         /** One tick per second, compressed so a regen comes round every few minutes. */
         fun live() = Sim(growth = 0.4f, drop = 1.5f, regenTicks = 45, metresPerTick = 400.0)

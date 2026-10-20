@@ -47,6 +47,11 @@ class MainActivity : Activity() {
     private lateinit var regenTitle: TextView
     private lateinit var history: LinearLayout
     private var historyKey = ""
+    private val allData by lazy { AllData(this, ui) }
+    private lateinit var overview: View
+    private lateinit var scroll: ScrollView
+    private lateinit var tabs: LinearLayout
+    private var allTab = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -105,8 +110,12 @@ class MainActivity : Activity() {
             addView(history, LinearLayout.LayoutParams(-1, -2).apply { topMargin = ui.px(8) })
         }
         val settings = ui.iconButton(R.drawable.ic_settings, "Settings") { startActivity(Intent(this, SettingsActivity::class.java)) }
-        val root = ui.column(ui.topBar("Yaris Doctor", end = settings)).apply {
-            addView(ScrollView(this@MainActivity).apply { addView(content) }, LinearLayout.LayoutParams(-1, 0, 1f))
+        overview = content
+        scroll = ScrollView(this)
+        tabs = LinearLayout(this).apply { setPadding(ui.px(16), 0, ui.px(16), ui.px(8)) }
+        showTab(false)
+        val root = ui.column(ui.topBar("Yaris Doctor", end = settings), tabs).apply {
+            addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
         }
         ui.fitSystemBars(root)
         setContentView(root)
@@ -137,7 +146,20 @@ class MainActivity : Activity() {
         super.onPause()
     }
 
+    private fun showTab(all: Boolean) {
+        allTab = all
+        tabs.removeAllViews()
+        for ((label, on) in listOf("Overview" to !all, "All data" to all)) {
+            tabs.addView(ui.chip(label, on) { if (!on) showTab(!all) }, LinearLayout.LayoutParams(-2, -2).apply { marginEnd = ui.px(8) })
+        }
+        scroll.removeAllViews()
+        scroll.addView(if (all) allData.view else overview)
+        scroll.scrollTo(0, 0)
+        refresh()
+    }
+
     private fun refresh() {
+        if (allTab) return allData.refresh()
         val db = Db.get(this)
         val last = db.lastSample()
         val regens = db.regens()

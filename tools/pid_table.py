@@ -11,7 +11,7 @@ M = '{http://schemas.openxmlformats.org/spreadsheetml/2006/main}'
 # First match wins; enums that match nothing are switches, other values are engine
 CATEGORIES = [
     ('Diagnostics', ['DTC', 'MIL', 'Codes', 'Learn', 'Lrn', 'Warmup', 'Run Time', 'IG-ON', 'Start Time', 'Glow Request', 'History', 'Initial']),
-    ('DPF / exhaust', ['PM Accumulation', 'DPNR', 'DPF', 'Exhaust', 'AF ', 'AFS']),
+    ('DPF / exhaust', ['PM Accumulation', 'DPNR', 'DPF', 'Exhaust', 'AF Lambda', 'AF Sensor', 'AFS']),
     ('EGR', ['EGR']),
     ('Turbo', ['VN ', 'Boost', 'MAP']),
     ('Fuel / injection', ['Injection', 'Fuel', 'SCV', 'Rail']),
@@ -73,6 +73,12 @@ def main():
             kstr(category(p['Parameter'], p['Type'])),
         ]
         print(f'    Pid({", ".join(args)}),')
+    print(')')
+    print()
+    print('/** Idle payload per lid from the same capture (engine warm-ish, ~41 °C): fixtures for tests and Debug mode. */')
+    print('val PID_IDLE = mapOf(')
+    for l in s['LIDs']:
+        print(f'    {kstr(l["LID"])} to {kstr(l["Sample payload (hex, idle)"].replace(" ", ""))},')
     print(')')
 
 

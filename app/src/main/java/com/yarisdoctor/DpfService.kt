@@ -188,6 +188,7 @@ class DpfService : Service() {
                 val r = sim.next()
                 odoM += sim.metresPerTick
                 publish(rec, r.soot, r.temp, r.regen)
+                db.frames(System.currentTimeMillis(), sim.frames(r))
                 Thread.sleep(1000)
             }
         } finally {

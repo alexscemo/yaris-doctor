@@ -75,6 +75,16 @@ class Ui(private val a: Activity) {
         addView(label)
     }
 
+    /** Filter / tab chip: a pill that is ink when selected. */
+    fun chip(label: String, on: Boolean, onClick: () -> Unit) =
+        pill(text(Type.CAPTION, if (on) R.color.canvas else R.color.ink, label), if (on) R.color.ink else R.color.surface_card).apply {
+            minimumHeight = px(36)
+            isClickable = true
+            isSelected = on
+            ripple(this)
+            setOnClickListener { onClick() }
+        }
+
     fun dot(colorId: Int) = View(a).apply { background = shape(colorId, 999) }
 
     /** button-icon-circular: 36dp cream circle with hairline, inside a 48dp touch target. */

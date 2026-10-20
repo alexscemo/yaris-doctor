@@ -56,6 +56,24 @@ class Db private constructor(ctx: Context, name: String?) : SQLiteOpenHelper(ctx
         }
     }
 
+    /** Newest payload per lid, as lid → (t, hex). One indexed lookup per lid: a GROUP BY would scan every frame. */
+    fun latestFrames(): Map<String, Pair<Long, String>> = PID_IDLE.keys.mapNotNull { lid ->
+        readableDatabase.rawQuery("SELECT t, hex FROM frame WHERE lid = ? ORDER BY t DESC LIMIT 1", arrayOf(lid)).use {
+            if (it.moveToFirst()) lid to (it.getLong(0) to it.getString(1)) else null
+        }
+    }.toMap()
+
+    /** [lid]'s payloads over the last [spanMs] it was read, oldest first. */
+    fun frameSeries(lid: String, spanMs: Long): List<Pair<Long, String>> =
+        readableDatabase.rawQuery(
+            "SELECT t, hex FROM frame WHERE lid = ?1 AND t >= (SELECT MAX(t) FROM frame WHERE lid = ?1) - ?2 ORDER BY t",
+            arrayOf(lid, spanMs.toString()),
+        ).use {
+            val out = ArrayList<Pair<Long, String>>(it.count)
+            while (it.moveToNext()) out += it.getLong(0) to it.getString(1)
+            out
+        }
+
     /** Keeps the first frame per request per minute in [[from], [to]): old drives stay chartable at a fraction of the size. */
     fun thinFrames(from: Long, to: Long) = writableDatabase.execSQL(
         "DELETE FROM frame WHERE t >= ? AND t < ? AND rowid NOT IN (SELECT MIN(rowid) FROM frame WHERE t >= ? AND t < ? GROUP BY lid, t / 60000)",

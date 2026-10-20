@@ -25,6 +25,7 @@ object Sync {
     private const val BATCH = 2000
     private const val RETRY_MS = 15 * 60_000L // after a failure (away from home, hub down), don't retry every minute
     private const val PULL_MS = 10 * 60_000L
+    private const val MAX_PAGES = 50 // per run; the rest comes on the next pull, from the saved cursor
     private const val TAG = "Sync"
 
     /** Current Wi-Fi SSID, kept by [watch]; null when not on Wi-Fi or the name is hidden (no location permission). */
@@ -97,14 +98,17 @@ object Sync {
             // Then download what the other phones logged, so this phone's screen shows the whole car
             var cursor = Prefs.long(c, Prefs.PULLED_ROWID)
             var got = 0
+            var pages = 0
             do {
+                val prev = cursor
                 val page = request(c, "/api/export?device=${Prefs.deviceId(c)}&after=$cursor", null)
                 val samples = page.getJSONArray("samples")
                 db.putPeers(samples, page.getJSONArray("regens"))
                 cursor = page.getLong("next")
                 Prefs.put(c, Prefs.PULLED_ROWID, cursor)
                 got += samples.length()
-            } while (page.getBoolean("more"))
+                // This runs on the logger's thread: a hub whose cursor stalls or never ends must not stop logging
+            } while (page.getBoolean("more") && cursor > prev && ++pages < MAX_PAGES)
             Prefs.put(c, Prefs.PULLED_AT, System.currentTimeMillis())
             Prefs.put(c, Prefs.SYNC_OK_AT, System.currentTimeMillis())
             "Sent $sent new readings, received $got from other phones"

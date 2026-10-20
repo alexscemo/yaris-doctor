@@ -137,11 +137,14 @@ class Db private constructor(ctx: Context, name: String?) : SQLiteOpenHelper(ctx
      * which replaces the old one because regens gain an end time later.
      */
     fun putPeers(samples: JSONArray, regens: JSONArray) {
+        // A future-dated row would win lastSample() forever (a "live" regen that never ends): bad peer clock or forged hub data
+        val latest = System.currentTimeMillis() + PEER_CLOCK_SLACK_MS
         val db = writableDatabase
         db.beginTransaction()
         try {
             for (i in 0 until samples.length()) {
                 val r = samples.getJSONArray(i) // device, phone_rowid, t, soot, temp, regen, odo_m
+                if (r.getLong(2) > latest) continue
                 db.insertWithOnConflict("peer_sample", null, ContentValues().apply {
                     put("device", r.getString(0)); put("phone_rowid", r.getLong(1)); put("t", r.getLong(2))
                     put("soot", r.intOrNull(3)); put("temp", r.intOrNull(4)); put("regen", r.getInt(5) == 1); put("odo_m", r.optDouble(6, 0.0))
@@ -150,6 +153,7 @@ class Db private constructor(ctx: Context, name: String?) : SQLiteOpenHelper(ctx
             db.delete("peer_regen", null, null)
             for (i in 0 until regens.length()) {
                 val r = regens.getJSONArray(i) // device, id, start_t, end_t, soot_start, soot_end
+                if (r.getLong(2) > latest || (!r.isNull(3) && r.getLong(3) > latest)) continue
                 db.insert("peer_regen", null, ContentValues().apply {
                     put("device", r.getString(0)); put("id", r.getLong(1)); put("start_t", r.getLong(2))
                     put("end_t", if (r.isNull(3)) null else r.getLong(3)); put("soot_start", r.intOrNull(4)); put("soot_end", r.intOrNull(5))
@@ -202,6 +206,7 @@ class Db private constructor(ctx: Context, name: String?) : SQLiteOpenHelper(ctx
     companion object {
         /** Regens from two phones (dongle hand-over mid-burn) closer than this are the same burn; matches the hub. */
         const val MERGE_SLACK_MS = 2 * 60_000L
+        private const val PEER_CLOCK_SLACK_MS = 5 * 60_000L
         const val METRES_PER_MILE = 1609.344
         private const val SAMPLE_T_INDEX = "CREATE INDEX IF NOT EXISTS sample_t ON sample(t)"
         private var real: Db? = null

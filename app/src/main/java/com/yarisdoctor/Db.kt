@@ -276,6 +276,25 @@ class Db private constructor(ctx: Context, name: String?) : SQLiteOpenHelper(ctx
             out
         }
 
+    /** Frame rows after [rowid] for the hub, as [rowid, t, lid, hex]. */
+    fun framesAfter(rowid: Long, limit: Int): JSONArray =
+        readableDatabase.rawQuery("SELECT rowid, t, lid, hex FROM frame WHERE rowid > ? ORDER BY rowid LIMIT ?", arrayOf(rowid.toString(), limit.toString())).use {
+            val out = JSONArray()
+            while (it.moveToNext()) out.put(JSONArray().put(it.getLong(0)).put(it.getLong(1)).put(it.getString(2)).put(it.getString(3)))
+            out
+        }
+
+    fun maxFrameRowid(): Long =
+        readableDatabase.rawQuery("SELECT COALESCE(MAX(rowid), 0) FROM frame", null).use { it.moveToFirst(); it.getLong(0) }
+
+    /** Alerts open or ended after [since], as [id, key, level, text, start, end]; resent whole when they change (text and end do). */
+    fun alertRows(since: Long): JSONArray =
+        readableDatabase.rawQuery("SELECT id, key, level, text, start_t, end_t FROM alert WHERE end_t IS NULL OR end_t >= ?", arrayOf(since.toString())).use {
+            val out = JSONArray()
+            while (it.moveToNext()) out.put(JSONArray().put(it.getLong(0)).put(it.getString(1)).put(it.getInt(2)).put(it.getString(3)).put(it.getLong(4)).put(it.json(5)))
+            out
+        }
+
     /** Every regen row, as [id, start, end, odo_start, odo_end, soot_start, soot_end]. Small, so always sent whole. */
     fun regenRows(): JSONArray =
         readableDatabase.rawQuery("SELECT id, start_t, end_t, odo_start, odo_end, soot_start, soot_end FROM regen", null).use {

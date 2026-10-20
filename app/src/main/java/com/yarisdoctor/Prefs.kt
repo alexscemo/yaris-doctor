@@ -23,6 +23,9 @@ object Prefs {
     const val PULLED_ROWID = "pulled_rowid"
     const val PULLED_AT = "pulled_at"
     const val THINNED_TO = "thinned_to"
+    const val SYNCED_FRAME_ROWID = "synced_frame_rowid"
+    const val SYNCED_ALERTS = "synced_alerts"
+    const val HUB_FRAMES = "hub_frames"
     private const val DEVICE_ID = "device_id"
 
     /** OBD requests per reading, defaulting to the ones DPFViewer found on the owner's Yaris; other years may differ. */
@@ -70,6 +73,7 @@ object Prefs {
     fun wifi(c: Context) = sp(c).getString(WIFI, "")!!
     fun driver(c: Context) = sp(c).getString(DRIVER, null) ?: android.os.Build.MODEL
     fun long(c: Context, key: String) = sp(c).getLong(key, 0L)
+    fun bool(c: Context, key: String, default: Boolean) = sp(c).getBoolean(key, default)
     fun str(c: Context, key: String) = sp(c).getString(key, null)
 
     /** Random per-install id: how the home hub tells phones apart without accounts. */

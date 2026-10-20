@@ -35,5 +35,11 @@ class Pid(
     }
 }
 
+/** The table for the hub, which decodes frames with it: [lid, bitStart, bitEnd, len, signed, mul, div, offset, decimals, name, unit, category, enum]. */
+fun pidDefs(): org.json.JSONArray = org.json.JSONArray().apply {
+    for (p in PIDS) put(org.json.JSONArray().put(p.lid).put(p.bitStart).put(p.bitEnd).put(p.len).put(p.signed).put(p.mul).put(p.div)
+        .put(p.offset).put(p.decimals).put(p.name).put(p.unit).put(p.category).put(p.enum?.let { org.json.JSONArray(it) } ?: org.json.JSONObject.NULL))
+}
+
 /** Payload length per request code ("21DD" → 18), for checking replies. */
 val PID_LENGTHS: Map<String, Int> = PIDS.associate { "21${it.lid}" to it.len }

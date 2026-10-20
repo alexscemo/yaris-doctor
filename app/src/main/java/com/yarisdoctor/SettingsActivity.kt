@@ -66,6 +66,9 @@ class SettingsActivity : Activity() {
                             // A different hub: send everything again and download from its start; duplicates are ignored both ways
                             Prefs.put(context, Prefs.SYNCED_ROWID, 0L)
                             Prefs.put(context, Prefs.SYNCED_REGENS, null)
+                            Prefs.put(context, Prefs.SYNCED_FRAME_ROWID, 0L)
+                            Prefs.put(context, Prefs.SYNCED_ALERTS, null)
+                            Prefs.put(context, Prefs.HUB_FRAMES, true)
                             Prefs.put(context, Prefs.PULLED_ROWID, 0L)
                         }
                         Prefs.put(context, Prefs.SERVER, url)

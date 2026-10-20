@@ -27,6 +27,7 @@ object Sync {
     private const val PULL_MS = 10 * 60_000L
     private const val MAX_PAGES = 50 // per run; the rest comes on the next pull, from the saved cursor
     private const val TAG = "Sync"
+    private const val ALERT_DAYS_MS = 30 * 86_400_000L
 
     /** Current Wi-Fi SSID, kept by [watch]; null when not on Wi-Fi or the name is hidden (no location permission). */
     @Volatile var ssid: String? = null
@@ -58,7 +59,10 @@ object Sync {
         val home = Prefs.wifi(c)
         if (Prefs.server(c).isBlank() || home.isBlank() || ssid != home) return
         val db = Db.real(c)
-        val pending = db.maxSampleRowid() > Prefs.long(c, Prefs.SYNCED_ROWID) || db.regenSignature() != Prefs.str(c, Prefs.SYNCED_REGENS)
+        val pending = db.maxSampleRowid() > Prefs.long(c, Prefs.SYNCED_ROWID) || db.regenSignature() != Prefs.str(c, Prefs.SYNCED_REGENS) ||
+            // A hub from before frames and alerts can't take them: don't sync every minute for them (the 10-min pull rechecks)
+            (Prefs.bool(c, Prefs.HUB_FRAMES, true) &&
+                (db.maxFrameRowid() > Prefs.long(c, Prefs.SYNCED_FRAME_ROWID) || alertSignature(db) != Prefs.str(c, Prefs.SYNCED_ALERTS)))
         // Other phones' drives reach the hub whenever they get home, so check for them now and then even with nothing to send
         val pullDue = System.currentTimeMillis() - Prefs.long(c, Prefs.PULLED_AT) > PULL_MS
         if (!pending && !pullDue) return
@@ -75,17 +79,25 @@ object Sync {
         val status = try {
             val db = Db.real(c)
             val signature = db.regenSignature()
+            val alertSig = alertSignature(db)
             var after = Prefs.long(c, Prefs.SYNCED_ROWID)
             var sent = 0
             var regens: JSONArray? = db.regenRows() // with the first batch only
+            var hubHasFrames = false
             while (true) {
                 val batch = db.samplesAfter(after, BATCH)
                 if (batch.length() == 0 && regens == null) break
-                request(c, "/api/sync", JSONObject()
+                val first = regens != null
+                val reply = request(c, "/api/sync", JSONObject()
                     .put("device_id", Prefs.deviceId(c))
                     .put("name", Prefs.driver(c))
                     .put("samples", batch)
-                    .put("regens", regens ?: JSONArray()))
+                    .put("regens", regens ?: JSONArray())
+                    .apply { if (first) put("alerts", db.alertRows(System.currentTimeMillis() - ALERT_DAYS_MS)).put("defs", pidDefs()) })
+                if (first) {
+                    hubHasFrames = reply.has("frames") // a hub from before frames ignores them: keep them for an updated one
+                    Prefs.put(c, Prefs.HUB_FRAMES, hubHasFrames)
+                }
                 regens = null
                 if (batch.length() > 0) {
                     after = batch.getJSONArray(batch.length() - 1).getLong(0)
@@ -95,6 +107,18 @@ object Sync {
                 if (batch.length() < BATCH) break
             }
             Prefs.put(c, Prefs.SYNCED_REGENS, signature)
+            // Raw engine frames: the bulk of the data, so capped per run like the pull below; the rest goes next minute
+            var frameAfter = Prefs.long(c, Prefs.SYNCED_FRAME_ROWID)
+            var framePages = 0
+            while (hubHasFrames && framePages++ < MAX_PAGES) {
+                val frames = db.framesAfter(frameAfter, BATCH)
+                if (frames.length() == 0) break
+                request(c, "/api/sync", JSONObject().put("device_id", Prefs.deviceId(c)).put("name", Prefs.driver(c)).put("frames", frames))
+                frameAfter = frames.getJSONArray(frames.length() - 1).getLong(0)
+                Prefs.put(c, Prefs.SYNCED_FRAME_ROWID, frameAfter)
+                if (frames.length() < BATCH) break
+            }
+            if (hubHasFrames) Prefs.put(c, Prefs.SYNCED_ALERTS, alertSig)
             // Then download what the other phones logged, so this phone's screen shows the whole car
             var cursor = Prefs.long(c, Prefs.PULLED_ROWID)
             var got = 0
@@ -121,6 +145,9 @@ object Sync {
         Prefs.put(c, Prefs.SYNC_STATUS, status)
         return status
     }
+
+    /** Changes when an alert opens, closes or changes its text: the hub keeps the latest of each row. */
+    private fun alertSignature(db: Db) = db.alertRows(System.currentTimeMillis() - ALERT_DAYS_MS).toString().hashCode().toString()
 
     /** POSTs [body] as JSON, or GETs when it is null; returns the hub's JSON reply. */
     private fun request(c: Context, path: String, body: JSONObject?): JSONObject {

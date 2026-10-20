@@ -1,6 +1,11 @@
 package com.yarisdoctor
 
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
 import android.content.Context
+import android.content.Intent
 import android.net.ConnectivityManager
 import android.net.ConnectivityManager.NetworkCallback.FLAG_INCLUDE_LOCATION_INFO
 import android.net.Network
@@ -28,6 +33,8 @@ object Sync {
     private const val MAX_PAGES = 50 // per run; the rest comes on the next pull, from the saved cursor
     private const val TAG = "Sync"
     private const val ALERT_DAYS_MS = 30 * 86_400_000L
+    private const val CH_SYNC = "sync"
+    private const val ID_SYNC = 3 // after DpfService's 1 (service) and 2 (regen)
 
     /** Current Wi-Fi SSID, kept by [watch]; null when not on Wi-Fi or the name is hidden (no location permission). */
     @Volatile var ssid: String? = null
@@ -68,11 +75,14 @@ object Sync {
         if (!pending && !pullDue) return
         val failedRecently = Prefs.long(c, Prefs.SYNC_TRIED_AT) > Prefs.long(c, Prefs.SYNC_OK_AT) &&
             System.currentTimeMillis() - Prefs.long(c, Prefs.SYNC_TRIED_AT) < RETRY_MS
-        if (!failedRecently) run(c)
+        if (!failedRecently) run(c, notify = true)
     }
 
-    /** Uploads everything new. Returns a short status for Settings; never throws. */
-    @Synchronized fun run(c: Context): String {
+    /**
+     * Uploads everything new, then downloads the other phones' rows. Returns a short status for Settings; never throws.
+     * [notify]: the automatic sync on the home Wi-Fi tells the user when it uploaded something ("Sync now" shows a toast instead).
+     */
+    @Synchronized fun run(c: Context, notify: Boolean = false): String {
         val wake = c.getSystemService(PowerManager::class.java).newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "yaris:sync")
         wake.acquire(10 * 60_000L) // first upload of months of data takes a while
         Prefs.put(c, Prefs.SYNC_TRIED_AT, System.currentTimeMillis())
@@ -80,6 +90,11 @@ object Sync {
             val db = Db.real(c)
             val signature = db.regenSignature()
             val alertSig = alertSignature(db)
+            // A hub that never got this phone's warnings (first sync, new address) gets all of them; after that the
+            // last 30 days are enough, since older ones are closed and never change
+            val alerts = db.alertRows(if (Prefs.str(c, Prefs.SYNCED_ALERTS) == null) 0 else System.currentTimeMillis() - ALERT_DAYS_MS)
+            val alertsChanged = alertSig != Prefs.str(c, Prefs.SYNCED_ALERTS)
+            var framesSent = 0
             var after = Prefs.long(c, Prefs.SYNCED_ROWID)
             var sent = 0
             var regens: JSONArray? = db.regenRows() // with the first batch only
@@ -93,7 +108,7 @@ object Sync {
                     .put("name", Prefs.driver(c))
                     .put("samples", batch)
                     .put("regens", regens ?: JSONArray())
-                    .apply { if (first) put("alerts", db.alertRows(System.currentTimeMillis() - ALERT_DAYS_MS)).put("defs", pidDefs()) })
+                    .apply { if (first) put("alerts", alerts).put("defs", pidDefs()).put("rules", ruleDefs()) })
                 if (first) {
                     hubHasFrames = reply.has("frames") // a hub from before frames ignores them: keep them for an updated one
                     Prefs.put(c, Prefs.HUB_FRAMES, hubHasFrames)
@@ -116,6 +131,7 @@ object Sync {
                 request(c, "/api/sync", JSONObject().put("device_id", Prefs.deviceId(c)).put("name", Prefs.driver(c)).put("frames", frames))
                 frameAfter = frames.getJSONArray(frames.length() - 1).getLong(0)
                 Prefs.put(c, Prefs.SYNCED_FRAME_ROWID, frameAfter)
+                framesSent += frames.length()
                 if (frames.length() < BATCH) break
             }
             if (hubHasFrames) Prefs.put(c, Prefs.SYNCED_ALERTS, alertSig)
@@ -135,7 +151,9 @@ object Sync {
             } while (page.getBoolean("more") && cursor > prev && ++pages < MAX_PAGES)
             Prefs.put(c, Prefs.PULLED_AT, System.currentTimeMillis())
             Prefs.put(c, Prefs.SYNC_OK_AT, System.currentTimeMillis())
-            "Sent $sent new readings, received $got from other phones"
+            val warnings = if (hubHasFrames && alertsChanged) alerts.length() else 0
+            if (notify && (sent > 0 || framesSent > 0 || warnings > 0)) synced(c, sent, framesSent, warnings)
+            "Sent $sent new readings and $framesSent engine frames, received $got from other phones"
         } catch (e: Exception) {
             Log.d(TAG, "sync failed: $e")
             "Hub not reachable (${e.javaClass.simpleName})"
@@ -144,6 +162,22 @@ object Sync {
         }
         Prefs.put(c, Prefs.SYNC_STATUS, status)
         return status
+    }
+
+    /** One quiet notification after an automatic upload, replacing the previous one, so a drive ends with "all synced". */
+    private fun synced(c: Context, readings: Int, frames: Int, warnings: Int) {
+        val nm = c.getSystemService(NotificationManager::class.java)
+        nm.createNotificationChannel(NotificationChannel(CH_SYNC, "Hub sync", NotificationManager.IMPORTANCE_LOW))
+        fun count(n: Int, what: String) = "$n $what${if (n == 1) "" else "s"}".takeIf { n > 0 }
+        val parts = listOfNotNull(count(readings, "reading"), count(frames, "engine frame"), count(warnings, "warning"))
+        nm.notify(ID_SYNC, Notification.Builder(c, CH_SYNC)
+            .setSmallIcon(R.drawable.ic_stat_gauge)
+            .setColor(c.getColor(R.color.primary))
+            .setContentTitle("All synced with the hub")
+            .setContentText("Sent ${parts.joinToString(", ")}")
+            .setContentIntent(PendingIntent.getActivity(c, 0, Intent(c, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE))
+            .setAutoCancel(true)
+            .build())
     }
 
     /** Changes when an alert opens, closes or changes its text: the hub keeps the latest of each row. */

@@ -169,6 +169,12 @@ val TREND_RULES = listOf(
     Triple("regen_interrupted", "Regens keep stopping early", "The last 3 regens each lasted under 10 minutes. A regen needs 15-20 min of steady driving (carchecker, 1.4 D-4D)."),
 )
 
+/** Every rule for the hub, which shows them with the alerts: [key, title, level, about, uses]. Trend rules read no live values. */
+fun ruleDefs(): org.json.JSONArray = org.json.JSONArray().apply {
+    for (r in Checker.RULES) put(org.json.JSONArray().put(r.key).put(r.title).put(r.level).put(r.about).put(org.json.JSONArray(r.uses)))
+    for ((key, title, about) in TREND_RULES) put(org.json.JSONArray().put(key).put(title).put(WARN).put(about).put(org.json.JSONArray()))
+}
+
 /** Checks on the regen history (finished regens, oldest first): how often they come and whether they finish. */
 fun trends(regens: List<Db.Regen>): List<Finding> {
     val out = mutableListOf<Finding>()

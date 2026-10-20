@@ -86,6 +86,9 @@ CI (`.github/workflows/build.yml`) runs `gradle test assembleDebug` on every pus
 - **Frames, alerts and the PID table:** the first sync request also carries `alerts` (`Db.alertRows()`, open plus the last 30 days, resent whole when `alertSignature()` changes) and `defs` (`pidDefs()`, which the hub decodes frames with, so the formulas live only in `PidTable.kt`). Frames follow in pages of `BATCH`, at most `MAX_PAGES` per run, with cursor `Prefs.SYNCED_FRAME_ROWID`.
   - **Hubs from before frames:** they drop these fields silently. They are detected by the missing `frames` key in the sync reply and stored in `Prefs.HUB_FRAMES`. The frame cursor then doesn't move, and frames/alerts don't count as pending, so the phone doesn't sync every minute; the 10-minute pull rechecks.
   - **Hub side:** the hub keeps every frame. It serves `/api/live` and `/api/series`, and its dashboard has a Live data view and the same status card as the Overview.
+  - **Rule descriptions:** the first request also carries `rules` (`ruleDefs()`: key, title, level, description and value names for every `Checker.RULES` and `TREND_RULES`). The hub's warning detail shows them, with a chart of each value around the warning.
+  - **All warnings:** a hub that never got this phone's warnings (`SYNCED_ALERTS` unset: first sync, or a new address) gets all of them. After that, the last 30 days.
+  - **"All synced" notification:** the automatic sync (`Sync.maybe` → `run(c, notify = true)`) posts one low-importance "All synced with the hub" notification when it uploaded readings, frames or changed warnings. "Sync now" in Settings shows a toast instead.
   - **Phone side:** phones don't download other phones' frames or alerts.
 - `hubUrl()` normalises what the user types ("192.168.1.50" → `http://192.168.1.50:8765`); it is unit-tested in `SyncTest`.
 - versionCode is `run_number + 2000`, which keeps it above the retired private `-home` builds (1000+). Never lower the offset.

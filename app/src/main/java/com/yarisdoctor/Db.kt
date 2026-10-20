@@ -51,20 +51,19 @@ class Db private constructor(ctx: Context, name: String?) : SQLiteOpenHelper(ctx
         val db = writableDatabase
         db.beginTransaction()
         try {
-            val open = HashMap<String, Pair<Long, String>>()
-            db.rawQuery("SELECT id, key, text FROM alert WHERE end_t IS NULL", null).use { while (it.moveToNext()) open[it.getString(1)] = it.getLong(0) to it.getString(2) }
-            val now = active.associateBy { it.key }
-            for ((key, row) in open) {
-                val f = now[key]
-                if (f == null) db.execSQL("UPDATE alert SET end_t = ? WHERE id = ?", arrayOf(t, row.first))
-                else if (f.text != row.second) db.execSQL("UPDATE alert SET text = ?, level = ? WHERE id = ?", arrayOf(f.text, f.level, row.first))
+            val ids = HashMap<String, Long>()
+            val texts = HashMap<String, String>()
+            db.rawQuery("SELECT id, key, text FROM alert WHERE end_t IS NULL", null).use {
+                while (it.moveToNext()) { ids[it.getString(1)] = it.getLong(0); texts[it.getString(1)] = it.getString(2) }
             }
-            val opened = active.filter { it.key !in open }
-            for (f in opened) db.insert("alert", null, ContentValues().apply {
+            val d = diffAlerts(texts, active)
+            for (key in d.close) db.execSQL("UPDATE alert SET end_t = ? WHERE id = ?", arrayOf(t, ids.getValue(key)))
+            for (f in d.update) db.execSQL("UPDATE alert SET text = ?, level = ? WHERE id = ?", arrayOf(f.text, f.level, ids.getValue(f.key)))
+            for (f in d.open) db.insert("alert", null, ContentValues().apply {
                 put("key", f.key); put("level", f.level); put("text", f.text); put("start_t", t)
             })
             db.setTransactionSuccessful()
-            return opened
+            return d.open
         } finally {
             db.endTransaction()
         }

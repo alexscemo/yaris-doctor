@@ -73,4 +73,18 @@ class ChecksTest {
         // An ongoing regen isn't judged yet
         assertEquals(emptyList<Finding>(), trends(listOf(r(0, 20, null), Db.Regen(1000 * 60_000, null, 50_000.0, 60, null))))
     }
+
+    @Test fun alertDiffOpensOnlyNewKeysClosesGoneOnesUpdatesChangedText() {
+        val d = diffAlerts(
+            mapOf("dtc" to "1 fault code", "coolant_hot" to "106 °C", "battery_low" to "12.8 V"),
+            listOf(Finding("dtc", WARN, "1 fault code"), Finding("coolant_hot", WARN, "108 °C"), Finding("soot_high", WARN, "102 %"),
+                Finding("soot_high", WARN, "duplicate key")),
+        )
+        assertEquals(listOf("soot_high"), d.open.map { it.key }) // once: only new keys notify
+        assertEquals(setOf("battery_low"), d.close)
+        assertEquals(listOf("108 °C"), d.update.map { it.text }) // unchanged "dtc" is not rewritten every cycle
+        // Nothing active: everything open closes, nothing opens
+        assertEquals(setOf("dtc"), diffAlerts(mapOf("dtc" to "x"), emptyList()).close)
+        assertTrue(diffAlerts(mapOf("dtc" to "x"), emptyList()).open.isEmpty())
+    }
 }

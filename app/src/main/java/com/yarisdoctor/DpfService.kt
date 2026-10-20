@@ -53,6 +53,9 @@ class DpfService : Service() {
     private val rec by lazy { Recorder(db) }
     private var trend = emptyList<Finding>() // regen-history findings, redone at start and after each regen
     private val notified = HashSet<String>()  // alert keys already notified this drive
+    // A drive outlives a Bluetooth drop shorter than REGEN_GAP_MS, like a regen: the checker and live alerts carry over
+    private var checker = Checker()
+    private var lastSeen = 0L // last cycle the ECU answered
 
     private val gps = LocationListener { l ->
         if (l.accuracy <= 25f) {
@@ -109,6 +112,13 @@ class DpfService : Service() {
                 trend = trends(db.regens())
                 checks(System.currentTimeMillis(), emptyList())
             }
+            // No ECU data for REGEN_GAP_MS: the drive is over, so its live alerts end and the next drive notifies afresh
+            if (lastSeen > 0 && System.currentTimeMillis() - lastSeen > REGEN_GAP_MS) {
+                lastSeen = 0
+                checker = Checker()
+                notified.clear()
+                checks(System.currentTimeMillis(), emptyList())
+            }
             try {
                 session()
             } catch (e: Exception) {
@@ -152,8 +162,6 @@ class DpfService : Service() {
             val fTemp = formula(Prefs.PID_TEMP)
             val fRegen = formula(Prefs.PID_REGEN)
             val poller = Poller { elm.send(it) }
-            val checker = Checker()
-            notified.clear()
             val core = listOf(pidSoot, pidTemp, pidRegen)
             var fails = 0
             var seen = false
@@ -171,6 +179,7 @@ class DpfService : Service() {
                     }
                     fails = 0
                     seen = true
+                    lastSeen = t
                     db.frames(t, replies)
                     val soot = replies[pidSoot]?.let { sootOf(it, byteSoot, fSoot) }
                     val temp = replies[pidTemp]?.let { tempOf(it, byteTemp, fTemp) }
@@ -184,9 +193,8 @@ class DpfService : Service() {
                     Thread.sleep(((if (rec.inRegen) 1000 else 2000) - (System.currentTimeMillis() - t)).coerceAtLeast(0))
                 }
             } finally {
-                // The regen row stays open: run() closes it unless the link comes back within REGEN_GAP_MS
+                // The regen row and live alerts stay open: run() closes them unless the link comes back within REGEN_GAP_MS
                 finish()
-                checks(System.currentTimeMillis(), emptyList())
                 stopGps()
             }
         }

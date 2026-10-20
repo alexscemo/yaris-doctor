@@ -127,6 +127,19 @@ class Checker {
     }
 }
 
+/** What [Db.syncAlerts] writes: new alerts to open, keys to close, open ones whose text changed. */
+class AlertDiff(val open: List<Finding>, val close: Set<String>, val update: List<Finding>)
+
+/** [openTexts]: open alert key → its stored text. [active]: what the checks find now (first finding per key counts). */
+fun diffAlerts(openTexts: Map<String, String>, active: List<Finding>): AlertDiff {
+    val now = active.distinctBy { it.key }
+    return AlertDiff(
+        open = now.filter { it.key !in openTexts },
+        close = openTexts.keys - now.map { it.key }.toSet(),
+        update = now.filter { it.key in openTexts && openTexts[it.key] != it.text },
+    )
+}
+
 /** Checks on the regen history (finished regens, oldest first): how often they come and whether they finish. */
 fun trends(regens: List<Db.Regen>): List<Finding> {
     val out = mutableListOf<Finding>()

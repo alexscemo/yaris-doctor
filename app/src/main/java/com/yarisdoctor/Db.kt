@@ -9,7 +9,10 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 /** [name] null = in-memory database (Debug mode), gone when closed. */
-class Db private constructor(ctx: Context, name: String?) : SQLiteOpenHelper(ctx, name, null, 4) {
+class Db private constructor(ctx: Context, name: String?) : SQLiteOpenHelper(ctx, name, null, 5) {
+
+    /** A [Finding] while it lasted; [end] null = still active. */
+    data class Alert(val key: String, val level: Int, val text: String, val start: Long, val end: Long?)
 
     data class Sample(val t: Long, val soot: Int?, val temp: Int?, val regen: Boolean)
 
@@ -23,6 +26,7 @@ class Db private constructor(ctx: Context, name: String?) : SQLiteOpenHelper(ctx
         db.execSQL(SAMPLE_T_INDEX)
         createPeers(db)
         createFrames(db)
+        createAlerts(db)
     }
 
     override fun onUpgrade(db: SQLiteDatabase, old: Int, new: Int) {
@@ -32,7 +36,50 @@ class Db private constructor(ctx: Context, name: String?) : SQLiteOpenHelper(ctx
         if (old < 3) createPeers(db)
         // v4: raw ECU replies for the full live-data table
         if (old < 4) createFrames(db)
+        // v5: health check alerts
+        if (old < 5) createAlerts(db)
     }
+
+    private fun createAlerts(db: SQLiteDatabase) =
+        db.execSQL("CREATE TABLE alert(id INTEGER PRIMARY KEY, key TEXT, level INTEGER, text TEXT, start_t INTEGER, end_t INTEGER)")
+
+    /**
+     * Makes the open alert rows match [active]: new keys open a row, keys no longer active get [t] as their end, open
+     * ones take the latest text (the numbers in it change). Returns the newly opened findings, to notify.
+     */
+    fun syncAlerts(t: Long, active: List<Finding>): List<Finding> {
+        val db = writableDatabase
+        db.beginTransaction()
+        try {
+            val open = HashMap<String, Pair<Long, String>>()
+            db.rawQuery("SELECT id, key, text FROM alert WHERE end_t IS NULL", null).use { while (it.moveToNext()) open[it.getString(1)] = it.getLong(0) to it.getString(2) }
+            val now = active.associateBy { it.key }
+            for ((key, row) in open) {
+                val f = now[key]
+                if (f == null) db.execSQL("UPDATE alert SET end_t = ? WHERE id = ?", arrayOf(t, row.first))
+                else if (f.text != row.second) db.execSQL("UPDATE alert SET text = ?, level = ? WHERE id = ?", arrayOf(f.text, f.level, row.first))
+            }
+            val opened = active.filter { it.key !in open }
+            for (f in opened) db.insert("alert", null, ContentValues().apply {
+                put("key", f.key); put("level", f.level); put("text", f.text); put("start_t", t)
+            })
+            db.setTransactionSuccessful()
+            return opened
+        } finally {
+            db.endTransaction()
+        }
+    }
+
+    /** Open alerts, then those that ended after [since], newest first, one row per key. */
+    fun alerts(since: Long): List<Alert> =
+        readableDatabase.rawQuery(
+            "SELECT key, level, text, start_t, end_t FROM alert WHERE end_t IS NULL OR end_t >= ? ORDER BY end_t IS NOT NULL, level DESC, start_t DESC",
+            arrayOf(since.toString()),
+        ).use {
+            val out = LinkedHashMap<String, Alert>()
+            while (it.moveToNext()) out.putIfAbsent(it.getString(0), Alert(it.getString(0), it.getInt(1), it.getString(2), it.getLong(3), if (it.isNull(4)) null else it.getLong(4)))
+            out.values.toList()
+        }
 
     /** One row per answered request: [lid] ("DD") and the payload after `61 <lid>`, decoded on read with [PIDS]. */
     private fun createFrames(db: SQLiteDatabase) {

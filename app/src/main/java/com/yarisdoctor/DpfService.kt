@@ -51,6 +51,8 @@ class DpfService : Service() {
     private val worker = Thread(::run, "dpf")
     // Outlives a session, so a regen survives a dropped Bluetooth link (see run())
     private val rec by lazy { Recorder(db) }
+    private var trend = emptyList<Finding>() // regen-history findings, redone at start and after each regen
+    private val notified = HashSet<String>()  // alert keys already notified this drive
 
     private val gps = LocationListener { l ->
         if (l.accuracy <= 25f) {
@@ -65,6 +67,7 @@ class DpfService : Service() {
         super.onCreate()
         nm.createNotificationChannel(NotificationChannel(CH_SERVICE, "Background logger", NotificationManager.IMPORTANCE_MIN))
         nm.createNotificationChannel(NotificationChannel(CH_REGEN, "DPF regeneration", NotificationManager.IMPORTANCE_HIGH))
+        nm.createNotificationChannel(NotificationChannel(CH_HEALTH, "Health warnings", NotificationManager.IMPORTANCE_LOW))
         val types = FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE or
             (if (checkSelfPermission(ACCESS_FINE_LOCATION) == PERMISSION_GRANTED) FOREGROUND_SERVICE_TYPE_LOCATION else 0)
         try {
@@ -77,6 +80,9 @@ class DpfService : Service() {
         Prefs.migrate(this)
         // A previous process killed mid-regen never closed its row; it would show "Ongoing" forever
         Db.real(this).closeOrphanRegens()
+        // Live alerts left open by a killed process end now; regen-history ones open if they apply
+        trend = trends(db.regens())
+        checks(System.currentTimeMillis(), emptyList())
         Sync.watch(this)
         worker.start()
     }
@@ -98,7 +104,11 @@ class DpfService : Service() {
     private fun run() {
         while (running) {
             // Link lost mid-regen and not back within REGEN_GAP_MS: the burn ended at the last reading
-            if (rec.inRegen && System.currentTimeMillis() - rec.lastT > REGEN_GAP_MS) rec.close(rec.lastT, odoM)
+            if (rec.inRegen && System.currentTimeMillis() - rec.lastT > REGEN_GAP_MS) {
+                rec.close(rec.lastT, odoM)
+                trend = trends(db.regens())
+                checks(System.currentTimeMillis(), emptyList())
+            }
             try {
                 session()
             } catch (e: Exception) {
@@ -142,6 +152,8 @@ class DpfService : Service() {
             val fTemp = formula(Prefs.PID_TEMP)
             val fRegen = formula(Prefs.PID_REGEN)
             val poller = Poller { elm.send(it) }
+            val checker = Checker()
+            notified.clear()
             val core = listOf(pidSoot, pidTemp, pidRegen)
             var fails = 0
             var seen = false
@@ -168,11 +180,13 @@ class DpfService : Service() {
                         publish(rec, soot, temp, regen)
                         lastSample = t
                     }
+                    checks(t, checker.check(t, replies, odoM, rec.inRegen))
                     Thread.sleep(((if (rec.inRegen) 1000 else 2000) - (System.currentTimeMillis() - t)).coerceAtLeast(0))
                 }
             } finally {
                 // The regen row stays open: run() closes it unless the link comes back within REGEN_GAP_MS
                 finish()
+                checks(System.currentTimeMillis(), emptyList())
                 stopGps()
             }
         }
@@ -184,13 +198,17 @@ class DpfService : Service() {
         val sim = Sim.live()
         val rec = Recorder(db) // its own, never kept open across sessions like the real one
         var thinnedTo = 0L
+        val checker = Checker()
+        notified.clear()
         try {
             while (running) {
                 val r = sim.next()
                 odoM += sim.metresPerTick
                 publish(rec, r.soot, r.temp, r.regen)
                 val t = System.currentTimeMillis()
-                db.frames(t, sim.frames(r))
+                val frames = sim.frames(r)
+                db.frames(t, frames)
+                checks(t, checker.check(t, frames, odoM, rec.inRegen))
                 // The debug Db lives in RAM: keep 30 min at full rate, older frames one per minute, or a day of it runs out of memory
                 if (t - 30 * 60_000L - thinnedTo >= 60_000L) {
                     db.thinFrames(thinnedTo, t - 30 * 60_000L)
@@ -201,11 +219,14 @@ class DpfService : Service() {
         } finally {
             rec.close(System.currentTimeMillis(), odoM)
             finish()
+            checks(System.currentTimeMillis(), emptyList())
         }
     }
 
     private fun publish(rec: Recorder, soot: Int?, temp: Int?, regen: Boolean?) {
+        val was = rec.inRegen
         rec.record(System.currentTimeMillis(), soot, temp, regen, odoM)
+        if (was && !rec.inRegen) trend = trends(db.regens()) // a regen just finished: interval and length are known
         if (rec.inRegen && Prefs.alerts(this)) nm.notify(ID_REGEN, regenNotification(rec.regenStart, rec.regenSootStart, soot, temp))
         else nm.cancel(ID_REGEN)
         edge.show(rec.inRegen && Prefs.edge(this))
@@ -223,6 +244,22 @@ class DpfService : Service() {
         if (to - from < 3_600_000L) return
         Db.real(this).thinFrames(from, to)
         Prefs.put(this, Prefs.THINNED_TO, to)
+    }
+
+    /** Stores [live] plus the regen-history findings as alerts; each new one is notified once per drive. */
+    private fun checks(t: Long, live: List<Finding>) {
+        for (f in db.syncAlerts(t, live + trend)) {
+            if (!notified.add(f.key)) continue
+            nm.notify(ID_ALERT + (f.key.hashCode() and 0xFFFF), Notification.Builder(this, CH_HEALTH)
+                .setSmallIcon(R.drawable.ic_stat_gauge)
+                .setColor(getColor(R.color.primary))
+                .setContentTitle(if (f.level == CRIT) "Check the car now" else "Car warning")
+                .setContentText(f.text)
+                .setStyle(Notification.BigTextStyle().bigText(f.text))
+                .setContentIntent(openApp())
+                .setAutoCancel(true)
+                .build())
+        }
     }
 
     private fun startGps() {
@@ -292,6 +329,8 @@ class DpfService : Service() {
         private const val CH_REGEN = "regen"
         private const val ID_SERVICE = 1
         private const val ID_REGEN = 2
+        private const val ID_ALERT = 1000
+        private const val CH_HEALTH = "health"
         private const val TAG = "DpfService"
         private const val EXTRA_REQUEST_PROMOTED_ONGOING = "android.requestPromotedOngoing" // = Notification/NotificationCompat constant
 

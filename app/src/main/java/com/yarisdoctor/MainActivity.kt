@@ -47,6 +47,8 @@ class MainActivity : Activity() {
     private lateinit var regenTitle: TextView
     private lateinit var history: LinearLayout
     private var historyKey = ""
+    private lateinit var health: LinearLayout
+    private var healthKey: String? = null
     private val allData by lazy { AllData(this, ui) }
     private lateinit var overview: View
     private lateinit var scroll: ScrollView
@@ -99,11 +101,12 @@ class MainActivity : Activity() {
         val regenCard = chartCard(regenTitle, "Last 20 regens · tap or drag to read values", regenChart)
 
         history = ui.column()
+        health = ui.card(R.color.surface_card, 20)
 
         val content = ui.column().apply {
             setPadding(ui.px(16), ui.px(8), ui.px(16), ui.px(32))
             addView(status, LinearLayout.LayoutParams(-2, -2))
-            for (v in listOf(notice, callout, instrument, sootCard, regenCard)) {
+            for (v in listOf(health, notice, callout, instrument, sootCard, regenCard)) {
                 addView(v, LinearLayout.LayoutParams(-1, -2).apply { topMargin = ui.px(16) })
             }
             addView(ui.text(Type.DISPLAY_SM, R.color.ink, "Regen history"), LinearLayout.LayoutParams(-1, -2).apply { topMargin = ui.px(32) })
@@ -213,11 +216,46 @@ class MainActivity : Activity() {
             { i -> "${fmt(withGap[i].start)} · %.0f $unit · ${duration(withGap[i])}".format(withGap[i].gapM!! / perUnit) }, ::fmtDay,
         )
 
+        val alerts = db.alerts(now - 7 * DAY_MS)
+        val alertsKey = alerts.joinToString("|") { "${it.key}${it.text}${it.end}" }
+        if (alertsKey != healthKey) {
+            healthKey = alertsKey
+            renderHealth(alerts)
+        }
+
         // Rebuilt only when the list or units change; refresh runs every 5 s
         val key = "$unit ${regens.size} ${regens.lastOrNull()?.end}"
         if (key != historyKey) {
             historyKey = key
             renderHistory(regens, perUnit, unit)
+        }
+    }
+
+    /** "All good", or what the checks found: open alerts first, then the ones seen in the last 7 days. */
+    private fun renderHealth(alerts: List<Db.Alert>) {
+        health.removeAllViews()
+        val open = alerts.filter { it.end == null }
+        val level = open.maxOfOrNull { it.level } ?: 0
+        val (title, dot) = when (level) {
+            CRIT -> "Check the car now" to R.color.primary
+            WARN -> "Warning" to R.color.primary
+            else -> "All good" to R.color.accent_teal
+        }
+        health.addView(LinearLayout(this).apply {
+            gravity = Gravity.CENTER_VERTICAL
+            addView(ui.dot(dot), LinearLayout.LayoutParams(ui.px(10), ui.px(10)).apply { marginEnd = ui.px(10) })
+            addView(ui.text(Type.TITLE_MD, R.color.ink, title))
+        })
+        if (open.isEmpty()) {
+            health.addView(ui.text(Type.BODY_SM, R.color.muted, "Every check on the engine data is within range.").apply { setPadding(0, ui.px(4), 0, 0) })
+        }
+        for (a in open) {
+            health.addView(ui.text(Type.BODY_SM, R.color.ink, (if (a.level == CRIT) "Critical: " else "") + a.text).apply { setPadding(0, ui.px(8), 0, 0) })
+        }
+        val earlier = alerts.filter { it.end != null }
+        if (earlier.isNotEmpty()) {
+            health.addView(ui.text(Type.CAPTION_UPPER, R.color.muted, "Seen in the last 7 days").apply { setPadding(0, ui.px(16), 0, 0) })
+            for (a in earlier) health.addView(ui.text(Type.BODY_SM, R.color.muted, "${fmt(a.start)} · ${a.text}").apply { setPadding(0, ui.px(6), 0, 0) })
         }
     }
 

@@ -6,19 +6,18 @@ Android app for a Toyota Yaris diesel. It replaces the ESP32 dashboard in `../DP
 
 ## Commands
 
-This machine has no Android SDK, Gradle or modern JDK (only Java 8), so nothing builds or runs locally. Build in Android Studio, or set up CI. There is no `gradlew`: only `gradle/wrapper/gradle-wrapper.properties` (Gradle 8.11.1) exists. Android Studio or `gradle wrapper` generates the scripts and jar.
+There is no `gradlew`. A local toolchain lives in `C:\Users\alex\Android` (JDK 17, Gradle 8.11.1, SDK; `local.properties` points at it). In Git Bash, first `export JAVA_HOME="C:/Users/alex/Android/jdk-17.0.20.1+1"` and use `/c/Users/alex/Android/gradle-8.11.1/bin/gradle`:
 
-- Build debug APK: `./gradlew assembleDebug`
-- Unit tests (plain JVM, no device): `./gradlew test`
-- Single test: `./gradlew :app:testDebugUnitTest --tests "com.yarisdoctor.ElmTest.decodersUseDpfViewerOffsets"`
-- Install: `./gradlew installDebug` (writes to the connected phone; ask first)
+- Unit tests + debug APK: `gradle -q test assembleDebug`, then `gradle --stop` to free memory
+- Single test: `gradle :app:testDebugUnitTest --tests "com.yarisdoctor.ElmTest.decodersUseDpfViewerOffsets"`
+- Emulator (AVDs `S25` / `S25_QPR`): see the `/emu` skill. adb from Git Bash needs `MSYS_NO_PATHCONV=1` and a Windows path for `install`.
+- Install on the real phone: ask first.
 - Logs: `adb logcat -s DpfService`
+- Release: `/ship vX.Y.Z` (`.claude/skills/ship`). `.claude/settings.json` runs the unit tests after edits to the tested logic files and blocks touching the signing key.
 
 CI (`.github/workflows/build.yml`) runs `gradle test assembleDebug` on every push and PR. It pins Gradle via `setup-gradle` because there is no wrapper jar.
 
 **Release:** `git tag vX.Y.Z && git push origin vX.Y.Z` builds a signed APK and publishes it as a GitHub Release, which Obtainium on the phone installs. `versionName` comes from the tag, `versionCode` from the run number. The signing key (`~/.android-keys/yaris-doctor.p12` + `.password.txt`, alias `yaris`) lives outside the repo. It is stored in the repo secrets `KEYSTORE_BASE64` / `KEYSTORE_PASSWORD`. Never regenerate it: a different key forces an uninstall, which wipes the phone's database.
-
-The app has never been compiled. Treat the first build as a check of everything, and verify behaviour on the car.
 
 ## Architecture
 
@@ -26,16 +25,25 @@ The app has never been compiled. Treat the first build as a check of everything,
 - **UI follows `DESIGN.md`** (kept locally, gitignored; cream canvas, coral accent, serif display type, dark instrument card). Screens are built in code, with no layout XML. `Ui.kt` holds the type scale (`Ui.Type`) and the few components (cards, pills, circular icon button, top bar). Colours are resource tokens in `res/values/colors.xml`, with dark-mode overrides of the same names in `res/values-night/colors.xml`: never hard-code hex in Kotlin. `res/values(-night)/themes.xml` (`AppTheme`, no action bar) styles the status bar, switches and dialogs. `MainActivity` refreshes every 5 s while visible. `ChartView` is a hand-drawn Canvas chart (line on a time axis, or columns by index): the series is coral, which DESIGN.md allows for line-art on cream. It falls below 3:1 contrast on the light card, so the always-visible readout row must stay. Display type uses the system serif as a stand-in for Copernicus.
 - **`DpfService`** is a foreground service (`connectedDevice|location`), started by `MainActivity` after permissions are granted and by `BootReceiver` on boot or app update. One worker thread loops:
   - **Idle:** sets an `AlarmManager` `ELAPSED_REALTIME_WAKEUP` alarm every `PROBE_MS`, wakes on a `Semaphore`, and tries an RFCOMM SPP connect to the dongle picked in Settings (`Prefs.dongle`, defaulting to the DPFViewer MAC). The phone has to start the connection because the dongle never connects on its own. The alarm exists because CPU sleep freezes `Thread.sleep`.
-  - **Connected:** holds a non-reference-counted wakelock, starts GPS and polls `21 DD` / `21 F1` / `21 DF` every 5 s, or every 1 s during regen.
-  - **Ignition off:** the dongle may stay powered, so ECU silence counts as ignition off. The session ends after 1 dead cycle if no data was ever seen (a quick probe), or after 3 dead cycles mid-drive.
-  - **Regen interrupted by disconnect:** the `finally` block closes the regen row and cancels the notification.
+  - **Connected:** holds a non-reference-counted wakelock, starts GPS and runs `Poller.cycle()` every 2 s (1 s during regen). Each cycle stores every reply as a `frame` row and takes soot / temp / regen from the replies to the three DPF codes. The `sample` row keeps its old pace (5 s, 1 s in regen; a regen start or end is written at once).
+  - **Ignition off:** the dongle may stay powered, so ECU silence counts as ignition off. The session ends after 1 dead cycle if no data was ever seen (a quick probe), or after 3 dead cycles mid-drive. A dead cycle mid-drive re-runs `elm.init()`, which unwedges some clones.
+  - **Regen interrupted by disconnect:** the `finally` block cancels the notification but leaves the regen open. `rec` lives on the service, so a link back within `REGEN_GAP_MS` (2 min) continues the same regen; otherwise `run()` closes it at `rec.lastT`.
   - **Process killed mid-regen:** no `finally` runs, so the row stays open. `onCreate()` calls `Db.closeOrphanRegens()`, which ends each open regen at its last regen sample before the next regen, the same rule as the hub's `close_if_stale`.
+- **Full live-data table:** `PidTable.kt` is GENERATED by `tools/pid_table.py` from the Techstream sheet (`../techstream/NLP130_engine_PIDs.xlsx`): 102 items over 35 `21 <lid>` requests. Never hand-edit it. `Pid.decode()` is Techstream's ValueConvert (MSB-first bit fields, two's complement, integer `raw*mul/div + offset`, then `/10^decimals`). `min`/`max` are display ranges only: some signed items have min 0 and still go negative.
+- **`Poller`** decides what each cycle asks: `FAST` codes every cycle, two `MEDIUM` codes in turn, one `SLOW` code when not read for 5 min. Error handling:
+  - A reply counts only with the exact length from the table, the `61<lid>` header and hex only; otherwise it is retried once.
+  - Single-frame requests get the ELM response-count suffix (`210C1`). After 3 suffix failures that the plain retry fixed, the suffix is dropped for the session.
+  - A code missing `PARK_AFTER` times in a row while others answer is parked for the session.
+  - A cycle stops after 3 misses with nothing answered (ignition off would otherwise wait out every timeout).
+  - Codes outside the table (a user's own DPF codes) pass through unchecked.
+  `PollerTest` checks that FAST + MEDIUM + SLOW cover the table exactly.
+- **`frame` table** (schema v4): `t`, `lid`, `hex` = the payload after `61 <lid>`, decoded on read. `DpfService.thin()` keeps one frame per lid per minute for data older than 30 days. Each stretch is thinned once, tracked by `Prefs.THINNED_TO`.
 - **`Recorder`** turns readings into `sample`/`regen` rows (regen open/close transitions). It is shared by the real session, Debug mode and the fake history, so there is one copy of the regen logic.
 - **Settings** live in `Prefs` (SharedPreferences) and are edited in `SettingsActivity`. Changes the service must see (dongle, logging, Debug mode) go through `DpfService.restart()`, which stops the service so a fresh instance re-reads them. `DpfService.start()` is the only start path (activity, boot) and respects the logging toggle and the Bluetooth permission.
 - **Debug mode** (`Prefs.debug`) is a process-lifetime flag, deliberately never persisted. While it is on, `Db.get()` returns an in-memory `Db` (name `null`) seeded by `Sim.seed()` with 14 days of history, and `DpfService.simulate()` feeds `Sim.live()` readings instead of opening Bluetooth. `yaris.db` is never touched. Turning it off calls `Db.dropDebug()`.
-- **`Elm.kt`** ports ELMduino's response handling so the DPFViewer char offsets still apply. `parse()` keeps only `[A-Za-z0-9:.\r]`, returns null on `NODATA`/`UNABLETOCONNECT`/`STOPPED`/`ERROR`, and joins multi-frame (`N:`) replies, trimmed to the byte count on the first line. Decoders index the hex string by **character** (2 per byte). `init()` mirrors `myELM.begin(..., '6')` plus `AT SH 7E0` / `AT CRA 7E8`.
+- **`Elm.kt`** ports ELMduino's response handling so the DPFViewer char offsets still apply. `parse()` keeps only `[A-Za-z0-9:.\r]`, returns null on `NODATA`/`UNABLETOCONNECT`/`STOPPED`/`ERROR`, and joins multi-frame (`N:`) replies, trimmed to the byte count on the first line. Decoders index the hex string by **character** (2 per byte). `init()` mirrors `myELM.begin(..., '6')` plus `AT SH 7E0` / `AT CRA 7E8` and `AT AT2` (adaptive timing).
 - **Distance / "odometer":** the car's odometer PID is unknown, so distance comes from GPS fixes, counted only while a session is connected. Fixes with accuracy over 25 m or speed under 1 m/s are dropped. `odoM` is written only by the GPS callback on the main thread and read by the worker (`@Volatile`). It persists as `sample.odo_m`, and the service restores it at start from `MAX(odo_m)`, so there is no separate prefs store.
-- **`Db`** is a per-process instance (`Db.get`), shared by the service and the activity. Tables `sample` and `regen`. Distance between regens is computed at read time in `regens()` in metres (`gapM`); the UI converts to miles or km per `Prefs.km`. It is this regen's `odo_start` minus the previous regen's `odo_end`. Schema version is 2 (v2 added the `sample(t)` index the charts' range queries rely on). Every schema change needs a step in `onUpgrade`, or it will wipe users' history.
+- **`Db`** is a per-process instance (`Db.get`), shared by the service and the activity. Tables `sample` and `regen`. Distance between regens is computed at read time in `regens()` in metres (`gapM`); the UI converts to miles or km per `Prefs.km`. It is this regen's `odo_start` minus the previous regen's `odo_end`. Schema version is 4: v2 added the `sample(t)` index the charts' range queries rely on, v3 the peer tables, v4 `frame`. Every schema change needs a step in `onUpgrade`, or it will wipe users' history.
 
 ## Regen notification = Android 16 Live Update (Now Bar on Samsung, status chip elsewhere)
 
@@ -74,9 +82,13 @@ The app has never been compiled. Treat the first build as a check of everything,
 - Defaults (byte 0 = the echoed `61`):
   - soot: byte 19, `A*2` (%)
   - DPF temp: byte 8, `(A*256+B)*0.625` (°C)
-  - regen: byte 16, `A&15`, on when it is 1
+  - regen: byte 11, `A-1`, on when it is 1. That byte is the "DPNR/DPF Status Reju(PM)" enum: 0 Standby, 1 Ready, 2 Operate, 3 Compl.
 
-  These equal DPFViewer's char offsets 38, 16 and 33. `ElmTest.decodersUseDpfViewerOffsets` pins them. They were found by trial and error in DPFViewer `BT.h` and are covered by `ElmTest`.
+  Soot and temp are DPFViewer's char offsets 38 and 16; the temp is Exhaust Temperature B1S2. The Techstream capture (`../techstream/NLP130_RUNTIME_RESULTS.md`) confirmed both.
+
+  The capture also showed that DPFViewer's regen flag (byte 16, `A&15`) is really "VN Turbo Operation Prohibit". `Prefs.migrate()` therefore moves installs that saved that old default to the new one.
+
+  `ElmTest.decodersUseDpfViewerOffsets` pins the defaults.
 - Dongle MAC `66:1E:32:7A:2E:72`, PIN `1234`. It must be paired in Android settings first.
 
 ## Known gaps

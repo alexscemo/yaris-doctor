@@ -28,9 +28,9 @@ class Elm(private val input: InputStream, private val output: OutputStream) {
         }
     }
 
-    /** Same sequence as DPFViewer: myELM.begin(..., '6') then Toyota engine ECU header/filter. */
+    /** Same sequence as DPFViewer: myELM.begin(..., '6') then Toyota engine ECU header/filter, plus adaptive timing for the full table. */
     fun init() {
-        for (cmd in listOf("AT D", "AT Z", "AT E0", "AT S0", "AT AL", "AT TP A6", "AT SH 7E0", "AT CRA 7E8")) {
+        for (cmd in listOf("AT D", "AT Z", "AT E0", "AT S0", "AT AL", "AT TP A6", "AT SH 7E0", "AT CRA 7E8", "AT AT2")) {
             send(cmd, 3000)
             Thread.sleep(100)
         }
@@ -147,12 +147,13 @@ private class Parser(private val s: String) {
     }
 }
 
-// Defaults (Prefs.BYTE_DEFAULTS / FORMULA_DEFAULTS) are the ones found on the car with DPFViewer (BT.h), which used char
-// offsets 38, 16 and 33. Results are truncated like DPFViewer's int casts; the regen flag is on when its formula gives 1.
+// Defaults (Prefs.BYTE_DEFAULTS / FORMULA_DEFAULTS): soot and temperature are DPFViewer's char offsets 38 and 16, confirmed
+// by the Techstream capture (temp is Exhaust Temperature B1S2); regen is the capture's DPF status byte. Results are
+// truncated like DPFViewer's int casts; the regen flag is on when its formula gives 1.
 private val SOOT = Formula.parse(Prefs.FORMULA_DEFAULTS.getValue(Prefs.PID_SOOT))!!
 private val TEMP = Formula.parse(Prefs.FORMULA_DEFAULTS.getValue(Prefs.PID_TEMP))!!
 private val REGEN = Formula.parse(Prefs.FORMULA_DEFAULTS.getValue(Prefs.PID_REGEN))!!
 
 fun sootOf(p: String, byte: Int = 19, f: Formula = SOOT): Int? = f.eval(p, byte)?.toInt()
 fun tempOf(p: String, byte: Int = 8, f: Formula = TEMP): Int? = f.eval(p, byte)?.toInt()
-fun regenOf(p: String, byte: Int = 16, f: Formula = REGEN): Boolean? = f.eval(p, byte)?.let { it == 1.0 }
+fun regenOf(p: String, byte: Int = 11, f: Formula = REGEN): Boolean? = f.eval(p, byte)?.let { it == 1.0 }

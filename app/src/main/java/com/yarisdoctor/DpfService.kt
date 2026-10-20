@@ -49,6 +49,8 @@ class DpfService : Service() {
     private val idle = Semaphore(0)
     private val probe = AlarmManager.OnAlarmListener { wake.acquire(30_000); idle.release() }
     private val worker = Thread(::run, "dpf")
+    // Outlives a session, so a regen survives a dropped Bluetooth link (see run())
+    private val rec by lazy { Recorder(db) }
 
     private val gps = LocationListener { l ->
         if (l.accuracy <= 25f) {
@@ -72,6 +74,7 @@ class DpfService : Service() {
             startForeground(ID_SERVICE, status("Waiting for dongle"), FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE)
         }
         odoM = db.odometer()
+        Prefs.migrate(this)
         // A previous process killed mid-regen never closed its row; it would show "Ongoing" forever
         Db.real(this).closeOrphanRegens()
         Sync.watch(this)
@@ -94,6 +97,8 @@ class DpfService : Service() {
 
     private fun run() {
         while (running) {
+            // Link lost mid-regen and not back within REGEN_GAP_MS: the burn ended at the last reading
+            if (rec.inRegen && System.currentTimeMillis() - rec.lastT > REGEN_GAP_MS) rec.close(rec.lastT, odoM)
             try {
                 session()
             } catch (e: Exception) {
@@ -105,6 +110,7 @@ class DpfService : Service() {
             if (!running) break
             // On the home Wi-Fi after a drive: push new data to the hub (no-op elsewhere, when unset, or nothing new)
             try { Sync.maybe(this) } catch (e: Exception) { Log.d(TAG, "sync check failed: $e") }
+            try { thin() } catch (e: Exception) { Log.d(TAG, "thinning failed: $e") }
             nm.notify(ID_SERVICE, status("Waiting for dongle"))
             alarms.set(AlarmManager.ELAPSED_REALTIME_WAKEUP, SystemClock.elapsedRealtime() + PROBE_MS, "yaris:probe", probe, null)
             try { idle.acquire() } catch (e: InterruptedException) { break }
@@ -124,7 +130,6 @@ class DpfService : Service() {
             elm.init()
             startGps()
             nm.notify(ID_SERVICE, status("Logging"))
-            val rec = Recorder(db)
             val pidSoot = Prefs.pid(this, Prefs.PID_SOOT)
             val pidTemp = Prefs.pid(this, Prefs.PID_TEMP)
             val pidRegen = Prefs.pid(this, Prefs.PID_REGEN)
@@ -136,26 +141,38 @@ class DpfService : Service() {
             val fSoot = formula(Prefs.PID_SOOT)
             val fTemp = formula(Prefs.PID_TEMP)
             val fRegen = formula(Prefs.PID_REGEN)
+            val poller = Poller { elm.send(it) }
+            val core = listOf(pidSoot, pidTemp, pidRegen)
             var fails = 0
             var seen = false
+            var lastSample = 0L
             try {
                 // Ignition off (dongle may stay powered on the OBD port): give up after 1 dead cycle on a probe, 3 mid-drive
                 while (running && fails < (if (seen) 3 else 1)) {
-                    val soot = elm.send(pidSoot)?.let { sootOf(it, byteSoot, fSoot) }
-                    val temp = elm.send(pidTemp)?.let { tempOf(it, byteTemp, fTemp) }
-                    val regen = elm.send(pidRegen)?.let { regenOf(it, byteRegen, fRegen) }
-                    if (soot == null && temp == null && regen == null) {
+                    val t = System.currentTimeMillis()
+                    val replies = poller.cycle(t, core)
+                    if (replies.isEmpty()) {
                         fails++
-                        Thread.sleep(2000)
+                        // A wedged clone often recovers after a reset; the dead-cycle count still ends the session if not
+                        if (seen) elm.init() else Thread.sleep(2000)
                         continue
                     }
                     fails = 0
                     seen = true
-                    publish(rec, soot, temp, regen)
-                    Thread.sleep(if (rec.inRegen) 1000 else 5000)
+                    db.frames(t, replies)
+                    val soot = replies[pidSoot]?.let { sootOf(it, byteSoot, fSoot) }
+                    val temp = replies[pidTemp]?.let { tempOf(it, byteTemp, fTemp) }
+                    val regen = replies[pidRegen]?.let { regenOf(it, byteRegen, fRegen) }
+                    // The DPF log keeps its old pace (5 s, 1 s in regen); a regen start or end is written at once
+                    if (t - lastSample >= (if (rec.inRegen) 1000 else 5000) || (regen != null && regen != rec.inRegen)) {
+                        publish(rec, soot, temp, regen)
+                        lastSample = t
+                    }
+                    Thread.sleep(((if (rec.inRegen) 1000 else 2000) - (System.currentTimeMillis() - t)).coerceAtLeast(0))
                 }
             } finally {
-                finish(rec)
+                // The regen row stays open: run() closes it unless the link comes back within REGEN_GAP_MS
+                finish()
                 stopGps()
             }
         }
@@ -165,7 +182,7 @@ class DpfService : Service() {
     private fun simulate() {
         nm.notify(ID_SERVICE, status("Debug mode: simulated dongle"))
         val sim = Sim.live()
-        val rec = Recorder(db)
+        val rec = Recorder(db) // its own, never kept open across sessions like the real one
         try {
             while (running) {
                 val r = sim.next()
@@ -174,7 +191,8 @@ class DpfService : Service() {
                 Thread.sleep(1000)
             }
         } finally {
-            finish(rec)
+            rec.close(System.currentTimeMillis(), odoM)
+            finish()
         }
     }
 
@@ -185,10 +203,18 @@ class DpfService : Service() {
         edge.show(rec.inRegen && Prefs.edge(this))
     }
 
-    private fun finish(rec: Recorder) {
-        rec.close(System.currentTimeMillis(), odoM)
+    private fun finish() {
         nm.cancel(ID_REGEN)
         edge.show(false)
+    }
+
+    /** Frames older than FULL_MS are thinned to one per request per minute, each stretch once (tracked in Prefs). */
+    private fun thin() {
+        val to = System.currentTimeMillis() - FULL_MS
+        val from = Prefs.long(this, Prefs.THINNED_TO)
+        if (to - from < 3_600_000L) return
+        Db.real(this).thinFrames(from, to)
+        Prefs.put(this, Prefs.THINNED_TO, to)
     }
 
     private fun startGps() {
@@ -252,6 +278,8 @@ class DpfService : Service() {
     companion object {
         private val SPP: UUID = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB")
         private const val PROBE_MS = 60_000L
+        private const val REGEN_GAP_MS = 2 * 60_000L
+        private const val FULL_MS = 30 * 24 * 3_600_000L
         private const val CH_SERVICE = "service"
         private const val CH_REGEN = "regen"
         private const val ID_SERVICE = 1

@@ -8,8 +8,12 @@ class Recorder(private val db: Db) {
     var regenSootStart: Int? = null
         private set
     val inRegen get() = regenId >= 0
+    /** Time of the last reading, where a regen cut short by a lost link is closed. */
+    var lastT = 0L
+        private set
 
     fun record(t: Long, soot: Int?, temp: Int?, regen: Boolean?, odoM: Double) {
+        lastT = t
         val isRegen = regen ?: inRegen // keep last state on a failed read, like DPFViewer
         db.sample(t, soot, temp, isRegen, odoM)
         if (isRegen && !inRegen) {

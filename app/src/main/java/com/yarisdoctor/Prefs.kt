@@ -22,16 +22,28 @@ object Prefs {
     const val SYNC_TRIED_AT = "sync_tried_at"
     const val PULLED_ROWID = "pulled_rowid"
     const val PULLED_AT = "pulled_at"
+    const val THINNED_TO = "thinned_to"
     private const val DEVICE_ID = "device_id"
 
     /** OBD requests per reading, defaulting to the ones DPFViewer found on the owner's Yaris; other years may differ. */
     val PID_DEFAULTS = mapOf(PID_SOOT to "21DD", PID_TEMP to "21F1", PID_REGEN to "21DF")
 
     /** Byte position of each value in its reply (see sootOf/tempOf/regenOf), keyed like the codes: "<pid key>_byte". */
-    val BYTE_DEFAULTS = mapOf(PID_SOOT to 19, PID_TEMP to 8, PID_REGEN to 16)
+    val BYTE_DEFAULTS = mapOf(PID_SOOT to 19, PID_TEMP to 8, PID_REGEN to 11)
 
-    /** Formula per reading (see Formula): A = byte at the position, B the next. Regen: low digit of the byte, 1 = on. */
-    val FORMULA_DEFAULTS = mapOf(PID_SOOT to "A*2", PID_TEMP to "(A*256+B)*0.625", PID_REGEN to "A&15")
+    /**
+     * Formula per reading (see Formula): A = byte at the position, B the next. Regen: "DPNR/DPF Status Reju(PM)" (0 Standby,
+     * 1 Ready, 2 Operate, 3 Compl, from the Techstream capture), so A-1 is 1 exactly while it burns.
+     */
+    val FORMULA_DEFAULTS = mapOf(PID_SOOT to "A*2", PID_TEMP to "(A*256+B)*0.625", PID_REGEN to "A-1")
+
+    /**
+     * The regen default used to be DPFViewer's byte 16, A&15, which the Techstream capture showed is "VN Turbo Operation
+     * Prohibit". Settings saves every field, so installs that saved that old default still hold it: move them to the new one.
+     */
+    fun migrate(c: Context) {
+        if (byte(c, PID_REGEN) == 16 && formula(c, PID_REGEN) == "A&15") sp(c).edit().remove("${PID_REGEN}_byte").remove("${PID_REGEN}_formula").apply()
+    }
 
     // DPFViewer's dongle, kept as the default so existing installs keep connecting
     private const val DEFAULT_DONGLE = "66:1E:32:7A:2E:72"

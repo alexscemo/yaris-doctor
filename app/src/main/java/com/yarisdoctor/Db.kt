@@ -9,7 +9,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 /** [name] null = in-memory database (Debug mode), gone when closed. */
-class Db private constructor(ctx: Context, name: String?) : SQLiteOpenHelper(ctx, name, null, 3) {
+class Db private constructor(ctx: Context, name: String?) : SQLiteOpenHelper(ctx, name, null, 4) {
 
     data class Sample(val t: Long, val soot: Int?, val temp: Int?, val regen: Boolean)
 
@@ -22,6 +22,7 @@ class Db private constructor(ctx: Context, name: String?) : SQLiteOpenHelper(ctx
         db.execSQL("CREATE TABLE regen(id INTEGER PRIMARY KEY, start_t INTEGER, end_t INTEGER, odo_start REAL, odo_end REAL, soot_start INTEGER, soot_end INTEGER)")
         db.execSQL(SAMPLE_T_INDEX)
         createPeers(db)
+        createFrames(db)
     }
 
     override fun onUpgrade(db: SQLiteDatabase, old: Int, new: Int) {
@@ -29,7 +30,37 @@ class Db private constructor(ctx: Context, name: String?) : SQLiteOpenHelper(ctx
         if (old < 2) db.execSQL(SAMPLE_T_INDEX)
         // v3: other phones' logs, downloaded from the hub
         if (old < 3) createPeers(db)
+        // v4: raw ECU replies for the full live-data table
+        if (old < 4) createFrames(db)
     }
+
+    /** One row per answered request: [lid] ("DD") and the payload after `61 <lid>`, decoded on read with [PIDS]. */
+    private fun createFrames(db: SQLiteDatabase) {
+        db.execSQL("CREATE TABLE frame(t INTEGER, lid TEXT, hex TEXT)")
+        db.execSQL("CREATE INDEX frame_lid_t ON frame(lid, t)")
+        db.execSQL("CREATE INDEX frame_t ON frame(t)")
+    }
+
+    /** [replies]: request code → cleaned reply, as Poller.cycle returns them; codes outside the table aren't stored. */
+    fun frames(t: Long, replies: Map<String, String>) {
+        val db = writableDatabase
+        db.beginTransaction()
+        try {
+            for ((code, reply) in replies) {
+                if (code !in PID_LENGTHS) continue
+                db.insert("frame", null, ContentValues().apply { put("t", t); put("lid", code.substring(2)); put("hex", reply.substring(4)) })
+            }
+            db.setTransactionSuccessful()
+        } finally {
+            db.endTransaction()
+        }
+    }
+
+    /** Keeps the first frame per request per minute in [[from], [to]): old drives stay chartable at a fraction of the size. */
+    fun thinFrames(from: Long, to: Long) = writableDatabase.execSQL(
+        "DELETE FROM frame WHERE t >= ? AND t < ? AND rowid NOT IN (SELECT MIN(rowid) FROM frame WHERE t >= ? AND t < ? GROUP BY lid, t / 60000)",
+        arrayOf(from, to, from, to),
+    )
 
     /** Copies of the other phones' rows (from the hub); this phone's own log stays in sample/regen. */
     private fun createPeers(db: SQLiteDatabase) {

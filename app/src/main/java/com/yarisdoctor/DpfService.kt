@@ -87,7 +87,7 @@ class DpfService : Service() {
         // Engine-stop blips (under a minute, no distance) are not burns; every start, so one that slips past engineStopped() goes too
         Db.real(this).dropStopBlips()
         // Live alerts left open by a killed process end now; regen-history ones open if they apply
-        trend = trends(db.regens())
+        trend = history()
         checks(System.currentTimeMillis(), emptyList())
         Sync.watch(this)
         worker.start()
@@ -112,13 +112,15 @@ class DpfService : Service() {
             // Link lost mid-regen and not back within REGEN_GAP_MS: the burn ended at the last reading
             if (rec.inRegen && System.currentTimeMillis() - rec.lastT > REGEN_GAP_MS) {
                 rec.close(rec.lastT, odoM)
-                trend = trends(db.regens())
+                trend = history()
                 checks(System.currentTimeMillis(), emptyList())
             }
             // No ECU data for REGEN_GAP_MS: the drive is over, so its live alerts end and the next drive notifies afresh
             if (lastSeen > 0 && System.currentTimeMillis() - lastSeen > REGEN_GAP_MS) {
                 lastSeen = 0
                 checker = Checker()
+                tripDone()
+                trend = history() // the engine-stop readings of this drive feed the DPF sensor check
                 checks(System.currentTimeMillis(), emptyList()) // closes the drive's live alerts and cancels their notifications
                 notified.clear()
             }
@@ -165,7 +167,8 @@ class DpfService : Service() {
             val fTemp = formula(Prefs.PID_TEMP)
             val fRegen = formula(Prefs.PID_REGEN)
             val poller = Poller { elm.send(it) }
-            val core = listOf(pidSoot, pidTemp, pidRegen)
+            // Soot's request (21DD, which also carries the rail pressure target) last, so Poller sends the actual rail pressure right after it
+            val core = listOf(pidTemp, pidRegen, pidSoot)
             var fails = 0
             var seen = false
             var lastSample = 0L
@@ -192,7 +195,7 @@ class DpfService : Service() {
                         publish(rec, soot, temp, regen)
                         lastSample = t
                     }
-                    checks(t, checker.check(t, replies, odoM, rec.inRegen))
+                    checks(t, checker.check(t, replies, rec.inRegen))
                     // No pause: the next cycle starts at once, so the pace is set by how fast this dongle answers, regen or not
 
                 }
@@ -220,7 +223,7 @@ class DpfService : Service() {
                 val t = System.currentTimeMillis()
                 val frames = sim.frames(r)
                 db.frames(t, frames)
-                checks(t, checker.check(t, frames, odoM, rec.inRegen))
+                checks(t, checker.check(t, frames, rec.inRegen))
                 // The debug Db lives in RAM: keep 30 min at full rate, older frames one per minute, or a day of it runs out of memory
                 if (t - 30 * 60_000L - thinnedTo >= 60_000L) {
                     db.thinFrames(thinnedTo, t - 30 * 60_000L)
@@ -240,7 +243,7 @@ class DpfService : Service() {
         rec.record(System.currentTimeMillis(), soot, temp, regen, odoM)
         if (was && !rec.inRegen) {
             db.dropStopBlips() // a blip that got past engineStopped() must not count as a regen in the interval checks
-            trend = trends(db.regens()) // a regen just finished: interval and length are known
+            trend = history() // a regen just finished: interval and length are known
         }
         if (rec.inRegen && Prefs.alerts(this)) nm.notify(ID_REGEN, regenNotification(rec.regenStart, rec.regenSootStart, soot, temp))
         else nm.cancel(ID_REGEN)
@@ -279,6 +282,25 @@ class DpfService : Service() {
                 .setAutoCancel(true)
                 .build())
         }
+    }
+
+    /** Regen-history checks plus the DPF sensor's engine-off zero; kept open while they apply, rechecked at start and after drives and regens. */
+    private fun history() = trends(db.regens()) + listOfNotNull(sensorZero(db.engineOffDp()))
+
+    /** One quiet notification when a drive ends: distance, soot, regens and warnings. */
+    private fun tripDone() {
+        val from = db.tripStart() ?: return
+        val s = db.tripStats(from)
+        val km = Prefs.km(this)
+        nm.notify(ID_TRIP, Notification.Builder(this, CH_HEALTH)
+            .setSmallIcon(R.drawable.ic_stat_gauge)
+            .setColor(getColor(R.color.primary))
+            .setContentTitle("Drive finished")
+            .setContentText(tripSummary(s.metres, s.sootStart, s.sootEnd, s.regens, s.warnings, if (km) 1000.0 else Db.METRES_PER_MILE, if (km) "km" else "mi"))
+            .setWhen(from)
+            .setContentIntent(openApp())
+            .setAutoCancel(true)
+            .build())
     }
 
     private fun alertId(key: String) = ID_ALERT + (key.hashCode() and 0xFFFF)
@@ -350,6 +372,7 @@ class DpfService : Service() {
         private const val CH_REGEN = "regen"
         private const val ID_SERVICE = 1
         private const val ID_REGEN = 2
+        private const val ID_TRIP = 3
         private const val ID_ALERT = 1000
         private const val CH_HEALTH = "health"
         private const val TAG = "DpfService"

@@ -108,7 +108,8 @@ object Sync {
                     .put("name", Prefs.driver(c))
                     .put("samples", batch)
                     .put("regens", regens ?: JSONArray())
-                    .apply { if (first) put("alerts", alerts).put("defs", pidDefs()).put("rules", ruleDefs()) })
+                    // regens_all: this is every regen the phone has, so the hub drops ones the phone deleted (engine-stop blips)
+                    .apply { if (first) put("regens_all", true).put("alerts", alerts).put("defs", pidDefs()).put("rules", ruleDefs()).put("dpf", db.dpfRows()) })
                 if (first) {
                     hubHasFrames = reply.has("frames") // a hub from before frames ignores them: keep them for an updated one
                     Prefs.put(c, Prefs.HUB_FRAMES, hubHasFrames)

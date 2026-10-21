@@ -27,10 +27,10 @@ class RulesTab(private val a: Activity, private val ui: Ui) {
                     r.uses.groupBy { name -> Poller.pollRate(PIDS.first { it.name == name }.lid) }
                         .entries.joinToString("; ") { (rate, names) -> "${names.joinToString(", ")} $rate" }))
         }
-        section("After each regen · ${TREND_RULES.size} rules")
+        section("After each regen or drive · ${TREND_RULES.size} rules")
         TREND_RULES.forEachIndexed { i, (_, title, about) ->
             if (i > 0) addView(ui.divider())
-            addView(entry(i + 1, title, WARN, about, "Reads the regen history · checked when a regen ends and when the app starts"))
+            addView(entry(i + 1, title, WARN, about, "Checked when a regen or drive ends and when the app starts"))
         }
     }
 

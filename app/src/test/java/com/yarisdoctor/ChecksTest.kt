@@ -16,7 +16,7 @@ class ChecksTest {
 
     @Test fun capturedIdleOnlyFlagsTheStoredCode() {
         // The car really had P252F stored; everything else in the capture is healthy
-        val f = Checker().check(0, replies(), 0.0, false)
+        val f = Checker().check(0, replies(), false)
         assertEquals(setOf("dtc"), keys(f))
         assertEquals("1 fault code is stored in the engine ECU.", f.single().text)
     }
@@ -24,19 +24,19 @@ class ChecksTest {
     @Test fun hotCoolantWarnsOnlyAfterItsHoldTime() {
         val c = Checker()
         val hot = replies(Triple("05", 0, 108 + 40))
-        assertTrue("coolant_hot" !in keys(c.check(0, hot, 0.0, false)))
-        assertTrue("coolant_hot" !in keys(c.check(8_000, hot, 0.0, false)))
-        assertTrue("coolant_hot" in keys(c.check(10_000, hot, 0.0, false)))
+        assertTrue("coolant_hot" !in keys(c.check(0, hot, false)))
+        assertTrue("coolant_hot" !in keys(c.check(8_000, hot, false)))
+        assertTrue("coolant_hot" in keys(c.check(10_000, hot, false)))
         // A normal reading resets the clock
-        c.check(12_000, replies(), 0.0, false)
-        assertTrue("coolant_hot" !in keys(c.check(14_000, hot, 0.0, false)))
+        c.check(12_000, replies(), false)
+        assertTrue("coolant_hot" !in keys(c.check(14_000, hot, false)))
     }
 
     @Test fun overheatIsCritical() {
         val c = Checker()
         val boiling = replies(Triple("05", 0, 115 + 40))
-        c.check(0, boiling, 0.0, false)
-        val f = c.check(5_000, boiling, 0.0, false).single { it.key == "coolant_overheat" }
+        c.check(0, boiling, false)
+        val f = c.check(5_000, boiling, false).single { it.key == "coolant_overheat" }
         assertEquals(CRIT, f.level)
     }
 
@@ -45,14 +45,14 @@ class ChecksTest {
     /** True when [key] is not active at first but is once [holdMs] has passed, with the same readings throughout. */
     private fun firesAfter(key: String, holdMs: Long, r: Map<String, String>): Boolean {
         val c = Checker()
-        val early = key in keys(c.check(0, r, 0.0, false)) || key in keys(c.check(holdMs - 2_000, r, 0.0, false))
-        return !early && key in keys(c.check(holdMs, r, 0.0, false))
+        val early = key in keys(c.check(0, r, false)) || key in keys(c.check(holdMs - 2_000, r, false))
+        return !early && key in keys(c.check(holdMs, r, false))
     }
 
     @Test fun warmIdleCaptureOnlyFlagsTheStoredCode() {
         val c = Checker()
-        c.check(0, replies(warm), 0.0, false)
-        assertEquals(setOf("dtc"), keys(c.check(600_000, replies(warm), 0.0, false)))
+        c.check(0, replies(warm), false)
+        assertEquals(setOf("dtc"), keys(c.check(600_000, replies(warm), false)))
     }
 
     @Test fun railPressureNeedsHalfAMinuteOffTarget() {
@@ -74,17 +74,17 @@ class ChecksTest {
         assertTrue(firesAfter("turbo_vanes", 10_000, replies(Triple("DD", 11, 100))))              // 50 % against 100 %
         // A few seconds off target while revving is normal
         val c = Checker()
-        c.check(0, replies(Triple("EA", 2, 230)), 0.0, false)
-        c.check(6_000, replies(), 0.0, false)
-        assertTrue("egr_tracking" !in keys(c.check(16_000, replies(Triple("EA", 2, 230)), 0.0, false)))
+        c.check(0, replies(Triple("EA", 2, 230)), false)
+        c.check(6_000, replies(), false)
+        assertTrue("egr_tracking" !in keys(c.check(16_000, replies(Triple("EA", 2, 230)), false)))
     }
 
     @Test fun egrCoolerStillBypassedWhenWarmAndDriving() {
         val driving = replies(warm, Triple("0D", 0, 80)) // the captured bypass byte is 3 = Bypass
         assertTrue(firesAfter("egr_bypass_warm", 180_000, driving))
-        assertTrue("egr_bypass_warm" !in keys(Checker().let { it.check(0, replies(Triple("0D", 0, 80)), 0.0, false); it.check(200_000, replies(Triple("0D", 0, 80)), 0.0, false) }))
+        assertTrue("egr_bypass_warm" !in keys(Checker().let { it.check(0, replies(Triple("0D", 0, 80)), false); it.check(200_000, replies(Triple("0D", 0, 80)), false) }))
         val cooler = replies(warm, Triple("0D", 0, 80), Triple("EA", 5, 1))
-        assertTrue("egr_bypass_warm" !in keys(Checker().let { it.check(0, cooler, 0.0, false); it.check(200_000, cooler, 0.0, false) }))
+        assertTrue("egr_bypass_warm" !in keys(Checker().let { it.check(0, cooler, false); it.check(200_000, cooler, false) }))
     }
 
     @Test fun learningIdleAndDpfFlow() {
@@ -96,26 +96,43 @@ class ChecksTest {
     @Test fun ecuOverfillFlagWarns() {
         val c = Checker()
         val overfill = replies(Triple("E6", 3, 0x41 or 0x20)) // bit 26 = 0x20 of payload byte 3
-        c.check(0, overfill, 0.0, false)
-        assertTrue("oil_overfill" in keys(c.check(10_000, overfill, 0.0, false)))
+        c.check(0, overfill, false)
+        assertTrue("oil_overfill" in keys(c.check(10_000, overfill, false)))
     }
 
-    @Test fun sootRisingFastOverAFewKmWarns() {
-        val c = Checker()
-        assertTrue("soot_rate" !in keys(c.check(0, replies(Triple("DD", 17, 20)), 0.0, false)))        // 40 %
-        assertTrue("soot_rate" !in keys(c.check(60_000, replies(Triple("DD", 17, 22)), 1_000.0, false))) // 44 % after 1 km: too short to judge
-        assertTrue("soot_rate" in keys(c.check(180_000, replies(Triple("DD", 17, 25)), 3_000.0, false)))  // 50 % after 3 km
-        // A regen resets the window: burning soot isn't a rise
-        c.check(240_000, replies(Triple("DD", 17, 25)), 4_000.0, true)
-        assertTrue("soot_rate" !in keys(c.check(300_000, replies(Triple("DD", 17, 26)), 7_000.0, false)))
+    @Test fun dpfSensorZeroNeedsThreeEngineOffReadings() {
+        assertEquals(null, sensorZero(listOf(0.398, 0.398, 0.296, 0.296))) // the owner's car on 21 Oct
+        assertEquals(null, sensorZero(listOf(2.0, 2.0)))                     // too few to judge
+        assertEquals("dpf_sensor_zero", sensorZero(listOf(1.4, 1.5, 1.3, 0.4, 1.6))?.key)
+        assertEquals("dpf_sensor_zero", sensorZero(listOf(-0.9, -0.8, -0.9))?.key)
+    }
+
+    @Test fun dpfRestrictionAndCondition() {
+        // 5.8 kPa at 25.4 g/s and 380 °C after the DPF: 47 l/s of exhaust, so 12.3 kPa per 100 l/s
+        assertEquals(12.34, restriction(5.8, 25.4, 380.0, 2400.0)!!, 0.01)
+        assertEquals(null, restriction(5.8, 25.4, 380.0, 900.0)) // idle: too little flow to read
+        assertEquals(null, restriction(0.5, 5.0, 150.0, 1500.0))
+        val after = List(8) { 5.5 }
+        val later = List(8) { 13.5 }
+        val d = dpfCondition(0, after, later, 40.0)
+        assertEquals(5.5, d.base!!, 0.0)
+        assertEquals(0.2, d.perKm!!, 1e-9)
+        assertEquals(null, dpfCondition(0, after, later, 3.0).perKm)   // too short a drive to give a rate
+        assertEquals(null, dpfCondition(0, after.take(3), later, 40.0).base) // too few readings
+        assertEquals(null, dpfCondition(0, after, later, Double.NaN).perKm)  // odometer missing
+    }
+
+    @Test fun tripSummaryReadsInOneLine() {
+        assertEquals("25 mi · soot 40 → 70 % · 1 regen · no warnings", tripSummary(40_000.0, 40, 70, 1, 0, Db.METRES_PER_MILE, "mi"))
+        assertEquals("3 km · no regen · 2 warnings", tripSummary(3_000.0, null, null, 0, 2, 1000.0, "km"))
     }
 
     @Test fun staleSlowValuesAreIgnored() {
         val c = Checker()
-        c.check(0, replies(), 0.0, false)
+        c.check(0, replies(), false)
         // E1 (fault codes) not read again for 7 min: the old count no longer counts as current
         val noCodes = replies().filterKeys { it != "21E1" }
-        assertTrue("dtc" !in keys(c.check(7 * 60_000L, noCodes, 0.0, false)))
+        assertTrue("dtc" !in keys(c.check(7 * 60_000L, noCodes, false)))
     }
 
     @Test fun regenHistoryTrends() {
@@ -149,7 +166,7 @@ class ChecksTest {
             for (name in r.uses) assertTrue("${r.key} reads unknown value $name", PIDS.any { it.name == name })
         }
         assertEquals("every cycle", Poller.pollRate("0C"))
-        assertEquals("every 7 cycles", Poller.pollRate("AD"))
+        assertEquals("every 8 cycles", Poller.pollRate("AD"))
         assertEquals("every 5 min", Poller.pollRate("E1"))
     }
 }

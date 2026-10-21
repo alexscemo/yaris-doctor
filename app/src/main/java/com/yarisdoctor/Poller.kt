@@ -63,14 +63,20 @@ class Poller(private val send: (String) -> String?) {
     }
 
     companion object {
-        /** Every cycle: drive state, DPF, the temperatures and pressures the checks watch. */
-        val FAST = listOf("210C", "210D", "2105", "210B", "2110", "2123", "21DD", "21DF", "21EF", "21F1",
-            // EGR target (2C) and actual position (EA) are compared by egr_tracking: read in the same cycle
+        /**
+         * Every cycle, in this order. The service puts 21DD (rail pressure target) last of its own codes, so the actual
+         * rail pressure (2123) follows it at once; pairs a rule compares sit next to each other. Coolant and MAP change
+         * slowly and are MEDIUM, to keep the cycle short on a slow dongle.
+         */
+        val FAST = listOf("2123", "210C", "210D", "21EF",
+            // MAF and the MAF / estimated MAF ratio, together so the two line up
+            "2110", "21A3",
+            // EGR target (2C) and actual position (EA) are compared by egr_tracking
             "212C", "21EA",
-            // MAF / estimated MAF ratio, read with MAF itself so the two line up while the ratio's meaning is worked out
-            "21A3")
+            // Usually the service's own DPF codes, sent first already; listed so a user's other codes don't drop them
+            "21DD", "21DF", "21F1")
         /** Two per cycle, in turn. */
-        val MEDIUM = listOf("2104", "210F", "2111", "2124", "2134", "2142", "2149", "214A", "214C", "21AD", "21DA", "21DE", "21E6", "21EE")
+        val MEDIUM = listOf("2104", "2105", "210B", "210F", "2111", "2124", "2134", "2142", "2149", "214A", "214C", "21AD", "21DA", "21DE", "21E6", "21EE")
         /** Counters and learned values: once a session, then every [SLOW_MS]. */
         val SLOW = listOf("211F", "2121", "2130", "2131", "2133", "214D", "214E", "21E1")
         const val SLOW_MS = 5 * 60_000L

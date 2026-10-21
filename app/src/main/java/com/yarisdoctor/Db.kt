@@ -133,6 +133,76 @@ class Db private constructor(ctx: Context, name: String?) : SQLiteOpenHelper(ctx
         arrayOf(lid, from.toString()),
     ).use { if (it.moveToFirst()) it.getLong(0) else null }
 
+    private fun pid(name: String) = PIDS.first { it.name == name }
+
+    /** Newest DPF pressure readings (kPa) taken with the engine stopped (rpm 0) and the ignition on, newest first. */
+    fun engineOffDp(limit: Int = 5): List<Double> = readableDatabase.rawQuery(
+        "SELECT e.hex FROM frame e JOIN frame c ON c.t = e.t AND c.lid = '0C' AND c.hex = '0000' WHERE e.lid = 'EF' ORDER BY e.t DESC LIMIT ?",
+        arrayOf(limit.toString()),
+    ).use {
+        val dp = pid("DPF Differential Pressure")
+        val out = ArrayList<Double>()
+        while (it.moveToNext()) dp.decode(it.getString(0))?.let(out::add)
+        out
+    }
+
+    /** [restriction] for each cycle in [[from], [to]] that read pressure, MAF, exhaust temperature and rpm together. */
+    fun restrictions(from: Long, to: Long): List<Double> = readableDatabase.rawQuery(
+        "SELECT e.hex, m.hex, f.hex, c.hex FROM frame e " +
+            "JOIN frame m ON m.t = e.t AND m.lid = '10' JOIN frame f ON f.t = e.t AND f.lid = 'F1' JOIN frame c ON c.t = e.t AND c.lid = '0C' " +
+            "WHERE e.lid = 'EF' AND e.t BETWEEN ? AND ? ORDER BY e.t",
+        arrayOf(from.toString(), to.toString()),
+    ).use {
+        val dp = pid("DPF Differential Pressure"); val maf = pid("MAF"); val ex = pid("Exhaust Temperature B1S2"); val rpm = pid("Engine Speed")
+        val out = ArrayList<Double>()
+        while (it.moveToNext()) {
+            val v = restriction(dp.decode(it.getString(0)) ?: continue, maf.decode(it.getString(1)) ?: continue,
+                ex.decode(it.getString(2)) ?: continue, rpm.decode(it.getString(3)) ?: continue)
+            if (v != null) out += v
+        }
+        out
+    }
+
+    /**
+     * [DpfCondition] for this phone's finished regens, oldest first: restriction in the 5 min after each (a fast-loading filter has already risen a lot by 15), and its rise
+     * per km over the last 10 min of driving before the next regen (or before the newest frame, for the latest one).
+     */
+    fun dpfConditions(): List<DpfCondition> {
+        val rows = readableDatabase.rawQuery("SELECT start_t, end_t, odo_end, odo_start FROM regen WHERE end_t IS NOT NULL ORDER BY start_t", null).use {
+            val out = ArrayList<DoubleArray>()
+            // A missing odometer reading is NaN, which fails dpfCondition's km check instead of faking a distance
+            fun odo(i: Int) = if (it.isNull(i)) Double.NaN else it.getDouble(i)
+            while (it.moveToNext()) out += doubleArrayOf(it.getLong(0).toDouble(), it.getLong(1).toDouble(), odo(2), odo(3))
+            out
+        }
+        val newest = readableDatabase.rawQuery("SELECT COALESCE(MAX(t), 0) FROM frame", null).use { it.moveToFirst(); it.getLong(0) }
+        return rows.mapIndexed { i, r ->
+            val end = r[1].toLong()
+            val next = rows.getOrNull(i + 1)
+            val until = next?.get(0)?.toLong() ?: newest
+            val km = ((next?.get(3) ?: odometer()) - r[2]) / 1000
+            dpfCondition(r[0].toLong(), restrictions(end, end + 5 * 60_000L), restrictions(until - 10 * 60_000L, until), km)
+        }
+    }
+
+    /** [DpfCondition] rows for the hub: [regen start, base, per km]; nulls where there wasn't enough driving to tell. */
+    fun dpfRows(): JSONArray = JSONArray().apply {
+        for (d in dpfConditions()) put(JSONArray().put(d.regenStart).put(d.base ?: JSONObject.NULL).put(d.perKm ?: JSONObject.NULL))
+    }
+
+    /** What the drive since [from] did, for the end-of-drive notification: metres, first and last soot, regens and warnings started. */
+    fun tripStats(from: Long): TripStats {
+        val (m, s0, s1) = readableDatabase.rawQuery(
+            "SELECT MAX(odo_m) - MIN(odo_m), (SELECT soot FROM sample WHERE t >= ?1 AND soot IS NOT NULL ORDER BY t LIMIT 1), " +
+                "(SELECT soot FROM sample WHERE t >= ?1 AND soot IS NOT NULL ORDER BY t DESC LIMIT 1) FROM sample WHERE t >= ?1",
+            arrayOf(from.toString()),
+        ).use { it.moveToFirst(); Triple(if (it.isNull(0)) 0.0 else it.getDouble(0), it.intOrNull(1), it.intOrNull(2)) }
+        fun count(sql: String) = readableDatabase.rawQuery(sql, arrayOf(from.toString())).use { it.moveToFirst(); it.getInt(0) }
+        return TripStats(m, s0, s1, count("SELECT COUNT(*) FROM regen WHERE start_t >= ?"), count("SELECT COUNT(DISTINCT key) FROM alert WHERE start_t >= ?"))
+    }
+
+    class TripStats(val metres: Double, val sootStart: Int?, val sootEnd: Int?, val regens: Int, val warnings: Int)
+
     /** Deletes closed regens shorter than a minute that covered no distance: the engine-stop blip of the 21DF bit, not a burn. */
     fun dropStopBlips() = writableDatabase.execSQL(
         "DELETE FROM regen WHERE end_t IS NOT NULL AND end_t - start_t < 60000 AND COALESCE(odo_end, odo_start, 0) - COALESCE(odo_start, 0) < 50",

@@ -61,6 +61,10 @@ class MainActivity : Activity() {
     private lateinit var sootChart: ChartView
     private lateinit var regenChart: ChartView
     private lateinit var regenTitle: TextView
+    private lateinit var dpfChart: ChartView
+    private lateinit var dpfTitle: TextView
+    private var dpfKey = ""
+    private var dpfAt = 0L
     private lateinit var history: LinearLayout
     private var historyKey = ""
     private lateinit var health: LinearLayout
@@ -138,6 +142,13 @@ class MainActivity : Activity() {
         regenTitle = ui.text(Type.TITLE_MD, R.color.ink)
         val sootCard = chartCard("Soot · last 14 days", ui.text(Type.TITLE_MD, R.color.ink, "Soot trend"), sootChart)
         val regenCard = chartCard("Regens · last 20", regenTitle, regenChart)
+        dpfChart = ChartView(this, columns = true, ui.chartColors())
+        dpfTitle = ui.text(Type.TITLE_MD, R.color.ink, "DPF condition")
+        val dpfCard = chartCard("After each regen · last 20", dpfTitle, dpfChart).apply {
+            addView(ui.text(Type.BODY_SM, R.color.muted,
+                "Exhaust restriction right after each regen, in kPa per 100 l/s of exhaust. Burning removes the soot, so what " +
+                    "stays is ash: a rising bar means the filter is filling with ash and needs a clean.").apply { setPadding(0, ui.px(12), 0, 0) })
+        }
 
         history = ui.column()
         health = ui.column()
@@ -149,7 +160,7 @@ class MainActivity : Activity() {
             for (v in listOf(notice, callout)) addView(v, LinearLayout.LayoutParams(-1, -2).apply { topMargin = ui.px(16) })
             addView(instrument, LinearLayout.LayoutParams(-1, ui.px(232)).apply { topMargin = ui.px(24) })
             addView(tiles, LinearLayout.LayoutParams(-1, -2).apply { topMargin = ui.px(12) })
-            for (v in listOf(sootCard, regenCard)) addView(v, LinearLayout.LayoutParams(-1, -2).apply { topMargin = ui.px(16) })
+            for (v in listOf(sootCard, regenCard, dpfCard)) addView(v, LinearLayout.LayoutParams(-1, -2).apply { topMargin = ui.px(16) })
             addView(ui.eyebrow("Regens").apply { gravity = Gravity.CENTER_HORIZONTAL }, LinearLayout.LayoutParams(-1, -2).apply { topMargin = ui.px(40) })
             addView(ui.text(Type.DISPLAY_SM, R.color.ink, "Every regen, recorded").apply { gravity = Gravity.CENTER_HORIZONTAL },
                 LinearLayout.LayoutParams(-1, -2).apply { topMargin = ui.px(8) })
@@ -281,6 +292,21 @@ class MainActivity : Activity() {
             withGap.map { it.start }.toLongArray(), withGap.map { (it.gapM!! / perUnit).toFloat() }.toFloatArray(),
             { i -> "${fmt(withGap[i].start)} · %.0f $unit · ${duration(withGap[i])}".format(withGap[i].gapM!! / perUnit) }, ::fmtDay,
         )
+
+        // Joins frames per regen, so only when a regen is added or closed, or once a minute for the latest one's rate
+        val dk = "${regens.size} ${regens.lastOrNull()?.end}"
+        if (dk != dpfKey || now - dpfAt > 60_000) {
+            dpfKey = dk
+            dpfAt = now
+            val d = db.dpfConditions().filter { it.base != null }.takeLast(20)
+            val rate = d.lastOrNull()?.perKm
+            dpfTitle.text = if (rate == null) "DPF condition" else "DPF condition · fills %.2f per %s".format(rate * perUnit / 1000, unit)
+            dpfChart.set(
+                d.map { it.regenStart }.toLongArray(), d.map { it.base!!.toFloat() }.toFloatArray(),
+                { i -> "${fmt(d[i].regenStart)} · %.1f kPa".format(d[i].base) + (d[i].perKm?.let { " · then +%.2f per $unit".format(it * perUnit / 1000) } ?: "") },
+                ::fmtDay,
+            )
+        }
 
         val alerts = db.alerts(now) // open ones only: a recovered warning stays stored (and on the hub) but leaves the dashboard
         val alertsKey = alerts.joinToString("|") { "${it.key}${it.text}${it.end}" }

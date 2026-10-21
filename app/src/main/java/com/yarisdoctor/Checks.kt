@@ -23,7 +23,6 @@ class Checker {
     private val values = HashMap<String, Pair<Long, Double>>() // pid name → (t, value)
     private val trueSince = HashMap<String, Long>()
     private val coolant = ArrayDeque<Pair<Long, Double>>()      // last 2 min
-    private val soot = ArrayDeque<Pair<Double, Double>>()       // (odo m, soot %), last 10 km outside regens
     private var now = 0L
     private var inRegen = false
 
@@ -36,7 +35,7 @@ class Checker {
     private fun on(name: String) = v(name) == 1.0
 
     /** Feeds one cycle's replies (request code → reply) and returns what is wrong right now. */
-    fun check(t: Long, replies: Map<String, String>, odoM: Double, regen: Boolean): List<Finding> {
+    fun check(t: Long, replies: Map<String, String>, regen: Boolean): List<Finding> {
         now = t
         inRegen = regen
         for (p in PIDS) {
@@ -47,8 +46,6 @@ class Checker {
         }
         v("Coolant Temp")?.let { coolant.addLast(t to it) }
         while (coolant.isNotEmpty() && t - coolant.first().first > 120_000) coolant.removeFirst()
-        if (regen) soot.clear() else v("PM Accumulation Ratio")?.let { if (soot.lastOrNull()?.first != odoM) soot.addLast(odoM to it) }
-        while (soot.isNotEmpty() && odoM - soot.first().first > 10_000) soot.removeFirst()
 
         return RULES.mapNotNull { r ->
             val text = r.test(this)
@@ -145,12 +142,6 @@ class Checker {
                 if (bad.isEmpty()) null else "The ECU detects rough running on cylinder ${bad.joinToString(", ")}."
             },
             Rule("dtc", "Stored fault codes", WARN, 0, "One or more fault codes stored in the engine ECU, including history codes.", listOf("# Codes(Include History)")) { v("# Codes(Include History)")?.takeIf { it > 0 }?.let { "${f0(it)} fault code${if (it > 1) "s are" else " is"} stored in the engine ECU." } },
-            Rule("soot_rate", "Soot rising fast", WARN, 0, "Estimate: soot up 8 % or more within 10 km of driving (at least 2 km) outside a regen, several times faster than a 150-400 km regen cycle allows. Distance comes from GPS.", listOf("PM Accumulation Ratio")) {
-                val (o0, s0) = soot.firstOrNull() ?: return@Rule null
-                val (o1, s1) = soot.last()
-                val km = (o1 - o0) / 1000
-                if (km >= 2 && s1 - s0 >= 8) "Soot rose ${f0(s1 - s0)} % in ${f1(km)} km, much faster than normal." else null
-            },
         )
     }
 }
@@ -172,6 +163,7 @@ fun diffAlerts(openTexts: Map<String, String>, active: List<Finding>): AlertDiff
 val TREND_RULES = listOf(
     Triple("regen_frequent", "Regens too frequent", "The last two regens less than 150 km apart. Toyota quotes 150-400 km between regens (Toyota Australia, via Toyota Owners Club)."),
     Triple("regen_interrupted", "Regens keep stopping early", "The last 3 regens each lasted under 10 minutes. A regen needs 15-20 min of steady driving (carchecker, 1.4 D-4D)."),
+    Triple("dpf_sensor_zero", "DPF pressure sensor off zero", "Estimate: the DPF pressure sensor reads over 1 kPa, or under -0.5 kPa, with the engine stopped and the ignition on, when no exhaust flows. The owner's car reads 0.3-0.4 kPa there. A drifting sensor or a split or blocked hose makes the ECU's soot figure wrong."),
 )
 
 /** Every rule for the hub, which shows them with the alerts: [key, title, level, about, uses]. Trend rules read no live values. */
@@ -179,6 +171,46 @@ fun ruleDefs(): org.json.JSONArray = org.json.JSONArray().apply {
     for (r in Checker.RULES) put(org.json.JSONArray().put(r.key).put(r.title).put(r.level).put(r.about).put(org.json.JSONArray(r.uses)))
     for ((key, title, about) in TREND_RULES) put(org.json.JSONArray().put(key).put(title).put(WARN).put(about).put(org.json.JSONArray()))
 }
+
+/** [engineOffDp]: the newest DPF pressure readings (kPa) taken with the engine stopped and the ignition on, newest first. */
+fun sensorZero(engineOffDp: List<Double>): Finding? {
+    if (engineOffDp.size < 3) return null
+    val dp = engineOffDp.take(5).sorted()[minOf(engineOffDp.size, 5) / 2]
+    return if (dp > 1.0 || dp < -0.5) Finding("dpf_sensor_zero", WARN, "The DPF pressure sensor reads ${"%.1f".format(dp)} kPa with the engine off (it should be about 0): check the sensor and its two hoses.") else null
+}
+
+/**
+ * Exhaust restriction of the DPF: its pressure drop per 100 l/s of exhaust, so motorway and town readings compare.
+ * Flow is MAF turned into volume at the after-DPF temperature and ~1 atm. Null below 1200 rpm or 25 l/s, where the
+ * pressure is too small to read well.
+ */
+fun restriction(dpKpa: Double, mafGs: Double, exhaustC: Double, rpm: Double): Double? {
+    val litres = mafGs * 287 * (exhaustC + 273.15) / 101_325
+    return if (rpm < 1200 || litres < 25) null else dpKpa / litres * 100
+}
+
+/**
+ * One finished regen's view of the filter: [base] = restriction in the 5 min after it (what soot burning can't
+ * remove, i.e. ash), [perKm] = how fast restriction rose per km until the next regen (or until now).
+ */
+class DpfCondition(val regenStart: Long, val base: Double?, val perKm: Double?)
+
+/** [after]: restriction readings just after the regen; [later]: the last ones before the next regen; [km] driven between. */
+fun dpfCondition(regenStart: Long, after: List<Double>, later: List<Double>, km: Double?): DpfCondition {
+    fun median(xs: List<Double>) = if (xs.size < 5) null else xs.sorted()[xs.size / 2]
+    val base = median(after)
+    val end = median(later)
+    return DpfCondition(regenStart, base, if (base != null && end != null && km != null && km >= 5) (end - base) / km else null)
+}
+
+/** One line for the end-of-drive notification. [perUnit]: metres per mile or km. */
+fun tripSummary(metres: Double, sootStart: Int?, sootEnd: Int?, regens: Int, warnings: Int, perUnit: Double, unit: String): String =
+    listOf(
+        "%.0f $unit".format(metres / perUnit),
+        if (sootStart != null && sootEnd != null) "soot $sootStart → $sootEnd %" else null,
+        when (regens) { 0 -> "no regen"; 1 -> "1 regen"; else -> "$regens regens" },
+        when (warnings) { 0 -> "no warnings"; 1 -> "1 warning"; else -> "$warnings warnings" },
+    ).filterNotNull().joinToString(" · ")
 
 /** Checks on the regen history (finished regens, oldest first): how often they come and whether they finish. */
 fun trends(regens: List<Db.Regen>): List<Finding> {

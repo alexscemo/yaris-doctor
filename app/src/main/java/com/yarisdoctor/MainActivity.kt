@@ -63,6 +63,7 @@ class MainActivity : Activity() {
     private lateinit var regenTitle: TextView
     private lateinit var dpfChart: ChartView
     private lateinit var dpfTitle: TextView
+    private lateinit var ashText: TextView
     private var dpfKey = ""
     private var dpfAt = 0L
     private lateinit var history: LinearLayout
@@ -148,6 +149,8 @@ class MainActivity : Activity() {
             addView(ui.text(Type.BODY_SM, R.color.muted,
                 "Exhaust restriction right after each regen, in kPa per 100 l/s of exhaust. Burning removes the soot, so what " +
                     "stays is ash: a rising bar means the filter is filling with ash and needs a clean.").apply { setPadding(0, ui.px(12), 0, 0) })
+            ashText = ui.text(Type.BODY_SM, R.color.muted).apply { setPadding(0, ui.px(8), 0, 0) }
+            addView(ashText)
         }
 
         history = ui.column()
@@ -301,6 +304,9 @@ class MainActivity : Activity() {
             val d = db.dpfConditions().filter { it.base != null }.takeLast(20)
             val rate = d.lastOrNull()?.perKm
             dpfTitle.text = if (rate == null) "DPF condition" else "DPF condition · fills %.2f per %s".format(rate * perUnit / 1000, unit)
+            // Grouped like Techstream's Learning Values Confirmation, so the two can be compared by eye
+            ashText.text = db.ashRecord()?.let { (t, hex) -> "ECU ash record (Techstream: DPF Deterioration Record): ${hex.chunked(4).joinToString(" ")} · ${fmt(t)}" }
+                ?: "ECU ash record: not read yet"
             dpfChart.set(
                 d.map { it.regenStart }.toLongArray(), d.map { it.base!!.toFloat() }.toFloatArray(),
                 { i -> "${fmt(d[i].regenStart)} · %.1f kPa".format(d[i].base) + (d[i].perKm?.let { " · then +%.2f per $unit".format(it * perUnit / 1000) } ?: "") },

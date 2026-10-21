@@ -93,6 +93,21 @@ class ChecksTest {
         assertTrue(firesAfter("dpf_pressure_flow", 30_000, replies(Triple("10", 0, 0x0B), Triple("10", 1, 0xB8), Triple("EF", 0, 0x05), Triple("EF", 1, 0x1A))))
     }
 
+    @Test fun toyotaManualLimits() {
+        assertTrue(firesAfter("idle_fuel_high", 60_000, replies(warm, Triple("AD", 20, 0x01), Triple("AD", 21, 0xCD)))) // 9.0 mm³/st
+        assertTrue(firesAfter("pump_scv", 30_000, replies(Triple("DD", 4, 0x32), Triple("DD", 5, 0x00))))                 // 1600 mA
+        assertTrue(firesAfter("learned_values", 60_000, replies(Triple("DD", 15, 0x80), Triple("DD", 16, 0x00))))          // vanes 2.5 V
+        val shorted = replies(Triple("F1", 6, 0x06), Triple("F1", 7, 0x00)) // 960 °C = short
+        assertTrue(firesAfter("exhaust_sensor", 60_000, shorted))
+        assertTrue(!firesAfter("exhaust_hot", 5_000, shorted)) // one fault, one warning
+        // Throttle at its reset value after a battery disconnect isn't out of range
+        assertTrue(!firesAfter("learned_values", 60_000, replies(Triple("DF", 0, 0x0A), Triple("DF", 1, 0xE1)))) // 21.25 deg
+    }
+
+    @Test fun normalValuesNameRealPids() {
+        for (name in TOYOTA_NORMAL.keys) assertTrue(name, PIDS.any { it.name == name })
+    }
+
     @Test fun ecuOverfillFlagWarns() {
         val c = Checker()
         val overfill = replies(Triple("E6", 3, 0x41 or 0x20)) // bit 26 = 0x20 of payload byte 3
@@ -163,8 +178,10 @@ class ChecksTest {
         assertEquals(keys.size, keys.toSet().size)
         for (r in Checker.RULES) {
             assertTrue(r.key, r.title.isNotBlank() && r.about.isNotBlank() && r.uses.isNotEmpty())
+            assertTrue("${r.key}: the hub rejects the whole sync over 600 characters", r.about.length <= 600)
             for (name in r.uses) assertTrue("${r.key} reads unknown value $name", PIDS.any { it.name == name })
         }
+        for ((key, _, about) in TREND_RULES) assertTrue(key, about.length <= 600)
         assertEquals("every cycle", Poller.pollRate("0C"))
         assertEquals("every 8 cycles", Poller.pollRate("AD"))
         assertEquals("every 5 min", Poller.pollRate("E1"))

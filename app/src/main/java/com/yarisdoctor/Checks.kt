@@ -72,40 +72,65 @@ class Checker {
                 val c = v("Coolant Temp") ?: return@Rule null
                 if ((v("Engine Run Time") ?: 0.0) >= 1200 && (v("Vehicle Speed") ?: 0.0) > 30 && c < 70) "Engine still at ${f0(c)} °C after 20 min: the thermostat may be stuck open." else null
             },
-            Rule("oil_pressure_low", "Oil pressure low", CRIT, 3_000, "Oil pressure under 30 kPa with the engine running. Toyota diesel spec (1HD-T manual; no 1ND-TV figure): 29 kPa or more at idle.", listOf("Engine Oil Pressure", "Engine Speed")) { v("Engine Oil Pressure")?.takeIf { running && it < 30 }?.let { "Oil pressure is ${f0(it)} kPa. Stop the engine and check the oil." } },
-            Rule("oil_pressure_rpm", "Oil pressure low at high revs", WARN, 5_000, "Oil pressure under 200 kPa at 2800 rpm or more. Same spec: 245 kPa or more at 3000 rpm.", listOf("Engine Oil Pressure", "Engine Speed")) {
-                v("Engine Oil Pressure")?.takeIf { (v("Engine Speed") ?: 0.0) >= 2800 && it < 200 }?.let { "Oil pressure is only ${f0(it)} kPa at ${f0(v("Engine Speed")!!)} rpm (expected 245+)." }
+            Rule("oil_pressure_low", "Oil pressure low", CRIT, 3_000, "Oil pressure under 24.5 kPa with the engine running. Toyota 1ND-TV manual: 24.5 kPa or more at warm idle (in the low-pressure mode, oil at 80 °C). The owner's car idles at 100-350 kPa.", listOf("Engine Oil Pressure", "Engine Speed")) { v("Engine Oil Pressure")?.takeIf { running && it < 24.5 }?.let { "Oil pressure is ${f0(it)} kPa. Stop the engine and check the oil." } },
+            Rule("oil_pressure_rpm", "Oil pressure low at high revs", WARN, 5_000, "Oil pressure under 150 kPa at 3000 rpm or more. Toyota 1ND-TV manual: 150 kPa or more at 3200 rpm, warm. The owner's car reads 310-370 kPa there.", listOf("Engine Oil Pressure", "Engine Speed")) {
+                v("Engine Oil Pressure")?.takeIf { (v("Engine Speed") ?: 0.0) >= 3000 && it < 150 }?.let { "Oil pressure is only ${f0(it)} kPa at ${f0(v("Engine Speed")!!)} rpm (Toyota: 150 or more)." }
             },
             Rule("battery_low", "Not charging", WARN, 30_000, "Battery under 13.0 V with the engine running: the alternator should give 13.2-14.8 V.", listOf("Battery Voltage", "Engine Speed")) { v("Battery Voltage")?.takeIf { running && it < 13.0 }?.let { "Battery at ${f1(it)} V with the engine running: the alternator may not be charging." } },
             Rule("battery_high", "Overcharging", WARN, 10_000, "Battery over 15.0 V with the engine running: overcharging.", listOf("Battery Voltage", "Engine Speed")) { v("Battery Voltage")?.takeIf { running && it > 15.0 }?.let { "Charging voltage is ${f1(it)} V, too high for the battery." } },
-            Rule("soot_high", "DPF soot high", WARN, 30_000, "DPF soot at 100-139 %. Code P2463 is reported from 100-120 % (go-parts P2463).", listOf("PM Accumulation Ratio")) { v("PM Accumulation Ratio")?.takeIf { it in 100.0..<140.0 }?.let { "DPF soot is at ${f0(it)} %. Drive 20 min at a steady motorway speed so it can regenerate." } },
-            Rule("soot_critical", "DPF soot critical", CRIT, 30_000, "DPF soot at 140 % or more. Forced regeneration is reported locked out from 160-170 % (Land Cruiser Prado reports).", listOf("PM Accumulation Ratio")) { v("PM Accumulation Ratio")?.takeIf { it >= 140 }?.let { "DPF soot is at ${f0(it)} %. Near the level where the car blocks regeneration: see a garage soon." } },
-            Rule("dpf_pressure_idle", "DPF pressure high at idle", WARN, 30_000, "Estimate: DPF pressure of 4 kPa or more at warm idle, outside a regen. Healthy filters read about 0-1 kPa, blocked ones 4-5 kPa (DPF guides, Land Cruiser logs).", listOf("DPF Differential Pressure", "Coolant Temp", "Engine Speed", "Vehicle Speed")) {
-                v("DPF Differential Pressure")?.takeIf { warm && idle && !inRegen && it >= 4 }?.let { "DPF pressure is ${f1(it)} kPa at idle (healthy is about 1): the filter may be clogging." }
+            Rule("soot_high", "DPF soot high", WARN, 30_000, "DPF soot at 100-149 %. Toyota 1ND-TV manual (2011-2014 cars): normal is 0-149 %, a regen may start above 77 % and is needed at 100 %. (2015+ cars: 105 / 118 / 173 %.)", listOf("PM Accumulation Ratio")) { v("PM Accumulation Ratio")?.takeIf { it in 100.0..<150.0 }?.let { "DPF soot is at ${f0(it)} %, past the point where it needs a regen. Drive 20 min at a steady 65-100 km/h so it can regenerate." } },
+            Rule("soot_critical", "DPF soot critical", CRIT, 30_000, "DPF soot at 150 % or more. Toyota 1ND-TV manual (2011-2014): over 149 % at 4000 rpm is fault code P2463 (DPF restriction, soot).", listOf("PM Accumulation Ratio")) { v("PM Accumulation Ratio")?.takeIf { it >= 150 }?.let { "DPF soot is at ${f0(it)} %, the level of fault code P2463. See a garage soon: it may need a forced regen." } },
+            Rule("dpf_pressure_idle", "DPF pressure high at idle", WARN, 30_000, "DPF pressure over 3 kPa at warm idle, outside a regen. Toyota 1ND-TV manual: -3 to 3 kPa at idle. The owner's car reads 0.2-2.1 kPa there.", listOf("DPF Differential Pressure", "Coolant Temp", "Engine Speed", "Vehicle Speed")) {
+                v("DPF Differential Pressure")?.takeIf { warm && idle && !inRegen && it > 3 }?.let { "DPF pressure is ${f1(it)} kPa at idle (Toyota: 3 at most): the filter may be clogging." }
+            },
+            Rule("exhaust_sensor", "Exhaust temperature sensor fault", WARN, 60_000, "An exhaust temperature reading exactly 50 °C with the engine warm, or 950 °C or more, for a minute. Toyota 1ND-TV manual: the tester shows 50 °C for an open circuit and 950 °C for a short.", listOf("Exhaust Temperature B1S1", "Exhaust Temperature B1S2", "Coolant Temp", "Engine Speed")) {
+                val bad = listOfNotNull(
+                    "before the catalyst".takeIf { v("Exhaust Temperature B1S1")?.let { it >= 950 || (warm && running && it == 50.0) } == true },
+                    "after the DPF".takeIf { v("Exhaust Temperature B1S2")?.let { it >= 950 || (warm && running && it == 50.0) } == true },
+                )
+                if (bad.isEmpty()) null else "The exhaust temperature sensor ${bad.joinToString(" and ")} reads a fault value: check its wiring."
             },
             Rule("exhaust_hot", "Exhaust too hot", WARN, 5_000, "Estimate: either exhaust temperature at 800 °C or more. Active regens run around 600-650 °C.", listOf("Exhaust Temperature B1S1", "Exhaust Temperature B1S2")) {
-                listOfNotNull(v("Exhaust Temperature B1S1"), v("Exhaust Temperature B1S2")).maxOrNull()?.takeIf { it >= 800 }?.let { "Exhaust is at ${f0(it)} °C, hotter than a normal regen." }
+                // 950+ is a shorted sensor, reported by exhaust_sensor
+                listOfNotNull(v("Exhaust Temperature B1S1"), v("Exhaust Temperature B1S2")).filter { it < 950 }.maxOrNull()?.takeIf { it >= 800 }?.let { "Exhaust is at ${f0(it)} °C, hotter than a normal regen." }
             },
-            Rule("rail_pressure", "Fuel rail pressure off target", WARN, 30_000, "Estimate: fuel rail pressure off its target by more than 10 MPa or 15 % for 30 s, above 600 rpm (generic P0087/P0088 logic). The target moves 30-120 MPa within seconds when the pedal moves, and actual and target are read a moment apart, so short gaps are normal: on the owner's car they lasted up to 20 s.", listOf("Fuel Press", "Target Common Rail Pressure", "Engine Speed")) {
+            Rule("rail_pressure", "Fuel rail pressure off target", WARN, 30_000, "Fuel rail pressure off its target by more than 10 MPa or 15 % for 30 s, above 600 rpm. Toyota 1ND-TV manual: within 10 MPa of the target in steady conditions; fault codes P1229/P1272 need 17-20 MPa under (or 25 MPa over) the target for 1 s with the pressure valve already at its limit, which this app can't see. The target moves 30-120 MPa within seconds when the pedal moves, and actual and target are read a moment apart, so short gaps are normal: on the owner's car they lasted up to 20 s.", listOf("Fuel Press", "Target Common Rail Pressure", "Engine Speed")) {
                 val a = v("Fuel Press") ?: return@Rule null
                 val target = v("Target Common Rail Pressure") ?: return@Rule null
                 if ((v("Engine Speed") ?: 0.0) > 600 && abs(a - target) > maxOf(10_000.0, target * 0.15)) "Fuel rail is at ${f0(a / 1000)} MPa against a target of ${f0(target / 1000)} MPa." else null
             },
-            Rule("maf_low", "Air flow sensor reading low", WARN, 30_000, "Estimate: MAF under 80 % of the ECU's estimate for 30 s with the EGR valve under 15 % open, above 1000 rpm. The ratio is the fresh-air share, so it only means something with the EGR closed; there the owner's car reads 0.92-0.96 (never under 0.82). A dirty or failing MAF reads low, which makes extra soot.", listOf("MAF/Estimate MAF Ratio", "Actual EGR Valve Pos.", "Engine Speed")) {
+            Rule("maf_low", "Air flow sensor reading low", WARN, 30_000, "MAF under 80 % of the ECU's estimate for 30 s with the EGR valve under 15 % open, above 1000 rpm. Toyota 1ND-TV manual: the ratio is normally 0.4-1.2, the estimate comes from MAP and intake temperature, and it only means something at high load with the EGR off. With the EGR closed the owner's car reads 0.92-0.96 (never under 0.82), so 0.8 is set from that. A dirty or failing MAF reads low (Toyota lists it under P1608), which makes extra soot.",listOf("MAF/Estimate MAF Ratio", "Actual EGR Valve Pos.", "Engine Speed")) {
                 val ratio = v("MAF/Estimate MAF Ratio") ?: return@Rule null
                 val egr = v("Actual EGR Valve Pos.") ?: return@Rule null
                 if ((v("Engine Speed") ?: 0.0) > 1000 && egr < 15 && ratio < 0.8) "Air flow sensor reads ${f0(ratio * 100)} % of what the ECU expects with the EGR closed: it may be dirty or failing." else null
             },
             Rule("boost_deviation", "Boost off target", WARN, 5_000, "Boost off target by 28 kPa or more with the engine running (generic P0299 logic: 27.6 kPa for 5 s).", listOf("Boost Pressure Deviation", "Engine Speed")) { v("Boost Pressure Deviation")?.takeIf { running && abs(it) >= 28 }?.let { "Boost is ${f0(abs(it))} kPa off target: check for leaks in the turbo hoses or a sticking turbo vane." } },
-            Rule("injector", "Injector correction high", WARN, 30_000, "Estimate: an injector correction beyond ±3 mm³/stroke at warm idle, pointing at a worn or blocked injector (Hilux 1KD-FTV owners; no 1ND-TV figure).", listOf("Injection Feedback Val #1", "Injection Feedback Val #2", "Injection Feedback Val #3", "Injection Feedback Val #4", "Coolant Temp", "Engine Speed", "Vehicle Speed")) {
+            Rule("injector", "Injector correction high", WARN, 30_000, "An injector correction beyond ±2.0 mm³/stroke at warm idle. Toyota 1ND-TV manual: -2.0 to 2.0 at idle; more means an injector delivering the wrong amount or low compression on that cylinder. The owner's car reads 0.6 at most.", listOf("Injection Feedback Val #1", "Injection Feedback Val #2", "Injection Feedback Val #3", "Injection Feedback Val #4", "Coolant Temp", "Engine Speed", "Vehicle Speed")) {
                 if (!(warm && idle)) return@Rule null
-                val bad = (1..4).filter { abs(v("Injection Feedback Val #$it") ?: 0.0) > 3.0 }
-                if (bad.isEmpty()) null else "Injector ${bad.joinToString(", ")} needs over ±3 mm³ of correction at idle: worn or blocked injector?"
+                val bad = (1..4).filter { abs(v("Injection Feedback Val #$it") ?: 0.0) > 2.0 }
+                if (bad.isEmpty()) null else "Injector ${bad.joinToString(", ")} needs over ±2 mm³ of correction at idle: worn or blocked injector, or low compression?"
             },
-            Rule("egr_tracking", "EGR valve off target", WARN, 15_000, "Estimate: the EGR valve more than 20 % away from the position the ECU asks for, for 15 s. Shops diagnose a sticking or sooted valve by comparing commanded and actual position; in the Techstream capture they agree within 2 % at idle and drift apart only for a few seconds while revving.", listOf("Target EGR Position", "Actual EGR Valve Pos.", "Engine Speed")) {
+            Rule("idle_fuel_high", "Idle fuel use high", WARN, 60_000, "Injection volume of 8 mm³/stroke or more at warm idle for a minute, outside a regen. Toyota 1ND-TV manual: 2-8 at idle, and under 8 in its P2463 check; more points at clogged injectors, poor fuel, a blocked fuel filter, too much EGR or engine friction.", listOf("Injection Volume", "After Injection Period", "Coolant Temp", "Engine Speed", "Vehicle Speed")) {
+                v("Injection Volume")?.takeIf { warm && idle && v("After Injection Period") == 0.0 && it >= 8 }?.let { "The engine needs ${f1(it)} mm³ of fuel per stroke at idle (Toyota: under 8): injectors, fuel filter or EGR?" }
+            },
+            Rule("pump_scv", "Fuel pump working hard", WARN, 30_000, "The supply pump's suction control valve current above 1530 mA for 30 s with the engine running. Toyota 1ND-TV manual: 1530 mA or less; stuck at 1800 or more means a sticking valve, and a high value means the pump runs hard yet can't reach the target pressure. The owner's car only spikes past 1530 for single readings.", listOf("Target Pump SCV Current", "Engine Speed")) {
+                v("Target Pump SCV Current")?.takeIf { running && it > 1530 }?.let { "The fuel pump valve current is ${f0(it)} mA (Toyota: 1530 at most): fuel filter, pump or valve?" }
+            },
+            Rule("learned_values", "Learned position out of range", WARN, 60_000, "A learned value the ECU keeps outside Toyota's range (1ND-TV manual): turbo vanes closed 1.0-2.0 V, intake throttle closed 13-21 deg (21.25 = not learned yet), A/F sensor 2.2-3.2 V, EGR valve closed 1.7 V at most. The EGR lower limit (0.7 V) is left out: the owner's car reads 0.48 and Toyota's own test car 0.52. A value at a limit can mean dirt in the valve seat.", listOf("VN Close Learn Value", "Throttle Close Learning Val.", "AF Sensor Learning Value", "EGR Close Lrn. Val.", "Engine Speed")) {
+                if (!running) return@Rule null
+                val bad = listOfNotNull(
+                    v("VN Close Learn Value")?.takeIf { it !in 1.0..2.0 }?.let { "turbo vanes ${"%.2f".format(it)} V" },
+                    // 21.25 (decoded 21.2) is the reset value until the first ignition-off after a battery disconnect
+                    v("Throttle Close Learning Val.")?.takeIf { it < 13 || it > 21.3 }?.let { "intake throttle ${f1(it)} deg" },
+                    v("AF Sensor Learning Value")?.takeIf { it !in 2.2..3.2 }?.let { "A/F sensor ${"%.2f".format(it)} V" },
+                    v("EGR Close Lrn. Val.")?.takeIf { it > 1.7 }?.let { "EGR valve ${"%.2f".format(it)} V" },
+                )
+                if (bad.isEmpty()) null else "Learned value out of Toyota's range: ${bad.joinToString(", ")}."
+            },
+            Rule("egr_tracking", "EGR valve off target", WARN, 15_000, "The EGR valve more than 10 % away from the position the ECU asks for, for 15 s. Toyota 1ND-TV manual: a gap over ±10 % means the EGR system may be faulty (sticking or sooted valve). Gaps are normal for a moment while revving: on the owner's car they last 1.6 s at most.", listOf("Target EGR Position", "Actual EGR Valve Pos.", "Engine Speed")) {
                 val target = v("Target EGR Position") ?: return@Rule null
                 val actual = v("Actual EGR Valve Pos.") ?: return@Rule null
-                if (running && abs(target - actual) > 20) "The EGR valve is at ${f0(actual)} % but the ECU asks for ${f0(target)} %: it may be sticking or sooted up." else null
+                if (running && abs(target - actual) > 10) "The EGR valve is at ${f0(actual)} % but the ECU asks for ${f0(target)} %: it may be sticking or sooted up." else null
             },
             Rule("egr_bypass_warm", "EGR cooler bypassed when warm", WARN, 180_000, "Estimate: the EGR cooler still bypassed after 3 min of driving above 50 km/h with the engine warm (75 °C+). The ECU bypasses the cooler to warm up faster and switches by coolant temperature and load (Toyota 1KD manual); the capture already switched to the cooler under load at 45 °C.", listOf("EGR Cooler Bypass Position", "Coolant Temp", "Vehicle Speed")) {
                 val c = v("Coolant Temp") ?: return@Rule null
@@ -125,7 +150,7 @@ class Checker {
                 val bad = listOfNotNull("EGR valve".takeIf { v("EGR Close Lrn. Status") == 0.0 }, "intake throttle".takeIf { v("Diesel Throttle Learn Status") == 0.0 })
                 if (running && warm && bad.isNotEmpty()) "The ECU hasn't learned the ${bad.joinToString(" and ")} closed position. Let the engine idle for a few minutes." else null
             },
-            Rule("idle_rpm", "Idle speed unusual", WARN, 60_000, "Estimate: a warm idle (stopped, accelerator released) under 650 or over 1100 rpm for a minute. Owners report about 800 rpm warm, up to about 1000 with lights or A/C on (Toyota Owners Club).", listOf("Engine Speed", "Vehicle Speed", "Accel Position", "Coolant Temp")) {
+            Rule("idle_rpm", "Idle speed unusual", WARN, 60_000, "A warm idle (stopped, accelerator released) under 650 or over 1100 rpm for a minute. Toyota 1ND-TV manual: 720-820 rpm; the ECU raises it with lights, A/C or a regen running, so the band is wider (owners report up to about 1000).",listOf("Engine Speed", "Vehicle Speed", "Accel Position", "Coolant Temp")) {
                 val rpm = v("Engine Speed") ?: return@Rule null
                 if (warm && rpm > 400 && v("Vehicle Speed") == 0.0 && v("Accel Position") == 0.0 && (rpm < 650 || rpm > 1100)) "The engine idles at ${f0(rpm)} rpm (about 800 is normal)." else null
             },
@@ -163,7 +188,7 @@ fun diffAlerts(openTexts: Map<String, String>, active: List<Finding>): AlertDiff
 val TREND_RULES = listOf(
     Triple("regen_frequent", "Regens too frequent", "The last two regens less than 150 km apart. Toyota quotes 150-400 km between regens (Toyota Australia, via Toyota Owners Club)."),
     Triple("regen_interrupted", "Regens keep stopping early", "The last 3 regens each lasted under 10 minutes. A regen needs 15-20 min of steady driving (carchecker, 1.4 D-4D)."),
-    Triple("dpf_sensor_zero", "DPF pressure sensor off zero", "Estimate: the DPF pressure sensor reads over 1 kPa, or under -0.5 kPa, with the engine stopped and the ignition on, when no exhaust flows. The owner's car reads 0.3-0.4 kPa there. A drifting sensor or a split or blocked hose makes the ECU's soot figure wrong."),
+    Triple("dpf_sensor_zero", "DPF pressure sensor off zero", "The DPF pressure sensor reads over 1 kPa, or under -0.5 kPa, with the engine stopped and the ignition on, when no exhaust flows. Toyota 1ND-TV manual: the displayed value leaves out the ECU's zero-point correction, so it may read about ±0.3 kPa at zero; the owner's car reads 0.3-0.4. A drifting sensor or a split or blocked hose makes the ECU's soot figure wrong."),
 )
 
 /** Every rule for the hub, which shows them with the alerts: [key, title, level, about, uses]. Trend rules read no live values. */

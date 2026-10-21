@@ -87,14 +87,21 @@ class Db private constructor(ctx: Context, name: String?) : SQLiteOpenHelper(ctx
         db.execSQL("CREATE INDEX frame_t ON frame(t)")
     }
 
-    /** [replies]: request code → cleaned reply, as Poller.cycle returns them; codes outside the table aren't stored. */
+    /**
+     * [replies]: request code → cleaned reply, as Poller.cycle returns them; codes outside the table aren't stored, except the
+     * ash record, kept under its whole code ("A918") so it can't clash with a `21` lid.
+     */
     fun frames(t: Long, replies: Map<String, String>) {
         val db = writableDatabase
         db.beginTransaction()
         try {
             for ((code, reply) in replies) {
-                if (code !in PID_LENGTHS) continue
-                db.insert("frame", null, ContentValues().apply { put("t", t); put("lid", code.substring(2)); put("hex", reply.substring(4)) })
+                val lid = when (code) {
+                    in PID_LENGTHS -> code.substring(2)
+                    Poller.ASH_RECORD -> code
+                    else -> continue
+                }
+                db.insert("frame", null, ContentValues().apply { put("t", t); put("lid", lid); put("hex", reply.substring(4)) })
             }
             db.setTransactionSuccessful()
         } finally {
@@ -108,6 +115,12 @@ class Db private constructor(ctx: Context, name: String?) : SQLiteOpenHelper(ctx
             if (it.moveToFirst()) lid to (it.getLong(0) to it.getString(1)) else null
         }
     }.toMap()
+
+    /** Newest ash record read (13 bytes after `E9 18`) and when, or null if this ECU never answered it. */
+    fun ashRecord(): Pair<Long, String>? =
+        readableDatabase.rawQuery("SELECT t, hex FROM frame WHERE lid = ? ORDER BY t DESC LIMIT 1", arrayOf(Poller.ASH_RECORD)).use {
+            if (it.moveToFirst()) it.getLong(0) to it.getString(1) else null
+        }
 
     /** [lid]'s payloads over the last [spanMs] it was read, oldest first. */
     /**
@@ -369,16 +382,18 @@ class Db private constructor(ctx: Context, name: String?) : SQLiteOpenHelper(ctx
             out
         }
 
-    /** Frame rows after [rowid] for the hub, as [rowid, t, lid, hex]. */
+    /** Frame rows after [rowid] for the hub, as [rowid, t, lid, hex]. The hub takes 2-character lids only, so not the ash record. */
     fun framesAfter(rowid: Long, limit: Int): JSONArray =
-        readableDatabase.rawQuery("SELECT rowid, t, lid, hex FROM frame WHERE rowid > ? ORDER BY rowid LIMIT ?", arrayOf(rowid.toString(), limit.toString())).use {
+        readableDatabase.rawQuery("SELECT rowid, t, lid, hex FROM frame WHERE rowid > ? AND length(lid) = 2 ORDER BY rowid LIMIT ?", arrayOf(rowid.toString(), limit.toString())).use {
             val out = JSONArray()
             while (it.moveToNext()) out.put(JSONArray().put(it.getLong(0)).put(it.getLong(1)).put(it.getString(2)).put(it.getString(3)))
             out
         }
 
+    /** Same filter as [framesAfter], or a newest ash record row would look pending forever and sync every minute. */
     fun maxFrameRowid(): Long =
-        readableDatabase.rawQuery("SELECT COALESCE(MAX(rowid), 0) FROM frame", null).use { it.moveToFirst(); it.getLong(0) }
+        // ORDER BY rowid DESC LIMIT 1 walks back from the newest row; MAX() with a WHERE would scan the whole table
+        readableDatabase.rawQuery("SELECT rowid FROM frame WHERE length(lid) = 2 ORDER BY rowid DESC LIMIT 1", null).use { if (it.moveToFirst()) it.getLong(0) else 0L }
 
     /** Alerts open or ended after [since], as [id, key, level, text, start, end]; resent whole when they change (text and end do). */
     fun alertRows(since: Long): JSONArray =

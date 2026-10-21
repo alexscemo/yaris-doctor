@@ -97,7 +97,9 @@ class AllData(private val a: Activity, private val ui: Ui) {
                     ui.eyebrow("21 ${p.lid} · ${p.category}"),
                     ui.text(Type.BODY_MD, R.color.ink, p.name).apply { setPadding(0, ui.px(4), 0, 0) },
                     rate,
-                ), LinearLayout.LayoutParams(0, -2, 1f))
+                ).apply {
+                    TOYOTA_NORMAL[p.name]?.let { addView(ui.text(Type.CAPTION, R.color.muted, "Toyota normal: $it").apply { setPadding(0, ui.px(2), 0, 0) }) }
+                }, LinearLayout.LayoutParams(0, -2, 1f))
                 addView(value, LinearLayout.LayoutParams(-2, -2).apply { marginStart = ui.px(12) })
             })
             if (p === open) rows.addView(ui.card(R.color.surface_card, 16,

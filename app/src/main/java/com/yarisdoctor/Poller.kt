@@ -48,6 +48,7 @@ class Poller(private val send: (String) -> String?) {
 
     /** A reply for [code] of the length the table says, one retry; codes not in the table (user's own) are taken as they come. */
     private fun ask(code: String): String? {
+        if (code == ASH_RECORD) return send(code).takeIf(::ashRecordOk) ?: send(code).takeIf(::ashRecordOk)
         val len = PID_LENGTHS[code] ?: return send(code)
         val want = (len + 2) * 2
         // Exact length, header and hex only: catches cut-off or mixed frames and ELM chatter like BUFFER FULL
@@ -78,7 +79,19 @@ class Poller(private val send: (String) -> String?) {
         /** Two per cycle, in turn. */
         val MEDIUM = listOf("2104", "2105", "210B", "210F", "2111", "2124", "2134", "2142", "2149", "214A", "214C", "21AD", "21DA", "21DE", "21E6", "21EE")
         /** Counters and learned values: once a session, then every [SLOW_MS]. */
-        val SLOW = listOf("211F", "2121", "2130", "2131", "2133", "214D", "214E", "21E1")
+        val SLOW = listOf("211F", "2121", "2130", "2131", "2133", "214D", "214E", "21E1", "A918")
+
+        /**
+         * The DPF ash ("deterioration") record, the same read as Techstream's Learning Values Confirmation (J2534 log,
+         * 21 Oct): `A9 18` → `E9 18` + 13 bytes, the last the XOR of the other 12. Format undocumented, so it is stored raw.
+         */
+        const val ASH_RECORD = "A918"
+
+        fun ashRecordOk(r: String?): Boolean {
+            if (r == null || r.length != 30 || !r.startsWith("E918") || !r.all { it in '0'..'9' || it in 'A'..'F' }) return false
+            val b = r.substring(4).chunked(2).map { it.toInt(16) }
+            return b.dropLast(1).fold(0) { x, v -> x xor v } == b.last()
+        }
         const val SLOW_MS = 5 * 60_000L
         const val PARK_AFTER = 5
         /** Two MEDIUM requests per cycle, so each comes round every this many cycles. */

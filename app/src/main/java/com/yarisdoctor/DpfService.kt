@@ -55,7 +55,8 @@ class DpfService : Service() {
     private val notified = HashSet<String>()  // alert keys notified this drive: a value flapping around its limit notifies once
     private val showing = HashSet<String>()   // of those, the ones whose notification is still up
     // A drive outlives a Bluetooth drop shorter than REGEN_GAP_MS, like a regen: the checker and live alerts carry over
-    private var checker = Checker()
+    private val model2015 by lazy { Prefs.model2015(this) } // read once: Settings restarts the service on a change
+    private lateinit var checker: Checker // made in onCreate: the model year needs the context
     private var lastSeen = 0L // last cycle the ECU answered
 
     private val gps = LocationListener { l ->
@@ -82,6 +83,7 @@ class DpfService : Service() {
         }
         odoM = db.odometer()
         Prefs.migrate(this)
+        checker = Checker(model2015)
         // A previous process killed mid-regen never closed its row; it would show "Ongoing" forever
         Db.real(this).closeOrphanRegens()
         // Engine-stop blips (under a minute, no distance) are not burns; every start, so one that slips past engineStopped() goes too
@@ -118,7 +120,7 @@ class DpfService : Service() {
             // No ECU data for REGEN_GAP_MS: the drive is over, so its live alerts end and the next drive notifies afresh
             if (lastSeen > 0 && System.currentTimeMillis() - lastSeen > REGEN_GAP_MS) {
                 lastSeen = 0
-                checker = Checker()
+                checker = Checker(model2015)
                 tripDone()
                 trend = history() // the engine-stop readings of this drive feed the DPF sensor check
                 checks(System.currentTimeMillis(), emptyList()) // closes the drive's live alerts and cancels their notifications
@@ -213,7 +215,7 @@ class DpfService : Service() {
         val sim = Sim.live()
         val rec = Recorder(db) // its own, never kept open across sessions like the real one
         var thinnedTo = 0L
-        val checker = Checker()
+        val checker = Checker(model2015)
         notified.clear()
         try {
             while (running) {
@@ -284,8 +286,12 @@ class DpfService : Service() {
         }
     }
 
-    /** Regen-history checks plus the DPF sensor's engine-off zero; kept open while they apply, rechecked at start and after drives and regens. */
-    private fun history() = trends(db.regens()) + listOfNotNull(sensorZero(db.engineOffDp()))
+    /**
+     * Regen-history checks, the DPF sensor's engine-off zero and the oil change; kept open while they apply, rechecked at
+     * start and after drives and regens. Only the last regens get their floor and peak: trends() reads the newest.
+     */
+    private fun history() = trends(db.withSigns(db.regens().takeLast(10)), model2015) +
+        listOfNotNull(sensorZero(db.engineOffDp()), oilDue(Prefs.oilMetres(this)))
 
     /** One quiet notification when a drive ends: distance, soot, regens and warnings. */
     private fun tripDone() {

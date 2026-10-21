@@ -61,6 +61,7 @@ class Sim(
             "0D" -> put(0, rnd.nextInt(110))
             "DD" -> put(17, (r.soot / 2).coerceIn(0, 255))
             "DF" -> { put(9, if (r.regen) 2 else 0); put(14, if (r.regen) 1 else 0) } // byte 16 of the reply: the regen flag
+            "AD" -> put(6, if (r.regen) 500 else 0, 2) // After Injection Period, µs: Toyota's own regen sign
             "F1" -> { put(4, (r.temp * 1.6 + 40).toInt(), 2); put(6, (r.temp * 1.6).toInt(), 2) }
         }
         "61$lid" + b.joinToString("")

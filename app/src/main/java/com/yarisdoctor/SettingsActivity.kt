@@ -46,6 +46,8 @@ class SettingsActivity : Activity() {
                 *listOfNotNull(liveUpdatesRow()).toTypedArray(),
                 edgeLightRow(),
                 row("Distance units", if (Prefs.km(context)) "Kilometres" else "Miles") { pickUnits() },
+                row("Model year", if (Prefs.model2015(context)) "2015 or later" else "2011-2014") { pickModelYear() },
+                oilRow(),
             ))
             addView(section("DPF codes"))
             addView(group(
@@ -241,6 +243,43 @@ class SettingsActivity : Activity() {
                 render()
             }
             .show()
+    }
+
+    /** Toyota's soot scale and regen temperature range changed in 2015; the checks follow this. */
+    private fun pickModelYear() {
+        AlertDialog.Builder(this)
+            .setTitle("Model year")
+            .setSingleChoiceItems(arrayOf("2011-2014", "2015 or later"), if (Prefs.model2015(this)) 1 else 0) { dialog, i ->
+                Prefs.put(this, Prefs.MODEL_2015, i == 1)
+                DpfService.restart(this) // the checks read it at start
+                dialog.dismiss()
+                render()
+            }
+            .show()
+    }
+
+    /** Records an oil change at today's date and the GPS odometer; the oil_change_due check counts from it. */
+    private fun oilRow(): View {
+        val at = Prefs.long(this, Prefs.OIL_AT)
+        val km = Prefs.km(this)
+        val sub = if (at == 0L) "Never recorded · tap when the oil is changed" else {
+            val since = (Prefs.oilMetres(this) ?: 0.0) / (if (km) 1000.0 else Db.METRES_PER_MILE)
+            val regens = Db.real(this).regens().count { it.start >= at }
+            java.text.DateFormat.getDateInstance().format(at) + " · %.0f ${if (km) "km" else "mi"}, $regens regen${if (regens == 1) "" else "s"} since".format(since)
+        }
+        return row("Oil changed", sub) {
+            AlertDialog.Builder(this)
+                .setTitle("Oil changed today?")
+                .setMessage("Counts distance and regens from now. Toyota changes the oil every $OIL_CHANGE_KM km on this engine.")
+                .setPositiveButton("Record") { _, _ ->
+                    Prefs.put(this, Prefs.OIL_AT, System.currentTimeMillis())
+                    Prefs.put(this, Prefs.OIL_ODO, Db.real(this).odometer().toLong())
+                    DpfService.restart(this) // closes an oil-change warning now
+                    render()
+                }
+                .setNegativeButton("Cancel", null)
+                .show()
+        }
     }
 
     /** caption-uppercase label above a group. */

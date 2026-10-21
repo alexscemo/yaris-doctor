@@ -26,6 +26,9 @@ object Prefs {
     const val SYNCED_FRAME_ROWID = "synced_frame_rowid"
     const val SYNCED_ALERTS = "synced_alerts"
     const val HUB_FRAMES = "hub_frames"
+    const val MODEL_2015 = "model_2015"
+    const val OIL_AT = "oil_at"
+    const val OIL_ODO = "oil_odo"
     private const val DEVICE_ID = "device_id"
 
     /** OBD requests per reading, defaulting to the ones DPFViewer found on the owner's Yaris; other years may differ. */
@@ -65,6 +68,10 @@ object Prefs {
     fun putFormula(c: Context, key: String, value: String) = sp(c).edit().putString("${key}_formula", value).apply()
     fun edge(c: Context) = sp(c).getBoolean(EDGE, false) // off by default: it needs "Display over other apps"
     fun km(c: Context) =sp(c).getBoolean(KM, false)
+    /** 2015-or-later Yaris: Toyota's 2015+ soot scale and regen temperature range. Off = 2011-2014, the owner's car. */
+    fun model2015(c: Context) = sp(c).getBoolean(MODEL_2015, false)
+    /** Metres on the real log's GPS odometer since the oil change recorded in Settings (OIL_AT, OIL_ODO), null if none. */
+    fun oilMetres(c: Context): Double? = long(c, OIL_AT).takeIf { it > 0 }?.let { Db.real(c).odometer() - long(c, OIL_ODO) }
     // Both empty by default: nothing is uploaded until the user points the app at their own hub and Wi-Fi
     fun server(c: Context) = sp(c).getString(SERVER, "")!!
     fun wifi(c: Context) = sp(c).getString(WIFI, "")!!

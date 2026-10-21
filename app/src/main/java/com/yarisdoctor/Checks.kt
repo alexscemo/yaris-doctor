@@ -12,8 +12,9 @@ const val CRIT = 2
  * Health checks on the live values. Thresholds are for the 1ND-TV where a source exists; "estimate" marks the ones
  * borrowed from other Toyota diesels or generic OBD logic. A rule must hold for its hold time before it fires, so one
  * odd reading never raises an alert. One instance per drive: it keeps a little history for the rate rules.
+ * [model2015]: the car is a 2015-or-later Yaris (Prefs.model2015), whose soot scale is Toyota's 2015+ one.
  */
-class Checker {
+class Checker(private val model2015: Boolean = false) {
     /**
      * One check. [about] is what the Rules tab shows: the condition, the threshold and where it comes from ("estimate"
      * when borrowed from other Toyota diesels or generic OBD logic). [uses] names the [PIDS] it reads, for their poll rate.
@@ -25,6 +26,7 @@ class Checker {
     private val coolant = ArrayDeque<Pair<Long, Double>>()      // last 2 min
     private var now = 0L
     private var inRegen = false
+    private var injectedAt = Long.MIN_VALUE / 2 // last read with After Injection Period above 0
 
     /** Latest value of [name] if read in the last few minutes (slow items are read every 5). */
     private fun v(name: String): Double? = values[name]?.takeIf { now - it.first <= STALE_MS }?.second
@@ -33,6 +35,8 @@ class Checker {
     private val warm get() = (v("Coolant Temp") ?: 0.0) >= 70
     private val idle get() = running && (v("Engine Speed") ?: 9e9) < 1000 && v("Vehicle Speed") == 0.0
     private fun on(name: String) = v(name) == 1.0
+    private val sootNeeded get() = sootLimits(model2015).first
+    private val sootFault get() = sootLimits(model2015).second
 
     /** Feeds one cycle's replies (request code → reply) and returns what is wrong right now. */
     fun check(t: Long, replies: Map<String, String>, regen: Boolean): List<Finding> {
@@ -44,6 +48,7 @@ class Checker {
             if (values[p.name]?.first == t) continue
             p.decode(reply.substring(4))?.let { values[p.name] = t to it }
         }
+        values["After Injection Period"]?.let { (rt, x) -> if (x > 0) injectedAt = rt }
         v("Coolant Temp")?.let { coolant.addLast(t to it) }
         while (coolant.isNotEmpty() && t - coolant.first().first > 120_000) coolant.removeFirst()
 
@@ -57,6 +62,8 @@ class Checker {
 
     companion object {
         private const val STALE_MS = 6 * 60_000L
+        /** After injection drops to 0 for single reads mid-regen (overrun, idle): up to 55 s on the owner's car, read every ~18 s. */
+        private const val INJECT_GAP_MS = 90_000L
         private fun f0(x: Double) = "%.0f".format(x)
         private fun f1(x: Double) = "%.1f".format(x)
 
@@ -78,8 +85,8 @@ class Checker {
             },
             Rule("battery_low", "Not charging", WARN, 30_000, "Battery under 13.0 V with the engine running: the alternator should give 13.2-14.8 V.", listOf("Battery Voltage", "Engine Speed")) { v("Battery Voltage")?.takeIf { running && it < 13.0 }?.let { "Battery at ${f1(it)} V with the engine running: the alternator may not be charging." } },
             Rule("battery_high", "Overcharging", WARN, 10_000, "Battery over 15.0 V with the engine running: overcharging.", listOf("Battery Voltage", "Engine Speed")) { v("Battery Voltage")?.takeIf { running && it > 15.0 }?.let { "Charging voltage is ${f1(it)} V, too high for the battery." } },
-            Rule("soot_high", "DPF soot high", WARN, 30_000, "DPF soot at 100-149 %. Toyota 1ND-TV manual (2011-2014 cars): normal is 0-149 %, a regen may start above 77 % and is needed at 100 %. (2015+ cars: 105 / 118 / 173 %.)", listOf("PM Accumulation Ratio")) { v("PM Accumulation Ratio")?.takeIf { it in 100.0..<150.0 }?.let { "DPF soot is at ${f0(it)} %, past the point where it needs a regen. Drive 20 min at a steady 65-100 km/h so it can regenerate." } },
-            Rule("soot_critical", "DPF soot critical", CRIT, 30_000, "DPF soot at 150 % or more. Toyota 1ND-TV manual (2011-2014): over 149 % at 4000 rpm is fault code P2463 (DPF restriction, soot).", listOf("PM Accumulation Ratio")) { v("PM Accumulation Ratio")?.takeIf { it >= 150 }?.let { "DPF soot is at ${f0(it)} %, the level of fault code P2463. See a garage soon: it may need a forced regen." } },
+            Rule("soot_high", "DPF soot high", WARN, 30_000, "DPF soot past the regen-needed level, below the fault level: 100-149 % on 2011-2014 cars, 118-173 % on 2015+ (Settings → Model year). Toyota 1ND-TV manual: normal is 0-149 % (2015+: 0-173), a regen may start above 77 % (2015+: 105) and is needed at 100 % (2015+: 118).", listOf("PM Accumulation Ratio")) { v("PM Accumulation Ratio")?.takeIf { it >= sootNeeded && it < sootFault }?.let { "DPF soot is at ${f0(it)} %, past the point where it needs a regen. Drive 20 min at a steady 65-100 km/h so it can regenerate." } },
+            Rule("soot_critical", "DPF soot critical", CRIT, 30_000, "DPF soot at 150 % or more on 2011-2014 cars, 174 % or more on 2015+ (Settings → Model year). Toyota 1ND-TV manual: over 149 % at 4000 rpm is fault code P2463 (DPF restriction, soot) on 2011-2014; 2015+ cars read normal up to 173 %.", listOf("PM Accumulation Ratio")) { v("PM Accumulation Ratio")?.takeIf { it >= sootFault }?.let { "DPF soot is at ${f0(it)} %, the level of fault code P2463. See a garage soon: it may need a forced regen." } },
             Rule("dpf_pressure_idle", "DPF pressure high at idle", WARN, 30_000, "DPF pressure over 3 kPa at warm idle, outside a regen. Toyota 1ND-TV manual: -3 to 3 kPa at idle. The owner's car reads 0.2-2.1 kPa there.", listOf("DPF Differential Pressure", "Coolant Temp", "Engine Speed", "Vehicle Speed")) {
                 v("DPF Differential Pressure")?.takeIf { warm && idle && !inRegen && it > 3 }?.let { "DPF pressure is ${f1(it)} kPa at idle (Toyota: 3 at most): the filter may be clogging." }
             },
@@ -166,6 +173,15 @@ class Checker {
                 val bad = (1..4).filter { on("Rough Idle #$it") }
                 if (bad.isEmpty()) null else "The ECU detects rough running on cylinder ${bad.joinToString(", ")}."
             },
+            Rule("regen_flag_check", "Regen flag disagrees with the ECU", WARN, 300_000, "The regen flag (Settings → DPF codes) and After Injection Period disagree for 5 min with the engine running: after injection with the flag off, or the flag on with none for 90 s. Toyota 1ND-TV manual: after injection is 0 except during PM, NOx or sulphur regeneration, so it is Toyota's own regen sign; NOx purges last seconds. Mid-regen it drops to 0 for up to 55 s on the owner's car, and it is read every ~18 s. A wrong regen byte or formula in Settings shows up here.", listOf("After Injection Period", "Engine Speed")) {
+                if (v("After Injection Period") == null || !running) return@Rule null
+                val injecting = now - injectedAt <= INJECT_GAP_MS
+                when {
+                    injecting && !inRegen -> "The ECU is after-injecting (a regen) but the app's regen flag is off: check the regen code, byte and formula in Settings."
+                    inRegen && !injecting -> "The app's regen flag is on but the ECU isn't after-injecting: check the regen code, byte and formula in Settings."
+                    else -> null
+                }
+            },
             Rule("dtc", "Stored fault codes", WARN, 0, "One or more fault codes stored in the engine ECU, including history codes.", listOf("# Codes(Include History)")) { v("# Codes(Include History)")?.takeIf { it > 0 }?.let { "${f0(it)} fault code${if (it > 1) "s are" else " is"} stored in the engine ECU." } },
         )
     }
@@ -188,6 +204,9 @@ fun diffAlerts(openTexts: Map<String, String>, active: List<Finding>): AlertDiff
 val TREND_RULES = listOf(
     Triple("regen_frequent", "Regens too frequent", "The last two regens less than 150 km apart. Toyota quotes 150-400 km between regens (Toyota Australia, via Toyota Owners Club)."),
     Triple("regen_interrupted", "Regens keep stopping early", "The last 3 regens each lasted under 10 minutes. A regen needs 15-20 min of steady driving (carchecker, 1.4 D-4D)."),
+    Triple("soot_floor", "Soot high after a regen", "Estimate: soot at $SOOT_FLOOR_HIGH % or more 5 min after the newest regen ended. A burn ends near 10 %, and the figure 5 min on is what the ECU really reads after it. Toyota 1ND-TV manual (2011-2014): the DPF test passes a filter that reads 40 % or less after two forced regens. The owner's car read 38-40 % after each regen while its ash record was wrongly cleared, with regens every ~40 km. A high floor points at a wrong ash record, ash build-up or the pressure sensor."),
+    Triple("regen_hot", "Regen ran hot", "The newest regen's peak DPF temperature (Exhaust Temperature B1S2) above Toyota's regen range: 500-700 °C on 2011-2014 cars, 500-750 °C on 2015+ (Settings → Model year), from the 1ND-TV manual. The owner's car peaks at 627-638 °C. A hotter burn (too much soot at once, or too much after injection) can crack the filter."),
+    Triple("oil_change_due", "Oil change due", "$OIL_CHANGE_KM km or more since the oil change recorded in Settings: Toyota's interval, checked in its P252F (oil dilution) procedure. Each regen's after injection puts some fuel in the oil, which thins it. The distance is this phone's GPS. Off until an oil change is recorded."),
     Triple("dpf_sensor_zero", "DPF pressure sensor off zero", "The DPF pressure sensor reads over 1 kPa, or under -0.5 kPa, with the engine stopped and the ignition on, when no exhaust flows. Toyota 1ND-TV manual: the displayed value leaves out the ECU's zero-point correction, so it may read about ±0.3 kPa at zero; the owner's car reads 0.3-0.4. A drifting sensor or a split or blocked hose makes the ECU's soot figure wrong."),
 )
 
@@ -237,10 +256,34 @@ fun tripSummary(metres: Double, sootStart: Int?, sootEnd: Int?, regens: Int, war
         when (warnings) { 0 -> "no warnings"; 1 -> "1 warning"; else -> "$warnings warnings" },
     ).filterNotNull().joinToString(" · ")
 
-/** Checks on the regen history (finished regens, oldest first): how often they come and whether they finish. */
-fun trends(regens: List<Db.Regen>): List<Finding> {
+/** Soot regen-needed and fault (P2463) levels, %: Toyota's 2011-2014 or 2015+ scale. */
+fun sootLimits(model2015: Boolean) = if (model2015) 118.0 to 174.0 else 100.0 to 150.0
+
+/** Top of Toyota's normal DPF temperature (B1S2) during a regen, °C. */
+fun regenTempMax(model2015: Boolean) = if (model2015) 750 else 700
+
+const val SOOT_FLOOR_HIGH = 30
+const val OIL_CHANGE_KM = 15_000
+
+/** [metres]: driven since the recorded oil change, null when none was recorded. */
+fun oilDue(metres: Double?): Finding? = metres?.takeIf { it >= OIL_CHANGE_KM * 1000.0 }?.let {
+    Finding("oil_change_due", WARN, "It is ${"%.0f".format(it / 1000)} km since the oil change (Toyota: every $OIL_CHANGE_KM km). Regens thin the oil with fuel: change it.")
+}
+
+/**
+ * Checks on the regen history (oldest first): how often they come, whether they finish, and the newest finished one's
+ * soot floor and peak temperature (the newest that has one: [Db.withSigns] leaves them null while the car was off).
+ */
+fun trends(regens: List<Db.Regen>, model2015: Boolean = false): List<Finding> {
     val out = mutableListOf<Finding>()
     val done = regens.filter { it.end != null }
+    done.lastOrNull { it.floor != null }?.floor?.takeIf { it >= SOOT_FLOOR_HIGH }?.let {
+        out += Finding("soot_floor", WARN, "Soot was still $it % 5 min after the last regen (it should drop well below $SOOT_FLOOR_HIGH %): the ECU's ash record, ash build-up or the DPF pressure sensor?")
+    }
+    val hot = regenTempMax(model2015)
+    done.lastOrNull { it.peakTemp != null }?.peakTemp?.takeIf { it > hot }?.let {
+        out += Finding("regen_hot", WARN, "The last regen peaked at $it °C after the DPF (Toyota: $hot at most).")
+    }
     done.lastOrNull()?.gapM?.takeIf { it < 150_000 }?.let {
         out += Finding("regen_frequent", WARN, "The last two regens were only ${"%.0f".format(it / 1000)} km apart (normal is 150-400 km).")
     }

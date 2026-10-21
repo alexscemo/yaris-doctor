@@ -16,8 +16,11 @@ class Db private constructor(ctx: Context, name: String?) : SQLiteOpenHelper(ctx
 
     data class Sample(val t: Long, val soot: Int?, val temp: Int?, val regen: Boolean)
 
-    /** [gapM]: metres driven between the previous regen's end and this one's start; null for the first logged regen. */
-    data class Regen(val start: Long, val end: Long?, val gapM: Double?, val sootStart: Int?, val sootEnd: Int?)
+    /**
+     * [gapM]: metres driven between the previous regen's end and this one's start; null for the first logged regen.
+     * [floor] and [peakTemp] are only filled by [withSigns].
+     */
+    data class Regen(val start: Long, val end: Long?, val gapM: Double?, val sootStart: Int?, val sootEnd: Int?, val floor: Int? = null, val peakTemp: Int? = null)
 
     override fun onCreate(db: SQLiteDatabase) {
         // odo_m: GPS distance accumulated by this app (metres), our stand-in for the odometer
@@ -122,7 +125,37 @@ class Db private constructor(ctx: Context, name: String?) : SQLiteOpenHelper(ctx
             if (it.moveToFirst()) it.getLong(0) to it.getString(1) else null
         }
 
-    /** [lid]'s payloads over the last [spanMs] it was read, oldest first. */
+    /** The ash record's readings where its value changed (the first one included), newest first. Read every 5 min, so few rows. */
+    fun ashHistory(limit: Int = 10): List<Pair<Long, String>> = readableDatabase.rawQuery(
+        "SELECT t, hex FROM (SELECT t, hex, LAG(hex) OVER (ORDER BY t) AS prev FROM frame WHERE lid = ?) WHERE prev IS NULL OR prev != hex ORDER BY t DESC LIMIT ?",
+        arrayOf(Poller.ASH_RECORD, limit.toString()),
+    ).use {
+        val out = ArrayList<Pair<Long, String>>()
+        while (it.moveToNext()) out += it.getLong(0) to it.getString(1)
+        out
+    }
+
+    /**
+     * [regens] with each one's peak DPF temperature (B1S2, the samples' temp) and, once finished, its soot floor: the first
+     * reading 5-10 min after it ended, the ECU's real post-regen figure rather than the ~10 % at the end of the burn. Null
+     * where no phone was connected then. A few indexed queries per regen, so pass only the regens you show or check.
+     */
+    fun withSigns(regens: List<Regen>): List<Regen> = regens.map { r ->
+        val end = r.end ?: Long.MAX_VALUE
+        val peak = listOf("sample", "peer_sample").mapNotNull { tbl ->
+            readableDatabase.rawQuery("SELECT MAX(temp) FROM $tbl WHERE t BETWEEN ? AND ?", arrayOf(r.start.toString(), end.toString())).use { it.moveToFirst(); it.intOrNull(0) }
+        }.maxOrNull()
+        val floor = r.end?.let { e ->
+            listOf("sample", "peer_sample").mapNotNull { tbl ->
+                readableDatabase.rawQuery(
+                    "SELECT t, soot FROM $tbl WHERE t BETWEEN ? AND ? AND soot IS NOT NULL ORDER BY t LIMIT 1",
+                    arrayOf((e + FLOOR_AFTER_MS).toString(), (e + 2 * FLOOR_AFTER_MS).toString()),
+                ).use { if (it.moveToFirst()) it.getLong(0) to it.getInt(1) else null }
+            }.minByOrNull { it.first }?.second
+        }
+        r.copy(floor = floor, peakTemp = peak)
+    }
+
     /**
      * Start of the last trip: the newest engine-speed frame (read every cycle) with none in the [TRIP_GAP_MS] before it.
      * Walks the (lid, t) index back from the newest frame, so it costs one probe per frame of the trip.
@@ -433,6 +466,8 @@ class Db private constructor(ctx: Context, name: String?) : SQLiteOpenHelper(ctx
         const val TRIP_GAP_MS = 2 * 60_000L
         private const val PEER_CLOCK_SLACK_MS = 5 * 60_000L
         const val METRES_PER_MILE = 1609.344
+        /** A regen's soot floor is read this long after it ends (see [withSigns]). */
+        const val FLOOR_AFTER_MS = 5 * 60_000L
         private const val SAMPLE_T_INDEX = "CREATE INDEX IF NOT EXISTS sample_t ON sample(t)"
         private var real: Db? = null
         private var debug: Db? = null

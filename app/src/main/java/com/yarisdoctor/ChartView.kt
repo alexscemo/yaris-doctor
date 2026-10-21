@@ -21,15 +21,16 @@ import kotlin.math.pow
 /**
  * Single-series chart: a 2dp line on a time axis, or columns by index. The top row reads out the
  * latest point, or the touched one (tap/drag horizontally to inspect). Pinch zooms the x axis, two fingers pan,
- * double-tap resets.
+ * double-tap resets. A line chart can shade time ranges (regens) behind the data.
  */
 class ChartView(ctx: Context, private val columns: Boolean, private val p: Colors) : View(ctx) {
 
     /** Resolved colour tokens; see Ui.chartColors(). [surface] is the card the chart sits on. */
-    class Colors(val surface: Int, val series: Int, val marker: Int, val grid: Int, val baseline: Int, val axisText: Int, val readout: Int)
+    class Colors(val surface: Int, val series: Int, val marker: Int, val grid: Int, val baseline: Int, val axisText: Int, val readout: Int, val band: Int)
 
     private var xs = LongArray(0)
     private var ys = FloatArray(0)
+    private var bands: List<Pair<Long, Long>> = emptyList()
     private var readoutOf: (Int) -> String = { "" }
     private var axisLabel: (Long) -> String = { "" }
     private var sel = -1
@@ -77,6 +78,7 @@ class ChartView(ctx: Context, private val columns: Boolean, private val p: Color
     private val ring = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = p.surface }
     private val grid = Paint().apply { strokeWidth = 1f; color = p.grid }
     private val axis = Paint().apply { strokeWidth = 1f; color = p.baseline }
+    private val band = Paint().apply { color = p.band }
     private val dotPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = p.marker }
     private val muted = Paint(Paint.ANTI_ALIAS_FLAG).apply { textSize = 11 * d; color = p.axisText; typeface = Ui.mono(ctx) }
     private val readout = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -91,8 +93,9 @@ class ChartView(ctx: Context, private val columns: Boolean, private val p: Color
     private var top = 0f
     private var bottom = 0f
 
-    fun set(xs: LongArray, ys: FloatArray, readoutOf: (Int) -> String, axisLabel: (Long) -> String) {
-        this.xs = xs; this.ys = ys; this.readoutOf = readoutOf; this.axisLabel = axisLabel
+    /** [bands]: time ranges (start, end) shaded behind a line chart; columns ignore them. */
+    fun set(xs: LongArray, ys: FloatArray, readoutOf: (Int) -> String, axisLabel: (Long) -> String, bands: List<Pair<Long, Long>> = emptyList()) {
+        this.xs = xs; this.ys = ys; this.readoutOf = readoutOf; this.axisLabel = axisLabel; this.bands = bands
         sel = selX?.let { xs.indexOf(it) } ?: -1
         yMax = niceMax(ys.maxOrNull() ?: 0f)
         // First data: the series draws in left to right (600 ms) so the time direction reads at once
@@ -113,6 +116,12 @@ class ChartView(ctx: Context, private val columns: Boolean, private val p: Color
         if (ys.isEmpty()) {
             c.drawText("No data yet", left, top + (bottom - top) / 2, muted)
             return
+        }
+        // At least 3dp wide, or an 11-minute regen vanishes on a 14-day axis
+        if (!columns && xs.size > 1 && xs.last() > xs.first()) for ((a, b) in bands) {
+            val x0 = xAt(a).coerceAtLeast(left)
+            val x1 = maxOf(xAt(b), xAt(a) + 3 * d).coerceAtMost(right)
+            if (x1 > x0) c.drawRect(x0, top, x1, bottom, band)
         }
         // Recessive grid: 0, half, max
         for (f in floatArrayOf(0.5f, 1f)) c.drawLine(left, yOf(yMax * f), right, yOf(yMax * f), grid)
@@ -171,6 +180,9 @@ class ChartView(ctx: Context, private val columns: Boolean, private val p: Color
     }
 
     private fun xOf(i: Int): Float = left + (right - left) * (frac(i) - vLo) / (vHi - vLo)
+
+    /** Where time [t] sits on a line chart, in pixels (off the plot when outside the zoom window). */
+    private fun xAt(t: Long): Float = left + (right - left) * ((t - xs.first()).toFloat() / (xs.last() - xs.first()) - vLo) / (vHi - vLo)
 
     /** Indices inside the zoom window (empty only when there is no data). */
     private fun visible(): IntRange {

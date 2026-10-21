@@ -29,4 +29,6 @@
     <!-- Soot filling the instrument card; on_instrument_soft keeps 5.9:1 on it -->
     <color name="soot_fill">#2b2d35</color>
     <color name="chart_grid">#e4e7ee</color>
+    <!-- Regens shaded behind time charts: ~9 % orange on the card, faint so the orange line stays the loud thing -->
+    <color name="chart_band">#fcece6</color>
 </resources>

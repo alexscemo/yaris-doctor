@@ -105,7 +105,47 @@ class ChecksTest {
     }
 
     @Test fun normalValuesNameRealPids() {
-        for (name in TOYOTA_NORMAL.keys) assertTrue(name, PIDS.any { it.name == name })
+        for (name in TOYOTA_NORMAL.keys + TOYOTA_NORMAL_2015.keys) assertTrue(name, PIDS.any { it.name == name })
+        assertTrue(toyotaNormal("PM Accumulation Ratio", true)!!.startsWith("0-173"))
+        assertTrue(toyotaNormal("MAF", true) == TOYOTA_NORMAL["MAF"])
+    }
+
+    @Test fun sootRulesFollowTheModelYear() {
+        fun soot(pct: Int) = replies(Triple("DD", 17, pct / 2))
+        fun found(model2015: Boolean, pct: Int) = Checker(model2015).let { c -> c.check(0, soot(pct), false); keys(c.check(30_000, soot(pct), false)) - "dtc" }
+        assertEquals(setOf("soot_high"), found(false, 110))
+        assertEquals(emptySet<String>(), found(true, 110))  // 2015+: a regen is needed at 118 %
+        assertEquals(setOf("soot_critical"), found(false, 160))
+        assertEquals(setOf("soot_high"), found(true, 160))  // 2015+: normal up to 173 %
+        assertEquals(setOf("soot_critical"), found(true, 180))
+    }
+
+    @Test fun regenFlagMustAgreeWithAfterInjection() {
+        val inject = replies(Triple("AD", 6, 0x01), Triple("AD", 7, 0xF4)) // 500 µs
+        val none = replies()
+        /** Feeds a cycle every 18 s (the AD read interval) for [mins]; [aip] picks the reply per cycle. Returns the last findings. */
+        fun run(regen: Boolean, mins: Int, aip: (Int) -> Map<String, String>): Set<String> {
+            val c = Checker()
+            var f = emptySet<String>()
+            for (i in 0..mins * 60 / 18) f = keys(c.check(i * 18_000L, aip(i), regen))
+            return f
+        }
+        // Agreeing: a regen with the odd 0 read (overrun), or no regen and no after injection
+        assertTrue("regen_flag_check" !in run(true, 10) { if (it % 4 == 0) none else inject })
+        assertTrue("regen_flag_check" !in run(false, 10) { none })
+        // A wrong regen byte: the ECU after-injects for a whole regen while the flag stays off, dips included
+        assertTrue("regen_flag_check" in run(false, 6) { if (it % 4 == 0) none else inject })
+        // ... but a short purge doesn't warn
+        assertTrue("regen_flag_check" !in run(false, 10) { if (it in 5..8) inject else none })
+        // Flag stuck on with no after injection
+        assertTrue("regen_flag_check" in run(true, 6) { none })
+        assertTrue("regen_flag_check" !in run(true, 4) { none })
+    }
+
+    @Test fun oilChangeDueAt15000Km() {
+        assertEquals(null, oilDue(null)) // never recorded: no warning
+        assertEquals(null, oilDue(14_999_000.0))
+        assertEquals("oil_change_due", oilDue(15_200_000.0)?.key)
     }
 
     @Test fun ecuOverfillFlagWarns() {
@@ -157,6 +197,18 @@ class ChecksTest {
         assertEquals(setOf("regen_interrupted"), keys(trends(listOf(r(0, 5, null), r(1000, 6, 200.0), r(2000, 4, 200.0)))))
         // An ongoing regen isn't judged yet
         assertEquals(emptyList<Finding>(), trends(listOf(r(0, 20, null), Db.Regen(1000 * 60_000, null, 50_000.0, 60, null))))
+    }
+
+    @Test fun regenFloorAndPeakTemperature() {
+        fun r(startMin: Long, floor: Int?, peak: Int?) = Db.Regen(startMin * 60_000, (startMin + 20) * 60_000, 300_000.0, 88, 10, floor, peak)
+        // The owner's car before the ash record was restored: 40 % five minutes after a regen, peak 627 °C
+        assertEquals(setOf("soot_floor"), keys(trends(listOf(r(0, 40, 627)))))
+        assertEquals(emptyList<Finding>(), trends(listOf(r(0, 40, 627), r(1000, 12, 640))))
+        // The newest regen with a reading counts: a drive that ended before the floor was read doesn't clear it
+        assertEquals(setOf("soot_floor"), keys(trends(listOf(r(0, 40, 627), r(1000, null, null)))))
+        // 720 °C is past the 2011-2014 range (700) but inside the 2015+ one (750)
+        assertEquals(setOf("regen_hot"), keys(trends(listOf(r(0, 12, 720)))))
+        assertEquals(emptyList<Finding>(), trends(listOf(r(0, 12, 720)), model2015 = true))
     }
 
     @Test fun alertDiffOpensOnlyNewKeysClosesGoneOnesUpdatesChangedText() {

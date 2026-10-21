@@ -288,6 +288,7 @@ class MainActivity : Activity() {
         sootChart.set(
             series.map { it.first }.toLongArray(), series.map { it.second }.toFloatArray(),
             { i -> "${fmt(series[i].first)} · %.0f%% soot".format(series[i].second) }, ::fmtDay,
+            regens.map { it.start to (it.end ?: now) },
         )
         regenTitle.text = if (km) "Kilometres between regens" else "Miles between regens"
         val withGap = regens.filter { it.gapM != null }.takeLast(20)
@@ -305,8 +306,13 @@ class MainActivity : Activity() {
             val rate = d.lastOrNull()?.perKm
             dpfTitle.text = if (rate == null) "DPF condition" else "DPF condition · fills %.2f per %s".format(rate * perUnit / 1000, unit)
             // Grouped like Techstream's Learning Values Confirmation, so the two can be compared by eye
-            ashText.text = db.ashRecord()?.let { (t, hex) -> "ECU ash record (Techstream: DPF Deterioration Record): ${hex.chunked(4).joinToString(" ")} · ${fmt(t)}" }
-                ?: "ECU ash record: not read yet"
+            fun ash(hex: String) = hex.chunked(4).joinToString(" ")
+            val changes = db.ashHistory()
+            ashText.text = db.ashRecord()?.let { (t, hex) ->
+                "ECU ash record (Techstream: DPF Deterioration Record): ${ash(hex)} · ${fmt(t)}" +
+                    // Where it changed, newest first: a Techstream write or the ECU's own ash count moving
+                    if (changes.size > 1) "\nChanges:" + changes.joinToString("") { (ct, h) -> "\n${fmt(ct)} · ${ash(h)}" } else ""
+            } ?: "ECU ash record: not read yet"
             dpfChart.set(
                 d.map { it.regenStart }.toLongArray(), d.map { it.base!!.toFloat() }.toFloatArray(),
                 { i -> "${fmt(d[i].regenStart)} · %.1f kPa".format(d[i].base) + (d[i].perKm?.let { " · then +%.2f per $unit".format(it * perUnit / 1000) } ?: "") },
@@ -321,8 +327,8 @@ class MainActivity : Activity() {
             renderHealth(alerts)
         }
 
-        // Rebuilt only when the list or units change; refresh runs every 5 s
-        val key = "$unit ${regens.size} ${regens.lastOrNull()?.end}"
+        // Rebuilt only when the list or units change, or the newest regen's floor becomes readable; refresh runs every 5 s
+        val key = "$unit ${regens.size} ${regens.lastOrNull()?.end} ${regens.lastOrNull()?.end?.let { now - it > 2 * Db.FLOOR_AFTER_MS }}"
         if (key != historyKey) {
             historyKey = key
             renderHistory(regens, perUnit, unit)
@@ -400,7 +406,7 @@ class MainActivity : Activity() {
             history.addView(ui.text(Type.BODY_MD, R.color.muted, "None logged yet. Regens appear here after a drive.").apply { gravity = Gravity.CENTER_HORIZONTAL })
             return
         }
-        regens.reversed().take(50).forEachIndexed { i, r ->
+        Db.get(this).withSigns(regens.takeLast(50)).reversed().forEachIndexed { i, r ->
             if (i > 0) history.addView(ui.divider())
             val badge = when {
                 r.end == null -> ui.pill(ui.text(Type.CAPTION_UPPER, R.color.on_primary, "Ongoing"), R.color.primary)
@@ -414,6 +420,11 @@ class MainActivity : Activity() {
                 addView(ui.column(
                     ui.text(Type.TITLE_SM, R.color.ink, fmt(r.start)),
                     ui.eyebrow("${duration(r)} · soot ${r.sootStart ?: "?"}→${r.sootEnd ?: "?"}%").apply { setPadding(0, ui.px(4), 0, 0) },
+                    // Warning signs: soot 5 min after (the real floor) and the hottest the DPF got
+                    ui.eyebrow(listOfNotNull(r.floor?.let { "after 5 min $it%" }, r.peakTemp?.let { "peak $it°C" }).joinToString(" · ")).apply {
+                        setPadding(0, ui.px(2), 0, 0)
+                        if (text.isEmpty()) visibility = View.GONE
+                    },
                 ), LinearLayout.LayoutParams(0, -2, 1f))
                 addView(badge)
             })

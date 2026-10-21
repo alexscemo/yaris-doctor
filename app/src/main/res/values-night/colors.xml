@@ -17,6 +17,7 @@
     <color name="status_warn">#ffb81f</color>
     <color name="status_crit">#ff4d63</color>
     <color name="chart_grid">#24262c</color>
+    <color name="chart_band">#2d1d19</color>
     <color name="flash_up">#173a26</color>
     <color name="flash_down">#4a2214</color>
     <!-- on_instrument_soft keeps 5.5:1 on it -->

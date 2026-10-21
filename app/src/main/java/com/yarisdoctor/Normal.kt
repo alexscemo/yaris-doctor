@@ -45,3 +45,11 @@ val TOYOTA_NORMAL: Map<String, String> = mapOf(
     "Rough Idle #1" to "OFF", "Rough Idle #2" to "OFF", "Rough Idle #3" to "OFF", "Rough Idle #4" to "OFF",
     "Immobiliser Fuel Cut History" to "OFF",
 )
+
+/** The lines that differ on 2015+ cars (Settings → Model year), from the 2015+ Data List pages. */
+val TOYOTA_NORMAL_2015: Map<String, String> = mapOf(
+    "Exhaust Temperature B1S2" to "warm idle 80-300 °C, regen 500-750; 50 = wire open, 950 = short",
+    "PM Accumulation Ratio" to "0-173 %; a regen may start above 105 %, is needed at 118 %",
+)
+
+fun toyotaNormal(name: String, model2015: Boolean) = (if (model2015) TOYOTA_NORMAL_2015[name] else null) ?: TOYOTA_NORMAL[name]

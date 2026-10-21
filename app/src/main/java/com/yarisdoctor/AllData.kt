@@ -98,7 +98,7 @@ class AllData(private val a: Activity, private val ui: Ui) {
                     ui.text(Type.BODY_MD, R.color.ink, p.name).apply { setPadding(0, ui.px(4), 0, 0) },
                     rate,
                 ).apply {
-                    TOYOTA_NORMAL[p.name]?.let { addView(ui.text(Type.CAPTION, R.color.muted, "Toyota normal: $it").apply { setPadding(0, ui.px(2), 0, 0) }) }
+                    toyotaNormal(p.name, Prefs.model2015(a))?.let { addView(ui.text(Type.CAPTION, R.color.muted, "Toyota normal: $it").apply { setPadding(0, ui.px(2), 0, 0) }) }
                 }, LinearLayout.LayoutParams(0, -2, 1f))
                 addView(value, LinearLayout.LayoutParams(-2, -2).apply { marginStart = ui.px(12) })
             })
@@ -137,10 +137,12 @@ class AllData(private val a: Activity, private val ui: Ui) {
         open?.let { p ->
             // Whole last trip, however short; a lid read only once a trip still shows its point(s)
             val series = db.frameSeries(p.lid, trip).mapNotNull { (t, hex) -> p.decode(hex)?.let { t to it } }
+            val now = System.currentTimeMillis()
             chart.set(
                 series.map { it.first }.toLongArray(), series.map { it.second.toFloat() }.toFloatArray(),
                 { i -> "${time(series[i].first)} · ${p.format(series[i].second)}" },
                 ::time,
+                db.regens().filter { (it.end ?: now) >= trip }.map { it.start to (it.end ?: now) },
             )
         }
     }

@@ -208,6 +208,7 @@ class Ui(private val a: Activity) {
         baseline = color(R.color.hairline),
         axisText = color(R.color.muted_soft),
         readout = color(R.color.ink),
+        band = color(R.color.chart_band),
     )
 
     /** The brand's full stop: a square on the baseline, 0.16 of the text size. [alpha] pulses it during a regen. */

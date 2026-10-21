@@ -38,7 +38,6 @@ class Elm(private val input: InputStream, private val output: OutputStream) {
 }
 
 private val ERRORS = listOf("UNABLETOCONNECT", "NODATA", "STOPPED", "ERROR")
-private val READ_SERVICES = setOf("21", "22", "01")
 
 /** Port of ELMduino get_response() + parseMultiLineResponse(). */
 fun parse(raw: String): String? {
@@ -58,108 +57,24 @@ fun parse(raw: String): String? {
     return out.toString()
 }
 
-/**
- * Normalises a user-typed OBD request ("21 dd" → "21DD"): 2–4 hex bytes starting with a read service (21 Toyota/KWP,
- * 22 UDS, 01 OBD), so a typo, an "AT" command or an ECU-changing service (11 reset, 30/31 actuators, 3B write) can't
- * reach the car; it is sent every cycle while driving. Blank → [default]; anything else invalid → null.
- */
-fun pidCode(s: String, default: String): String? {
-    val code = s.filterNot { it.isWhitespace() }.uppercase()
-    if (code.isEmpty()) return default
-    return code.takeIf {
-        it.length % 2 == 0 && it.length in 4..8 && it.all { c -> c in '0'..'9' || c in 'A'..'F' } && it.take(2) in READ_SERVICES
-    }
+/** The three DPF requests the service reads every cycle, as DPFViewer found them on the owner's Yaris. */
+const val PID_SOOT = "21DD"
+const val PID_TEMP = "21F1"
+const val PID_REGEN = "21DF"
+
+/** Byte [i] of a reply, counting the echoed `61 <lid>` as bytes 0-1 (2 hex chars per byte); null past the end. */
+private fun byteAt(p: String, i: Int) = if (p.length >= i * 2 + 2) p.substring(i * 2, i * 2 + 2).toIntOrNull(16) else null
+
+// Soot and temperature are DPFViewer's char offsets 38 and 16, confirmed by the Techstream capture (temp is Exhaust
+// Temperature B1S2). Results are truncated like DPFViewer's int casts.
+/** Soot load, %: byte 19 × 2. */
+fun sootOf(p: String): Int? = byteAt(p, 19)?.let { it * 2 }
+/** DPF temperature, °C: bytes 8-9 × 0.625. */
+fun tempOf(p: String): Int? {
+    val a = byteAt(p, 8) ?: return null
+    val b = byteAt(p, 9) ?: return null
+    return ((a * 256 + b) * 0.625).toInt()
 }
-
-/** Blank → [default]; otherwise a byte position 0–63 of the reply, or null if it isn't one. */
-fun bytePos(s: String, default: Int): Int? = if (s.isBlank()) default else s.trim().toIntOrNull()?.takeIf { it in 0..63 }
-
-/**
- * Torque-style formula over reply bytes: `A` is the byte at the reading's position, `B` the next one, then `C`, `D`.
- * Supports numbers, + - * / & (bitwise AND, lowest precedence) and brackets. Evaluates to null when a byte is past the
- * end of the reply or the result isn't finite (e.g. division by zero).
- */
-class Formula private constructor(private val expr: Expr) {
-    /** [byte] counts reply bytes from 0, including the echoed mode/PID (byte 0 = 0x61); 2 hex chars per byte. */
-    fun eval(payload: String, byte: Int): Double? = expr { k ->
-        val at = (byte + k) * 2
-        if (payload.length >= at + 2) payload.substring(at, at + 2).toIntOrNull(16) else null
-    }?.takeIf { it.isFinite() }
-
-    companion object {
-        /** null when [text] isn't a valid formula. */
-        fun parse(text: String): Formula? =
-            try { Formula(Parser(text.filterNot { it.isWhitespace() }.uppercase()).all()) } catch (e: IllegalArgumentException) { null }
-    }
-}
-
-/** Blank → [default]; otherwise the formula as typed, or null if it doesn't parse. */
-fun formulaText(s: String, default: String): String? = if (s.isBlank()) default else s.trim().takeIf { Formula.parse(it) != null }
-
-private typealias Expr = ((Int) -> Int?) -> Double?
-
-private class Parser(private val s: String) {
-    private var i = 0
-
-    fun all(): Expr = and().also { require(i == s.length) }
-
-    private fun and(): Expr {
-        var l = sum()
-        while (eat('&')) l = op(l, sum()) { x, y -> (x.toLong() and y.toLong()).toDouble() }
-        return l
-    }
-
-    private fun sum(): Expr {
-        var l = product()
-        while (true) l = when {
-            eat('+') -> op(l, product()) { x, y -> x + y }
-            eat('-') -> op(l, product()) { x, y -> x - y }
-            else -> return l
-        }
-    }
-
-    private fun product(): Expr {
-        var l = unary()
-        while (true) l = when {
-            eat('*') -> op(l, unary()) { x, y -> x * y }
-            eat('/') -> op(l, unary()) { x, y -> x / y }
-            else -> return l
-        }
-    }
-
-    private fun unary(): Expr = if (eat('-')) unary().let { e -> { v -> e(v)?.unaryMinus() } } else atom()
-
-    private fun atom(): Expr {
-        if (eat('(')) return and().also { require(eat(')')) }
-        val c = s.getOrNull(i) ?: throw IllegalArgumentException("formula ends early")
-        if (c in 'A'..'D') {
-            i++
-            return { v -> v(c - 'A')?.toDouble() }
-        }
-        val start = i
-        while (i < s.length && (s[i].isDigit() || s[i] == '.')) i++
-        val n = s.substring(start, i).toDoubleOrNull() ?: throw IllegalArgumentException("unexpected '$c'")
-        return { _ -> n }
-    }
-
-    private fun eat(c: Char) = (s.getOrNull(i) == c).also { if (it) i++ }
-
-    private fun op(a: Expr, b: Expr, f: (Double, Double) -> Double): Expr = { v ->
-        val x = a(v)
-        val y = b(v)
-        if (x == null || y == null) null else f(x, y)
-    }
-}
-
-// Defaults (Prefs.BYTE_DEFAULTS / FORMULA_DEFAULTS): soot and temperature are DPFViewer's char offsets 38 and 16, confirmed
-// by the Techstream capture (temp is Exhaust Temperature B1S2); regen is the capture's DPF status byte. Results are
-// truncated like DPFViewer's int casts; the regen flag is on when its formula gives 1.
-private val SOOT = Formula.parse(Prefs.FORMULA_DEFAULTS.getValue(Prefs.PID_SOOT))!!
-private val TEMP = Formula.parse(Prefs.FORMULA_DEFAULTS.getValue(Prefs.PID_TEMP))!!
-private val REGEN = Formula.parse(Prefs.FORMULA_DEFAULTS.getValue(Prefs.PID_REGEN))!!
-
-fun sootOf(p: String, byte: Int = 19, f: Formula = SOOT): Int? = f.eval(p, byte)?.toInt()
-fun tempOf(p: String, byte: Int = 8, f: Formula = TEMP): Int? = f.eval(p, byte)?.toInt()
 /**
  * The 21DF regen bit is also set as the engine stops with the ignition still on (seen on the car: first at 346 rpm while
  * spinning down, then at 0), so a regen only counts above [RUNNING_RPM]; idle is ~770. [rpmReply] is the 210C reply
@@ -172,4 +87,5 @@ fun engineStopped(rpmReply: String?): Boolean {
 
 const val RUNNING_RPM = 500
 
-fun regenOf(p: String, byte: Int = 16, f: Formula = REGEN): Boolean? = f.eval(p, byte)?.let { it == 1.0 }
+/** Regen flag: byte 16's low nibble is 1 during a regen (DPFViewer's char 33, confirmed on the car). */
+fun regenOf(p: String): Boolean? = byteAt(p, 16)?.let { it and 15 == 1 }

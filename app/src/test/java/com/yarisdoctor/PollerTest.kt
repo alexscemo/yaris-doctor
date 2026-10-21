@@ -77,9 +77,4 @@ class PollerTest {
         p.cycle(99_000, emptyList())
         assertFalse(sent.any { it.startsWith("21EF") })
     }
-
-    @Test fun userCodesOutsideTheTablePassThrough() {
-        val p = Poller(ecu(mutableListOf()) { c -> if (c == "221234") "621234AB" else null })
-        assertEquals("621234AB", p.cycle(0, listOf("221234"))["221234"])
-    }
 }

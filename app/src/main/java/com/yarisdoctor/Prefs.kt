@@ -8,9 +8,6 @@ object Prefs {
     const val LOGGING = "logging"
     const val ALERTS = "alerts"
     const val EDGE = "edge"
-    const val PID_SOOT = "pid_soot"
-    const val PID_TEMP = "pid_temp"
-    const val PID_REGEN = "pid_regen"
     const val KM = "km"
     const val SERVER = "server"
     const val WIFI = "wifi"
@@ -31,23 +28,6 @@ object Prefs {
     const val OIL_ODO = "oil_odo"
     private const val DEVICE_ID = "device_id"
 
-    /** OBD requests per reading, defaulting to the ones DPFViewer found on the owner's Yaris; other years may differ. */
-    val PID_DEFAULTS = mapOf(PID_SOOT to "21DD", PID_TEMP to "21F1", PID_REGEN to "21DF")
-
-    /** Byte position of each value in its reply (see sootOf/tempOf/regenOf), keyed like the codes: "<pid key>_byte". */
-    val BYTE_DEFAULTS = mapOf(PID_SOOT to 19, PID_TEMP to 8, PID_REGEN to 16)
-
-    /** Formula per reading (see Formula): A = byte at the position, B the next. Regen is DPFViewer's, confirmed on the car. */
-    val FORMULA_DEFAULTS = mapOf(PID_SOOT to "A*2", PID_TEMP to "(A*256+B)*0.625", PID_REGEN to "A&15")
-
-    /**
-     * v0.9-era builds defaulted the regen flag to byte 11, A-1 ("DPNR/DPF Status Reju(PM)"), which never fired on the car.
-     * Settings saves every field, so installs that saved that default still hold it: move them back to DPFViewer's.
-     */
-    fun migrate(c: Context) {
-        if (byte(c, PID_REGEN) == 11 && formula(c, PID_REGEN) == "A-1") sp(c).edit().remove("${PID_REGEN}_byte").remove("${PID_REGEN}_formula").apply()
-    }
-
     // DPFViewer's dongle, kept as the default so existing installs keep connecting
     private const val DEFAULT_DONGLE = "66:1E:32:7A:2E:72"
 
@@ -60,12 +40,6 @@ object Prefs {
     fun dongleName(c: Context) = sp(c).getString(DONGLE_NAME, null)
     fun logging(c: Context) = sp(c).getBoolean(LOGGING, true)
     fun alerts(c: Context) = sp(c).getBoolean(ALERTS, true)
-    // Re-checked on read: a code saved before pidCode() allowed only read services must not reach the car
-    fun pid(c: Context, key: String) = pidCode(sp(c).getString(key, null) ?: "", PID_DEFAULTS.getValue(key)) ?: PID_DEFAULTS.getValue(key)
-    fun byte(c: Context, key: String) = sp(c).getInt("${key}_byte", BYTE_DEFAULTS.getValue(key))
-    fun putByte(c: Context, key: String, value: Int) = sp(c).edit().putInt("${key}_byte", value).apply()
-    fun formula(c: Context, key: String) = sp(c).getString("${key}_formula", null) ?: FORMULA_DEFAULTS.getValue(key)
-    fun putFormula(c: Context, key: String, value: String) = sp(c).edit().putString("${key}_formula", value).apply()
     fun edge(c: Context) = sp(c).getBoolean(EDGE, false) // off by default: it needs "Display over other apps"
     fun km(c: Context) =sp(c).getBoolean(KM, false)
     /** 2015-or-later Yaris: Toyota's 2015+ soot scale and regen temperature range. Off = 2011-2014, the owner's car. */

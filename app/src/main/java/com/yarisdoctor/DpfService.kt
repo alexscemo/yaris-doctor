@@ -82,7 +82,6 @@ class DpfService : Service() {
             startForeground(ID_SERVICE, status("Waiting for dongle"), FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE)
         }
         odoM = db.odometer()
-        Prefs.migrate(this)
         checker = Checker(model2015)
         // A previous process killed mid-regen never closed its row; it would show "Ongoing" forever
         Db.real(this).closeOrphanRegens()
@@ -157,20 +156,7 @@ class DpfService : Service() {
             elm.init()
             startGps()
             nm.notify(ID_SERVICE, status("Logging"))
-            val pidSoot = Prefs.pid(this, Prefs.PID_SOOT)
-            val pidTemp = Prefs.pid(this, Prefs.PID_TEMP)
-            val pidRegen = Prefs.pid(this, Prefs.PID_REGEN)
-            val byteSoot = Prefs.byte(this, Prefs.PID_SOOT)
-            val byteTemp = Prefs.byte(this, Prefs.PID_TEMP)
-            val byteRegen = Prefs.byte(this, Prefs.PID_REGEN)
-            // Saved formulas were checked in Settings; fall back to the default rather than stop logging
-            fun formula(key: String) = Formula.parse(Prefs.formula(this, key)) ?: Formula.parse(Prefs.FORMULA_DEFAULTS.getValue(key))!!
-            val fSoot = formula(Prefs.PID_SOOT)
-            val fTemp = formula(Prefs.PID_TEMP)
-            val fRegen = formula(Prefs.PID_REGEN)
             val poller = Poller { elm.send(it) }
-            // Soot's request (21DD, which also carries the rail pressure target) last, so Poller sends the actual rail pressure right after it
-            val core = listOf(pidTemp, pidRegen, pidSoot)
             var fails = 0
             var seen = false
             var lastSample = 0L
@@ -178,7 +164,7 @@ class DpfService : Service() {
                 // Ignition off (dongle may stay powered on the OBD port): give up after 1 dead cycle on a probe, 3 mid-drive
                 while (running && fails < (if (seen) 3 else 1)) {
                     val t = System.currentTimeMillis()
-                    val replies = poller.cycle(t, core)
+                    val replies = poller.cycle(t)
                     if (replies.isEmpty()) {
                         fails++
                         // A wedged clone often recovers after a reset; the dead-cycle count still ends the session if not
@@ -189,9 +175,9 @@ class DpfService : Service() {
                     seen = true
                     lastSeen = t
                     db.frames(t, replies)
-                    val soot = replies[pidSoot]?.let { sootOf(it, byteSoot, fSoot) }
-                    val temp = replies[pidTemp]?.let { tempOf(it, byteTemp, fTemp) }
-                    val regen = replies[pidRegen]?.let { regenOf(it, byteRegen, fRegen) }?.let { it && !engineStopped(replies["210C"]) }
+                    val soot = replies[PID_SOOT]?.let(::sootOf)
+                    val temp = replies[PID_TEMP]?.let(::tempOf)
+                    val regen = replies[PID_REGEN]?.let(::regenOf)?.let { it && !engineStopped(replies["210C"]) }
                     // The DPF log keeps its old pace (5 s, 1 s in regen); a regen start or end is written at once
                     if (t - lastSample >= (if (rec.inRegen) 1000 else 5000) || (regen != null && regen != rec.inRegen)) {
                         publish(rec, soot, temp, regen)

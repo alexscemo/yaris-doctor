@@ -9,7 +9,7 @@ It replaces DPFViewer, an earlier ESP32 + TFT dashboard that read the same value
 <p align="center">
   <img src="docs/screenshots/main-regen.png" width="200" alt="Main screen during a regen: Keep driving callout, soot load, miles since last regen, soot chart, with the coral edge light">
   <img src="docs/screenshots/history.png" width="200" alt="Miles-between-regens chart and regen history">
-  <img src="docs/screenshots/settings.png" width="200" alt="Settings: dongle, logging, notifications, edge light, units and DPF codes">
+  <img src="docs/screenshots/settings.png" width="200" alt="Settings: dongle, logging, notifications, edge light and units">
 </p>
 <p align="center">
   <img src="docs/screenshots/notification.png" width="400" alt="Regen notification with temperature, soot and burn-off progress">
@@ -80,7 +80,7 @@ from October 2026 or later (it adds `/api/export`).
   | `21 F1` | DPF temperature (°C) | 8 | `(A*256+B)*0.625` |
   | `21 DF` | Regen active | 16 | `A&15` (regen when it gives 1) |
 
-  These were found by trial and error on one car (see DPFViewer). Other Yaris engines or model years may differ. In **Settings → DPF codes** you can set each reading's PID, byte position and formula (leave a field blank to go back to the default). Formulas work like Torque's: `A` is the byte at the position, `B` the next, then `C`, `D`, with numbers, `+ - * /`, `&` (bitwise AND) and brackets. Results are rounded down.
+  These were found by trial and error on one car (see DPFViewer) and confirmed with Techstream. Other Yaris engines or model years may differ. Results are rounded down.
 - **Distance.** The car's odometer PID isn't known, so distance comes from the phone's GPS, counted only while the dongle is connected. Fixes that are inaccurate or stationary are ignored to avoid GPS drift.
 - **Engine off mid-regen.** The regen is closed at the moment the connection drops, and the notification is cleared.
 

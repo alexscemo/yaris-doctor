@@ -13,10 +13,13 @@ class Poller(private val send: (String) -> String?) {
     private var medium = 0
     private var slow = 0
 
-    /** Request code ("21DD") → reply ("61DD…") for each one answered this cycle; empty when the ECU said nothing. */
-    fun cycle(now: Long, always: Collection<String>): Map<String, String> {
+    /**
+     * Request code ("21DD") → reply ("61DD…") for each one answered this cycle; empty when the ECU said nothing. [first]
+     * are sent before the rest (tests use it to pick the order).
+     */
+    fun cycle(now: Long, first: Collection<String> = emptyList()): Map<String, String> {
         val codes = LinkedHashSet<String>()
-        codes += always
+        codes += first
         codes += FAST
         repeat(2) { codes += MEDIUM[medium++ % MEDIUM.size] }
         // Slow items: the next one not read in the last few minutes
@@ -46,10 +49,10 @@ class Poller(private val send: (String) -> String?) {
     /** A code that never answers while others do isn't supported by this ECU: stop spending link time on it. */
     private fun parked(code: String) = seen && (misses[code] ?: 0) >= PARK_AFTER
 
-    /** A reply for [code] of the length the table says, one retry; codes not in the table (user's own) are taken as they come. */
+    /** A reply for [code] of the length the table says, one retry. */
     private fun ask(code: String): String? {
         if (code == ASH_RECORD) return send(code).takeIf(::ashRecordOk) ?: send(code).takeIf(::ashRecordOk)
-        val len = PID_LENGTHS[code] ?: return send(code)
+        val len = PID_LENGTHS.getValue(code)
         val want = (len + 2) * 2
         // Exact length, header and hex only: catches cut-off or mixed frames and ELM chatter like BUFFER FULL
         fun ok(r: String?) = r != null && r.length == want && r.startsWith("6" + code.substring(1)) && r.all { it in '0'..'9' || it in 'A'..'F' }
@@ -65,17 +68,15 @@ class Poller(private val send: (String) -> String?) {
 
     companion object {
         /**
-         * Every cycle, in this order. The service puts 21DD (rail pressure target) last of its own codes, so the actual
-         * rail pressure (2123) follows it at once; pairs a rule compares sit next to each other. Coolant and MAP change
-         * slowly and are MEDIUM, to keep the cycle short on a slow dongle.
+         * Every cycle, in this order. The DPF codes first, with 21DD (soot, and the rail pressure target) last of them so
+         * the actual rail pressure (2123) follows it at once; pairs a rule compares sit next to each other. Coolant and MAP
+         * change slowly and are MEDIUM, to keep the cycle short on a slow dongle.
          */
-        val FAST = listOf("2123", "210C", "210D", "21EF",
+        val FAST = listOf(PID_TEMP, PID_REGEN, PID_SOOT, "2123", "210C", "210D", "21EF",
             // MAF and the MAF / estimated MAF ratio, together so the two line up
             "2110", "21A3",
             // EGR target (2C) and actual position (EA) are compared by egr_tracking
-            "212C", "21EA",
-            // Usually the service's own DPF codes, sent first already; listed so a user's other codes don't drop them
-            "21DD", "21DF", "21F1")
+            "212C", "21EA")
         /** Two per cycle, in turn. */
         val MEDIUM = listOf("2104", "2105", "210B", "210F", "2111", "2124", "2134", "2142", "2149", "214A", "214C", "21AD", "21DA", "21DE", "21E6", "21EE")
         /** Counters and learned values: once a session, then every [SLOW_MS]. */

@@ -173,12 +173,12 @@ class Checker(private val model2015: Boolean = false) {
                 val bad = (1..4).filter { on("Rough Idle #$it") }
                 if (bad.isEmpty()) null else "The ECU detects rough running on cylinder ${bad.joinToString(", ")}."
             },
-            Rule("regen_flag_check", "Regen flag disagrees with the ECU", WARN, 300_000, "The regen flag (Settings → DPF codes) and After Injection Period disagree for 5 min with the engine running: after injection with the flag off, or the flag on with none for 90 s. Toyota 1ND-TV manual: after injection is 0 except during PM, NOx or sulphur regeneration, so it is Toyota's own regen sign; NOx purges last seconds. Mid-regen it drops to 0 for up to 55 s on the owner's car, and it is read every ~18 s. A wrong regen byte or formula in Settings shows up here.", listOf("After Injection Period", "Engine Speed")) {
+            Rule("regen_flag_check", "Regen flag disagrees with the ECU", WARN, 300_000, "The app's regen flag (21DF byte 16) and After Injection Period disagree for 5 min with the engine running: after injection with the flag off, or the flag on with none for 90 s. Toyota 1ND-TV manual: after injection is 0 except during PM, NOx or sulphur regeneration, so it is Toyota's own regen sign; NOx purges last seconds. Mid-regen it drops to 0 for up to 55 s on the owner's car, and it is read every ~18 s. A car whose ECU puts the regen bit elsewhere shows up here.", listOf("After Injection Period", "Engine Speed")) {
                 if (v("After Injection Period") == null || !running) return@Rule null
                 val injecting = now - injectedAt <= INJECT_GAP_MS
                 when {
-                    injecting && !inRegen -> "The ECU is after-injecting (a regen) but the app's regen flag is off: check the regen code, byte and formula in Settings."
-                    inRegen && !injecting -> "The app's regen flag is on but the ECU isn't after-injecting: check the regen code, byte and formula in Settings."
+                    injecting && !inRegen -> "The ECU is after-injecting (a regen) but the app's regen flag is off: regens on this car may go unrecorded."
+                    inRegen && !injecting -> "The app's regen flag is on but the ECU isn't after-injecting: the app may be recording regens that aren't happening."
                     else -> null
                 }
             },

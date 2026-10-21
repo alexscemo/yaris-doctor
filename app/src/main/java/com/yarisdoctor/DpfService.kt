@@ -157,6 +157,7 @@ class DpfService : Service() {
             startGps()
             nm.notify(ID_SERVICE, status("Logging"))
             val poller = Poller { elm.send(it) }
+            val started = System.currentTimeMillis()
             var fails = 0
             var seen = false
             var lastSample = 0L
@@ -191,6 +192,7 @@ class DpfService : Service() {
                 // The regen row and live alerts stay open: run() closes them unless the link comes back within REGEN_GAP_MS
                 finish()
                 stopGps()
+                try { db.linkStats(started, elm.timings) } catch (e: Exception) { Log.d(TAG, "link stats not saved: $e") }
             }
         }
     }

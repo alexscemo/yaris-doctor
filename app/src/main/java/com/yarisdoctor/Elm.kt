@@ -3,29 +3,73 @@ package com.yarisdoctor
 import java.io.IOException
 import java.io.InputStream
 import java.io.OutputStream
+import java.util.concurrent.LinkedBlockingQueue
+import java.util.concurrent.TimeUnit
 
 /** ELM327 over a Bluetooth SPP stream. Replies are cleaned exactly like ELMduino so DPFViewer's PID offsets still apply. */
-class Elm(private val input: InputStream, private val output: OutputStream) {
+class Elm(input: InputStream, private val output: OutputStream) {
+    /**
+     * Bytes from the dongle as they arrive, -1 once the link drops. A thread blocked in read() wakes the moment data comes,
+     * where polling available() and sleeping 10 ms added up to 10 ms per burst. It ends when the socket closes.
+     */
+    private val rx = LinkedBlockingQueue<Int>()
+
+    init {
+        Thread({
+            try {
+                while (true) {
+                    val c = input.read()
+                    rx.put(c)
+                    if (c < 0) break
+                }
+            } catch (e: IOException) {
+                rx.put(-1)
+            }
+        }, "elm-rx").apply { isDaemon = true; start() }
+    }
+
+    /** One command's replies: [firstMs] send → first byte, [tailMs] last data byte → prompt (the ELM waiting for more), sums. */
+    class Timing { var n = 0; var ok = 0; var firstMs = 0L; var tailMs = 0L; var totalMs = 0L }
+
+    /** Per command sent (AT commands left out), for [Db.linkStats]: where each request's time goes on this dongle. */
+    val timings = HashMap<String, Timing>()
 
     /** Returns the cleaned payload, or null on timeout / ELM error. Throws IOException when the link drops. */
     fun send(cmd: String, timeoutMs: Long = 2000): String? {
-        while (input.available() > 0) input.read()
+        rx.clear()
         output.write("$cmd\r".toByteArray())
         output.flush()
+        val t0 = System.nanoTime()
+        var first = 0L
+        var last = 0L
         val raw = StringBuilder()
-        val deadline = System.currentTimeMillis() + timeoutMs
         while (true) {
-            if (input.available() > 0) {
-                val c = input.read()
-                if (c < 0) throw IOException("dongle closed the link")
-                if (c == '>'.code) return parse(raw.toString())
-                raw.append(c.toChar())
-            } else if (System.currentTimeMillis() > deadline) {
+            val wait = t0 + timeoutMs * 1_000_000 - System.nanoTime()
+            val c = (if (wait > 0) rx.poll(wait, TimeUnit.NANOSECONDS) else null) ?: run {
+                time(cmd, t0, first, last, System.nanoTime(), false)
                 return null
-            } else {
-                Thread.sleep(10)
             }
+            if (c < 0) throw IOException("dongle closed the link")
+            val now = System.nanoTime()
+            if (first == 0L) first = now
+            if (c == '>'.code) {
+                val r = parse(raw.toString())
+                time(cmd, t0, first, last, now, r != null)
+                return r
+            }
+            if (c != '\r'.code && c != ' '.code) last = now
+            raw.append(c.toChar())
         }
+    }
+
+    private fun time(cmd: String, t0: Long, first: Long, last: Long, end: Long, ok: Boolean) {
+        if (cmd.startsWith("AT")) return
+        val t = timings.getOrPut(cmd) { Timing() }
+        t.n++
+        if (ok) t.ok++
+        t.firstMs += ((if (first > 0) first else end) - t0) / 1_000_000
+        t.tailMs += (end - (if (last > 0) last else end)) / 1_000_000
+        t.totalMs += (end - t0) / 1_000_000
     }
 
     /** Same sequence as DPFViewer: myELM.begin(..., '6') then Toyota engine ECU header/filter, plus adaptive timing for the full table. */

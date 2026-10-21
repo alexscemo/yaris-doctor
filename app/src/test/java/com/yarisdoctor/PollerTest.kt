@@ -41,7 +41,7 @@ class PollerTest {
         assertEquals(PID_LENGTHS.keys + Poller.ASH_RECORD, seen) // a whole table in one round of medium codes
         sent.clear()
         p.cycle(t, emptyList())
-        assertTrue(sent.containsAll(Poller.FAST.map { if (PID_LENGTHS.getValue(it) + 2 <= 7) it + "1" else it }))
+        assertTrue(sent.containsAll(Poller.FAST.map { it + "1" })) // the reply-count suffix, single- and multi-frame
         assertFalse(sent.any { it.take(4) in Poller.SLOW }) // all read less than SLOW_MS ago
     }
 
@@ -67,6 +67,21 @@ class PollerTest {
         sent.clear()
         p.cycle(10_000, emptyList())
         assertFalse(sent.any { it.length == 5 })
+    }
+
+    @Test fun cloneThatCutsMultiFrameRepliesKeepsTheSuffixOnSingleFrames() {
+        val sent = mutableListOf<String>()
+        // With the suffix this dongle returns only the first frame of a long reply: too short, so it fails the length check
+        val p = Poller(ecu(sent) { c ->
+            val len = PID_LENGTHS[c.take(4)] ?: return@ecu null
+            val full = "6" + c.substring(1, 4) + "00".repeat(len)
+            if (c.length == 5 && len + 2 > 7) full.take(14) else full
+        })
+        repeat(3) { p.cycle(it * 2000L, emptyList()) }
+        sent.clear()
+        p.cycle(10_000, emptyList())
+        assertTrue("21DD" in sent)  // multi-frame (soot block, 18 bytes): plain from now on
+        assertTrue("210C1" in sent) // single-frame (rpm): still suffixed
     }
 
     @Test fun unsupportedCodeIsParked() {

@@ -121,7 +121,7 @@ class AllData(private val a: Activity, private val ui: Ui) {
             newest == null -> "No live data yet. Values appear here after a drive with the dongle connected."
             System.currentTimeMillis() - newest <= 30_000 -> "Live from the engine ECU · ${PIDS.size} values · tap a row for the last trip"
             else -> "From the last drive, ${fmt(newest)}"
-        }
+        } + (db.linkAverage()?.let { " · requests took $it ms on average last drive" } ?: "")
         // How often each request comes back, measured from its own frames: it follows whatever pace the dongle manages
         val trip = db.tripStart() ?: 0L
         val every = rates.keys.mapNotNull { id -> PIDS.firstOrNull { it.id == id }?.lid }.distinct().associateWith { db.readEvery(it, trip) }

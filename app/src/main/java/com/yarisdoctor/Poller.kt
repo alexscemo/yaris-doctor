@@ -5,8 +5,9 @@ package com.yarisdoctor
  * only replies that match the table. [send] is Elm.send: the cleaned reply, or null on timeout / ELM error.
  */
 class Poller(private val send: (String) -> String?) {
-    private var count = true // ELM "response count" suffix; turned off when the dongle doesn't take it
-    private var countFails = 0
+    // ELM "response count" suffix per reply kind, [single frame, multi-frame]: each turned off when the dongle doesn't take it
+    private val count = booleanArrayOf(true, true)
+    private val countFails = IntArray(2)
     private var seen = false
     private val misses = HashMap<String, Int>()
     private val lastOk = HashMap<String, Long>()
@@ -56,13 +57,15 @@ class Poller(private val send: (String) -> String?) {
         val want = (len + 2) * 2
         // Exact length, header and hex only: catches cut-off or mixed frames and ELM chatter like BUFFER FULL
         fun ok(r: String?) = r != null && r.length == want && r.startsWith("6" + code.substring(1)) && r.all { it in '0'..'9' || it in 'A'..'F' }
-        // Single-frame replies (≤ 7 bytes): "21 0C 1" lets the ELM return on the first reply instead of waiting out its timeout
-        val single = count && len + 2 <= 7
-        val first = send(if (single) "${code}1" else code)
+        // "21 0C 1" lets the ELM return on the first reply instead of waiting out its timeout. A genuine ELM counts a
+        // multi-frame reply as one, clones may not (they cut it short), so single- (≤ 7 bytes) and multi-frame fall back apart
+        val kind = if (len + 2 <= 7) 0 else 1
+        val suffix = count[kind]
+        val first = send(if (suffix) "${code}1" else code)
         if (ok(first)) return first
         val second = send(code)
         if (!ok(second)) return null
-        if (single && ++countFails >= 3) count = false
+        if (suffix && ++countFails[kind] >= 3) count[kind] = false
         return second
     }
 

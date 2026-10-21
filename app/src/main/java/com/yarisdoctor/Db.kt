@@ -9,7 +9,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 /** [name] null = in-memory database (Debug mode), gone when closed. */
-class Db private constructor(ctx: Context, name: String?) : SQLiteOpenHelper(ctx, name, null, 5) {
+class Db private constructor(ctx: Context, name: String?) : SQLiteOpenHelper(ctx, name, null, 6) {
 
     /** A [Finding] while it lasted; [end] null = still active. */
     data class Alert(val key: String, val level: Int, val text: String, val start: Long, val end: Long?)
@@ -30,6 +30,7 @@ class Db private constructor(ctx: Context, name: String?) : SQLiteOpenHelper(ctx
         createPeers(db)
         createFrames(db)
         createAlerts(db)
+        createLink(db)
     }
 
     override fun onUpgrade(db: SQLiteDatabase, old: Int, new: Int) {
@@ -41,7 +42,32 @@ class Db private constructor(ctx: Context, name: String?) : SQLiteOpenHelper(ctx
         if (old < 4) createFrames(db)
         // v5: health check alerts
         if (old < 5) createAlerts(db)
+        // v6: dongle request timings per session
+        if (old < 6) createLink(db)
     }
+
+    /** One row per command per session ([t] = session start): count, answered, and average ms (see [Elm.Timing]). */
+    private fun createLink(db: SQLiteDatabase) =
+        db.execSQL("CREATE TABLE link(t INTEGER, cmd TEXT, n INTEGER, ok INTEGER, first_ms INTEGER, tail_ms INTEGER, total_ms INTEGER)")
+
+    fun linkStats(t: Long, timings: Map<String, Elm.Timing>) {
+        val db = writableDatabase
+        db.beginTransaction()
+        try {
+            for ((cmd, x) in timings) if (x.n > 0) db.insert("link", null, ContentValues().apply {
+                put("t", t); put("cmd", cmd); put("n", x.n); put("ok", x.ok)
+                put("first_ms", x.firstMs / x.n); put("tail_ms", x.tailMs / x.n); put("total_ms", x.totalMs / x.n)
+            })
+            db.setTransactionSuccessful()
+        } finally {
+            db.endTransaction()
+        }
+    }
+
+    /** Average ms per request over the newest logged session, or null before the first one. */
+    fun linkAverage(): Long? = readableDatabase.rawQuery(
+        "SELECT SUM(total_ms * n) / SUM(n) FROM link WHERE t = (SELECT MAX(t) FROM link)", null,
+    ).use { if (it.moveToFirst() && !it.isNull(0)) it.getLong(0) else null }
 
     private fun createAlerts(db: SQLiteDatabase) =
         db.execSQL("CREATE TABLE alert(id INTEGER PRIMARY KEY, key TEXT, level INTEGER, text TEXT, start_t INTEGER, end_t INTEGER)")

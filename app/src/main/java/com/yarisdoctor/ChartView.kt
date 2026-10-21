@@ -1,14 +1,15 @@
 package com.yarisdoctor
 
+import android.animation.ValueAnimator
 import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.RectF
-import android.graphics.Typeface
 import android.view.MotionEvent
 import android.view.View
+import android.view.animation.DecelerateInterpolator
 import kotlin.math.abs
 import kotlin.math.floor
 import kotlin.math.log10
@@ -33,19 +34,21 @@ class ChartView(ctx: Context, private val columns: Boolean, private val p: Color
     private var downX = 0f
     private var downY = 0f
     private var yMax = 1f
+    private var reveal = 1f     // share of the plot drawn, left to right
+    private var revealed = false
 
     private val d = resources.displayMetrics.density
     private val line = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        style = Paint.Style.STROKE; strokeWidth = 2 * d; strokeJoin = Paint.Join.ROUND; strokeCap = Paint.Cap.ROUND; color = p.series
+        style = Paint.Style.STROKE; strokeWidth = 2.5f * d; strokeJoin = Paint.Join.ROUND; strokeCap = Paint.Cap.ROUND; color = p.series
     }
     private val fill = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = p.series }
     private val ring = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = p.surface }
     private val grid = Paint().apply { strokeWidth = 1f; color = p.grid }
     private val axis = Paint().apply { strokeWidth = 1f; color = p.baseline }
     private val dotPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = p.marker }
-    private val muted = Paint(Paint.ANTI_ALIAS_FLAG).apply { textSize = 11 * d; color = p.axisText }
+    private val muted = Paint(Paint.ANTI_ALIAS_FLAG).apply { textSize = 11 * d; color = p.axisText; typeface = Ui.mono(ctx) }
     private val readout = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        textSize = 13 * d; color = p.readout; typeface = Typeface.create(Typeface.SANS_SERIF, 500, false)
+        textSize = 13 * d; color = p.readout; typeface = Ui.sans(ctx); fontVariationSettings = "'wght' 600"
     }
     private val path = Path()
     private val rect = RectF()
@@ -60,6 +63,15 @@ class ChartView(ctx: Context, private val columns: Boolean, private val p: Color
         this.xs = xs; this.ys = ys; this.readoutOf = readoutOf; this.axisLabel = axisLabel
         sel = selX?.let { xs.indexOf(it) } ?: -1
         yMax = niceMax(ys.maxOrNull() ?: 0f)
+        // First data: the series draws in left to right (600 ms) so the time direction reads at once
+        if (!revealed && ys.isNotEmpty()) {
+            revealed = true
+            if (Ui.animationsOn()) ValueAnimator.ofFloat(0f, 1f).apply {
+                duration = 600; interpolator = DecelerateInterpolator(1.5f)
+                addUpdateListener { reveal = it.animatedValue as Float; invalidate() }
+                start()
+            }
+        }
         contentDescription = if (ys.isEmpty()) "No data yet" else "Latest: " + readoutOf(ys.lastIndex)
         invalidate()
     }
@@ -75,7 +87,10 @@ class ChartView(ctx: Context, private val columns: Boolean, private val p: Color
         for (f in floatArrayOf(0f, 0.5f, 1f)) c.drawText(fmtTick(yMax * f), 0f, yOf(yMax * f) + 4 * d, muted)
         c.drawLine(left, bottom, right, bottom, axis)
 
+        c.save()
+        c.clipRect(0f, 0f, left + (right - left + 8 * d) * reveal, height.toFloat())
         if (columns) drawColumns(c) else drawLine(c)
+        c.restore()
 
         val first = axisLabel(xs.first())
         val last = axisLabel(xs.last())

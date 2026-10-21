@@ -30,15 +30,21 @@ class AllData(private val a: Activity, private val ui: Ui) {
     private val chart = ChartView(a, columns = false, ui.chartColors())
 
     val view: View = ui.column().apply {
-        setPadding(ui.px(16), ui.px(8), ui.px(16), ui.px(32))
-        addView(header)
+        setPadding(ui.px(20), ui.px(8), ui.px(20), ui.px(40))
+        addView(ui.eyebrow("Live data"))
+        // Two weights on one heading: the subject heavy, the rest regular
+        addView(ui.text(Type.DISPLAY_MD, R.color.ink, "Every value").apply { setPadding(0, ui.px(10), 0, 0) })
+        addView(ui.text(Type.DISPLAY_MD, R.color.ink, "the engine reports").apply { fontVariationSettings = "'wght' 400" })
+        addView(header, LinearLayout.LayoutParams(-1, -2).apply { topMargin = ui.px(12) })
         val search = EditText(a).apply {
             hint = "Search values"
             setSingleLine()
             textSize = Type.BODY_MD.sp
+            ui.style(this, Type.BODY_MD)
             setTextColor(ui.color(R.color.ink))
             setHintTextColor(ui.color(R.color.muted))
-            background = ui.shape(R.color.canvas, 12, R.color.hairline)
+            background = ui.shape(R.color.surface_alt, 12)
+            minHeight = ui.px(48)
             setPadding(ui.px(16), ui.px(12), ui.px(16), ui.px(12))
             addTextChangedListener(object : TextWatcher {
                 override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
@@ -46,7 +52,7 @@ class AllData(private val a: Activity, private val ui: Ui) {
                 override fun afterTextChanged(s: Editable?) { query = s.toString().trim(); render() }
             })
         }
-        addView(search, LinearLayout.LayoutParams(-1, -2).apply { topMargin = ui.px(12) })
+        addView(search, LinearLayout.LayoutParams(-1, -2).apply { topMargin = ui.px(16) })
         addView(HorizontalScrollView(a).apply { isHorizontalScrollBarEnabled = false; addView(chips) },
             LinearLayout.LayoutParams(-1, -2).apply { topMargin = ui.px(12) })
         addView(rows, LinearLayout.LayoutParams(-1, -2).apply { topMargin = ui.px(8) })
@@ -70,27 +76,27 @@ class AllData(private val a: Activity, private val ui: Ui) {
         if (shown.isEmpty()) rows.addView(ui.text(Type.BODY_MD, R.color.muted, "No value matches.").apply { setPadding(0, ui.px(16), 0, 0) })
         shown.forEachIndexed { i, p ->
             if (i > 0) rows.addView(ui.divider())
-            val value = ui.text(Type.TITLE_SM, R.color.ink, "—").apply {
+            val value = ui.text(Type.TITLE_MD, R.color.ink, "—").apply {
                 gravity = Gravity.END
-                setPadding(ui.px(8), ui.px(2), ui.px(8), ui.px(2))
-                background = GradientDrawable().apply { cornerRadius = ui.px(6).toFloat(); setColor(Color.TRANSPARENT) }
+                setPadding(ui.px(12), ui.px(6), ui.px(12), ui.px(6))
+                background = GradientDrawable().apply { cornerRadius = ui.px(999).toFloat(); setColor(Color.TRANSPARENT) }
             }
             values[p.id] = value
             rows.addView(LinearLayout(a).apply {
                 gravity = Gravity.CENTER_VERTICAL
-                minimumHeight = ui.px(56)
-                setPadding(0, ui.px(10), 0, ui.px(10))
+                minimumHeight = ui.px(64)
+                setPadding(0, ui.px(14), 0, ui.px(14))
                 isClickable = true
                 ui.ripple(this)
                 setOnClickListener { open = if (open === p) null else p; render() }
                 addView(ui.column(
-                    ui.text(Type.BODY_MD, R.color.ink, p.name),
-                    ui.text(Type.BODY_SM, R.color.muted, if (category == null) p.category else "Request 21 ${p.lid}"),
+                    ui.eyebrow("21 ${p.lid} · ${p.category}"),
+                    ui.text(Type.BODY_MD, R.color.ink, p.name).apply { setPadding(0, ui.px(4), 0, 0) },
                 ), LinearLayout.LayoutParams(0, -2, 1f))
                 addView(value, LinearLayout.LayoutParams(-2, -2).apply { marginStart = ui.px(12) })
             })
             if (p === open) rows.addView(ui.card(R.color.surface_card, 16,
-                ui.text(Type.BODY_SM, R.color.muted, "Last 30 minutes it was read · tap or drag to read values").apply { setPadding(0, 0, 0, ui.px(8)) },
+                ui.eyebrow("Last 30 minutes it was read").apply { setPadding(0, 0, 0, ui.px(10)) },
             ).apply {
                 (chart.parent as? LinearLayout)?.removeView(chart)
                 addView(chart, LinearLayout.LayoutParams(-1, ui.px(160)))
@@ -106,7 +112,7 @@ class AllData(private val a: Activity, private val ui: Ui) {
         val newest = latest.values.maxOfOrNull { it.first }
         header.text = when {
             newest == null -> "No live data yet. Values appear here after a drive with the dongle connected."
-            System.currentTimeMillis() - newest <= 30_000 -> "Live from the engine ECU · ${PIDS.size} values"
+            System.currentTimeMillis() - newest <= 30_000 -> "Live from the engine ECU · ${PIDS.size} values · tap a row for its last 30 minutes"
             else -> "From the last drive, ${fmt(newest)}"
         }
         for (p in PIDS) {

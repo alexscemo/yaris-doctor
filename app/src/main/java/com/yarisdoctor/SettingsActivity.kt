@@ -31,7 +31,8 @@ class SettingsActivity : Activity() {
     /** Rebuilt after every change so subtitles always show the current value. */
     private fun render() {
         val content = ui.column().apply {
-            setPadding(ui.px(16), 0, ui.px(16), ui.px(32))
+            setPadding(ui.px(20), 0, ui.px(20), ui.px(40))
+            addView(ui.text(Type.DISPLAY_MD, R.color.ink, "Set up the dongle and your car.").apply { setPadding(0, ui.px(8), ui.px(24), ui.px(4)) })
             addView(section("Car"))
             addView(group(
                 row("Bluetooth dongle", Prefs.dongleName(context)?.let { "$it · ${Prefs.dongle(context)}" } ?: Prefs.dongle(context)) { pickDongle() },
@@ -81,15 +82,8 @@ class SettingsActivity : Activity() {
                         Prefs.put(context, Prefs.WIFI, it.trim())
                     }
                 },
-                row("Sync now", syncSummary()) {
-                    if (Prefs.server(context).isBlank()) return@row toast("Set the hub address first")
-                    toast("Syncing…")
-                    Thread {
-                        val result = Sync.run(applicationContext)
-                        runOnUiThread { toast(result); render() }
-                    }.start()
-                },
             ))
+            addView(syncBlock(), LinearLayout.LayoutParams(-1, -2).apply { topMargin = ui.px(12) })
             addView(section("Developer"))
             addView(group(
                 toggle("Debug mode", "Simulated dongle with random data, for testing without the car. Nothing is saved, and it turns off when the app is closed or the phone restarts.", Prefs.debug) {
@@ -248,13 +242,49 @@ class SettingsActivity : Activity() {
     }
 
     /** caption-uppercase label above a group. */
-    private fun section(title: String) = ui.text(Type.CAPTION_UPPER, R.color.muted, title).apply {
-        setPadding(ui.px(4), ui.px(24), 0, ui.px(8))
+    private fun section(title: String) = ui.eyebrow(title).apply {
+        setPadding(ui.px(4), ui.px(28), 0, ui.px(10))
+    }
+
+    /** Home hub sync: the one orange field in the app. A dot and mono label, the word set huge, a hard black button. */
+    private fun syncBlock(): View {
+        val set = Prefs.server(this).isNotBlank()
+        val button = ui.text(Type.CAPTION_UPPER, R.color.canvas, "Sync now  ↗").apply {
+            textSize = 13f
+            gravity = Gravity.CENTER_VERTICAL
+            setBackgroundColor(ui.color(R.color.on_primary))
+            setPadding(ui.px(20), 0, ui.px(20), 0)
+            minHeight = ui.px(52)
+            isEnabled = set
+            alpha = if (set) 1f else 0.4f
+            ui.pressScale(this)
+            setOnClickListener {
+                text = "Syncing"
+                Thread {
+                    val result = Sync.run(applicationContext)
+                    runOnUiThread { toast(result); render() }
+                }.start()
+            }
+        }
+        return ui.column(
+            LinearLayout(this).apply {
+                gravity = Gravity.CENTER_VERTICAL
+                addView(ui.dot(R.color.on_primary), LinearLayout.LayoutParams(ui.px(8), ui.px(8)).apply { marginEnd = ui.px(10) })
+                addView(ui.eyebrow("Home hub · syncs on home Wi-Fi", R.color.on_primary))
+            },
+            ui.text(Type.NUMERAL, R.color.on_primary, "SYNC").apply { textSize = 88f; setPadding(0, ui.px(16), 0, ui.px(12)) },
+            ui.divider(R.color.on_primary),
+        ).apply {
+            background = ui.shape(R.color.primary, 20)
+            setPadding(ui.px(24), ui.px(24), ui.px(24), ui.px(24))
+            addView(button, LinearLayout.LayoutParams(-2, -2).apply { topMargin = ui.px(20) })
+            addView(ui.text(Type.BODY_SM, R.color.on_primary, if (set) syncSummary() else "Add the hub address above to turn sync on.").apply { setPadding(0, ui.px(14), 0, 0) })
+        }
     }
 
     /** Rows in one hairline card (connector-tile style), separated by soft dividers. */
     private fun group(vararg rows: View) = ui.column().apply {
-        background = ui.shape(R.color.canvas, 12, R.color.hairline)
+        background = ui.shape(R.color.surface_card, 20, R.color.hairline_soft)
         clipToOutline = true
         rows.forEachIndexed { i, r ->
             if (i > 0) addView(ui.divider())
@@ -266,7 +296,7 @@ class SettingsActivity : Activity() {
     private fun row(title: String, sub: String, end: View? = null, onClick: (() -> Unit)? = null) = LinearLayout(this).apply {
         gravity = Gravity.CENTER_VERTICAL
         minimumHeight = ui.px(64)
-        setPadding(ui.px(16), ui.px(12), ui.px(16), ui.px(12))
+        setPadding(ui.px(20), ui.px(14), ui.px(20), ui.px(14))
         addView(ui.column(
             ui.text(Type.TITLE_SM, R.color.ink, title),
             ui.text(Type.BODY_SM, R.color.muted, sub).apply { setPadding(0, ui.px(2), 0, 0) },

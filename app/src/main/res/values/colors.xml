@@ -1,26 +1,32 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- DESIGN.md tokens (light). values-night/colors.xml re-maps the same names for dark mode. -->
+<!-- Light tokens: cool paper, one signal orange, heavy black type. values-night/colors.xml re-maps the same names. -->
 <resources>
-    <color name="primary">#cc785c</color>
-    <color name="on_primary">#ffffff</color>
-    <color name="canvas">#faf9f5</color>
-    <color name="surface_card">#efe9de</color>
-    <color name="hairline">#e6dfd8</color>
-    <color name="hairline_soft">#ebe6df</color>
-    <color name="ink">#141413</color>
-    <color name="body">#3d3d3a</color>
-    <color name="muted">#6c6a64</color>
-    <color name="muted_soft">#8e8b82</color>
-    <!-- Dark instrument card (product-mockup-card-dark) -->
-    <color name="instrument">#181715</color>
-    <color name="on_instrument">#faf9f5</color>
-    <color name="on_instrument_soft">#a09d96</color>
-    <color name="accent_teal">#5db8a6</color>
+    <!-- Signal orange: primary action, selected chip, focus, the signal square, chart series, live regen -->
+    <color name="primary">#f04a12</color>
+    <!-- Black on the orange: 5.8:1 (white would be 3.4:1) -->
+    <color name="on_primary">#000000</color>
+    <color name="canvas">#f4f7fe</color>
+    <color name="surface_card">#fdfdff</color>
+    <color name="surface_alt">#e4e7ee</color>
+    <color name="hairline">#c2c4cb</color>
+    <color name="hairline_soft">#dbdee5</color>
+    <color name="control_border">#67696f</color>
+    <color name="ink">#101116</color>
+    <color name="body">#2b2d33</color>
+    <color name="muted">#4b4d53</color>
+    <color name="muted_soft">#67696f</color>
+    <!-- Instrument card: dark in both themes -->
+    <color name="instrument">#101116</color>
+    <color name="on_instrument">#f4f7fe</color>
+    <color name="on_instrument_soft">#a9abb2</color>
+    <!-- Health status: separate from the brand orange, so a warning never reads as decoration -->
+    <color name="accent_teal">#14a356</color>
+    <color name="status_warn">#e89b00</color>
+    <color name="status_crit">#e0203a</color>
     <!-- All data: a value that just went up / down flashes behind its text (ink stays readable on both) -->
-    <color name="flash_up">#d6ecd5</color>
-    <color name="flash_down">#f3d6cd</color>
-    <!-- Overview: soot filling the instrument card; on_instrument_soft keeps 4.5:1 on it -->
-    <color name="soot_fill">#33302c</color>
-    <!-- Chart gridlines sit on surface_card -->
-    <color name="chart_grid">#e6dfd8</color>
+    <color name="flash_up">#c9f2d8</color>
+    <color name="flash_down">#ffd6c4</color>
+    <!-- Soot filling the instrument card; on_instrument_soft keeps 5.9:1 on it -->
+    <color name="soot_fill">#2b2d35</color>
+    <color name="chart_grid">#e4e7ee</color>
 </resources>

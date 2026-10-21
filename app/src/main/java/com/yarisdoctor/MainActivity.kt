@@ -5,6 +5,7 @@ import android.Manifest.permission.ACCESS_COARSE_LOCATION
 import android.Manifest.permission.ACCESS_FINE_LOCATION
 import android.Manifest.permission.BLUETOOTH_CONNECT
 import android.Manifest.permission.POST_NOTIFICATIONS
+import android.animation.ValueAnimator
 import android.app.Activity
 import android.content.Intent
 import android.content.pm.PackageManager.PERMISSION_GRANTED
@@ -14,9 +15,14 @@ import android.os.Handler
 import android.os.Looper
 import android.os.PowerManager
 import android.provider.Settings
+import android.text.SpannableString
+import android.text.style.UnderlineSpan
 import android.view.Gravity
 import android.view.View
+import android.view.animation.DecelerateInterpolator
+import android.view.animation.PathInterpolator
 import android.widget.FrameLayout
+import android.widget.HorizontalScrollView
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
@@ -41,9 +47,17 @@ class MainActivity : Activity() {
     private lateinit var calloutText: TextView
     private lateinit var soot: TextView
     private lateinit var sootSub: TextView
+    private lateinit var sootSquare: Ui.SquareSpan
+    private var sootShown: Int? = null
+    private var sootAnim: ValueAnimator? = null
+    private var pulse: ValueAnimator? = null
+    private lateinit var temp: TextView
+    private lateinit var tempSub: TextView
     private lateinit var miles: TextView
-    private lateinit var sootFill: SootView
     private lateinit var milesSub: TextView
+    private lateinit var regenState: TextView
+    private lateinit var regenSub: TextView
+    private lateinit var sootFill: SootView
     private lateinit var sootChart: ChartView
     private lateinit var regenChart: ChartView
     private lateinit var regenTitle: TextView
@@ -61,78 +75,97 @@ class MainActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // Status: badge-pill with a live dot
+        // Connection status: a quiet pill with a live dot
         statusText = ui.text(Type.CAPTION, R.color.ink)
         statusDot = ui.dot(R.color.muted_soft)
-        val status = ui.pill(statusText, dot = statusDot)
+        val status = ui.pill(statusText, R.color.surface_card, statusDot, R.color.hairline)
 
-        // Notices (Debug mode, missing permission, logging off): hairline card
+        // Notices (Debug mode, missing permission, logging off)
         noticeBadge = ui.pill(ui.text(Type.CAPTION_UPPER, R.color.on_primary, "Debug"), R.color.primary)
         noticeText = ui.text(Type.BODY_SM, R.color.body)
         notice = LinearLayout(this).apply {
             gravity = Gravity.CENTER_VERTICAL
-            background = ui.shape(R.color.canvas, 12, R.color.hairline)
+            background = ui.shape(R.color.surface_card, 16, R.color.hairline)
             setPadding(ui.px(16), ui.px(12), ui.px(16), ui.px(12))
             addView(noticeBadge, LinearLayout.LayoutParams(-2, -2).apply { marginEnd = ui.px(12) })
             addView(noticeText, LinearLayout.LayoutParams(0, -2, 1f))
         }
 
-        // Live regen: callout-card-coral, the one generous use of coral
+        // Live regen: the one orange field on Overview
         calloutText = ui.text(Type.BODY_SM, R.color.on_primary)
         callout = ui.card(R.color.primary, 24,
-            ui.text(Type.CAPTION_UPPER, R.color.on_primary, "Regenerating"),
+            ui.eyebrow("Regen running", R.color.on_primary),
             ui.text(Type.DISPLAY_SM, R.color.on_primary, "Keep driving").apply { setPadding(0, ui.px(8), 0, ui.px(4)) },
             calloutText,
         )
 
-        // Instrument panel: product-mockup-card-dark
-        soot = ui.text(Type.DISPLAY_MD, R.color.on_instrument)
+        // Instrument card: soot fills it from the bottom; the soot % is the loudest thing on the screen
+        val (sq, span) = ui.signal("—")
+        sootSquare = span
+        soot = ui.text(Type.NUMERAL, R.color.on_instrument, sq)
         sootSub = ui.text(Type.BODY_SM, R.color.on_instrument_soft)
-        miles = ui.text(Type.DISPLAY_MD, R.color.on_instrument)
-        milesSub = ui.text(Type.BODY_SM, R.color.on_instrument_soft)
-        val stats = ui.card(R.color.instrument, 24).apply {
-            orientation = LinearLayout.HORIZONTAL
-            background = null // the frame below draws the card, with the soot behind the numbers
-            addView(stat("Soot load", soot, sootSub), LinearLayout.LayoutParams(0, -2, 1f))
-            addView(stat("Since last regen", miles, milesSub), LinearLayout.LayoutParams(0, -2, 1f).apply { marginStart = ui.px(16) })
+        val sootText = ui.column(ui.eyebrow("Soot load", R.color.on_instrument_soft)).apply {
+            setPadding(ui.px(24), ui.px(22), ui.px(24), ui.px(22))
+            addView(View(context), LinearLayout.LayoutParams(-1, 0, 1f))
+            addView(soot)
+            addView(sootSub.apply { setPadding(0, ui.px(8), 0, 0) })
         }
         sootFill = SootView(this, ui.color(R.color.soot_fill), ui.color(R.color.primary))
         val instrument = FrameLayout(this).apply {
-            background = ui.shape(R.color.instrument, 12)
+            background = ui.shape(R.color.instrument, 20)
             clipToOutline = true
             addView(sootFill, FrameLayout.LayoutParams(-1, -1))
-            addView(stats, FrameLayout.LayoutParams(-1, -2))
+            addView(sootText, FrameLayout.LayoutParams(-1, -1))
         }
 
-        // Charts: cream feature-cards
+        // Stat tiles: dark, side-scrolling, ~0.62 of the content width each so the next one peeks
+        temp = ui.text(Type.STAT, R.color.on_instrument); tempSub = ui.text(Type.BODY_SM, R.color.on_instrument_soft)
+        miles = ui.text(Type.STAT, R.color.on_instrument); milesSub = ui.text(Type.BODY_SM, R.color.on_instrument_soft)
+        regenState = ui.text(Type.STAT, R.color.on_instrument); regenSub = ui.text(Type.BODY_SM, R.color.on_instrument_soft)
+        val tileW = ((resources.displayMetrics.widthPixels - ui.px(40)) * 0.62f).toInt()
+        val tiles = HorizontalScrollView(this).apply {
+            isHorizontalScrollBarEnabled = false
+            clipToPadding = false
+            addView(LinearLayout(context).apply {
+                listOf(tile("DPF temp", temp, tempSub), tile("Since regen", miles, milesSub), tile("Regen", regenState, regenSub))
+                    .forEachIndexed { i, t -> addView(t, LinearLayout.LayoutParams(tileW, -2).apply { if (i > 0) marginStart = ui.px(12) }) }
+            })
+        }
+
+        // Charts
         sootChart = ChartView(this, columns = false, ui.chartColors())
         regenChart = ChartView(this, columns = true, ui.chartColors())
         regenTitle = ui.text(Type.TITLE_MD, R.color.ink)
-        val sootCard = chartCard(ui.text(Type.TITLE_MD, R.color.ink, "Soot load"), "Last 14 days · tap or drag to read values", sootChart)
-        val regenCard = chartCard(regenTitle, "Last 20 regens · tap or drag to read values", regenChart)
+        val sootCard = chartCard("Soot · last 14 days", ui.text(Type.TITLE_MD, R.color.ink, "Soot trend"), sootChart)
+        val regenCard = chartCard("Regens · last 20", regenTitle, regenChart)
 
         history = ui.column()
-        health = ui.card(R.color.surface_card, 20)
+        health = ui.column()
 
         val content = ui.column().apply {
-            setPadding(ui.px(16), ui.px(8), ui.px(16), ui.px(32))
+            setPadding(ui.px(20), ui.px(8), ui.px(20), ui.px(40))
             addView(status, LinearLayout.LayoutParams(-2, -2))
-            for (v in listOf(health, notice, callout, instrument, sootCard, regenCard)) {
-                addView(v, LinearLayout.LayoutParams(-1, -2).apply { topMargin = ui.px(16) })
-            }
-            addView(ui.text(Type.DISPLAY_SM, R.color.ink, "Regen history"), LinearLayout.LayoutParams(-1, -2).apply { topMargin = ui.px(32) })
-            addView(history, LinearLayout.LayoutParams(-1, -2).apply { topMargin = ui.px(8) })
+            addView(health, LinearLayout.LayoutParams(-1, -2).apply { topMargin = ui.px(24) })
+            for (v in listOf(notice, callout)) addView(v, LinearLayout.LayoutParams(-1, -2).apply { topMargin = ui.px(16) })
+            addView(instrument, LinearLayout.LayoutParams(-1, ui.px(232)).apply { topMargin = ui.px(24) })
+            addView(tiles, LinearLayout.LayoutParams(-1, -2).apply { topMargin = ui.px(12) })
+            for (v in listOf(sootCard, regenCard)) addView(v, LinearLayout.LayoutParams(-1, -2).apply { topMargin = ui.px(16) })
+            addView(ui.eyebrow("Regens").apply { gravity = Gravity.CENTER_HORIZONTAL }, LinearLayout.LayoutParams(-1, -2).apply { topMargin = ui.px(40) })
+            addView(ui.text(Type.DISPLAY_SM, R.color.ink, "Every regen, recorded").apply { gravity = Gravity.CENTER_HORIZONTAL },
+                LinearLayout.LayoutParams(-1, -2).apply { topMargin = ui.px(8) })
+            addView(history, LinearLayout.LayoutParams(-1, -2).apply { topMargin = ui.px(16) })
         }
         val settings = ui.iconButton(R.drawable.ic_settings, "Settings") { startActivity(Intent(this, SettingsActivity::class.java)) }
         overview = content
         scroll = ScrollView(this)
-        tabs = LinearLayout(this).apply { setPadding(ui.px(16), 0, ui.px(16), ui.px(8)) }
+        tabs = LinearLayout(this).apply { setPadding(ui.px(20), ui.px(4), ui.px(20), ui.px(12)) }
         showTab(0)
         val root = ui.column(ui.topBar("Yaris Doctor", end = settings), tabs).apply {
             addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
         }
         ui.fitSystemBars(root)
         setContentView(root)
+        ui.enter(listOf(status, health, instrument, tiles, sootCard, regenCard))
         requestPermissions(arrayOf(BLUETOOTH_CONNECT, ACCESS_FINE_LOCATION, ACCESS_COARSE_LOCATION, POST_NOTIFICATIONS), 1)
     }
 
@@ -157,18 +190,28 @@ class MainActivity : Activity() {
 
     override fun onPause() {
         handler.removeCallbacks(tick)
+        pulse?.cancel(); pulse = null
         super.onPause()
     }
 
     private fun showTab(i: Int) {
+        val from = tab
         tab = i
         tabs.removeAllViews()
         TABS.forEachIndexed { k, label ->
             tabs.addView(ui.chip(label, k == i) { if (k != tab) showTab(k) }, LinearLayout.LayoutParams(-2, -2).apply { marginEnd = ui.px(8) })
         }
         scroll.removeAllViews()
-        scroll.addView(when (i) { 1 -> allData.view; 2 -> rules.view; else -> overview })
+        val v = when (i) { 1 -> allData.view; 2 -> rules.view; else -> overview }
+        scroll.addView(v)
         scroll.scrollTo(0, 0)
+        // Slide in from the side of the chip that was tapped, so the content follows the chip row
+        if (from != i && Ui.animationsOn()) {
+            v.alpha = 0f
+            v.translationX = ui.px(if (i > from) 24 else -24).toFloat()
+            v.animate().alpha(1f).translationX(0f).setStartDelay(0).setDuration(280)
+                .setInterpolator(PathInterpolator(0.4f, 0f, 0.2f, 1f)).start()
+        }
         refresh()
     }
 
@@ -184,7 +227,7 @@ class MainActivity : Activity() {
         statusText.text = when {
             last == null -> "Waiting for the first drive"
             !live -> "Last reading ${fmt(last.t)}"
-            else -> "Live · DPF ${last.temp ?: "?"}°C"
+            else -> "Live from the car"
         }
         statusDot.background = ui.shape(if (live) R.color.accent_teal else R.color.muted_soft, 999)
 
@@ -200,22 +243,32 @@ class MainActivity : Activity() {
         noticeText.text = problem
 
         val regenNow = live && last!!.regen
+        val open = regens.lastOrNull()?.takeIf { it.end == null }
+        val mins = open?.let { (now - it.start) / 60_000 } ?: 0L
         callout.visibility = if (regenNow) View.VISIBLE else View.GONE
-        if (regenNow) {
-            val mins = regens.lastOrNull()?.takeIf { it.end == null }?.let { (now - it.start) / 60_000 } ?: 0L
-            calloutText.text = "DPF ${last!!.temp ?: "?"}°C · soot ${last.soot ?: "?"}% · $mins min so far"
-        }
+        if (regenNow) calloutText.text = "DPF ${last!!.temp ?: "?"}°C · soot ${last.soot ?: "?"}% · $mins min so far"
 
         val km = Prefs.km(this)
         val perUnit = if (km) 1000.0 else Db.METRES_PER_MILE
         val unit = if (km) "km" else "mi"
 
-        soot.text = last?.soot?.let { "$it%" } ?: "—"
+        showSoot(last?.soot)
         sootFill.setSoot(last?.soot)
-        sootSub.text = last?.let { if (live) "now" else "at ${fmt(it.t)}" } ?: "no readings yet"
+        sootSub.text = last?.let { if (live) "Now" else "At ${fmt(it.t)}" } ?: "No readings yet"
+        setPulse(regenNow)
+
+        temp.text = last?.temp?.let { "$it°C" } ?: "—"
+        tempSub.text = if (live) "Exhaust after the DPF" else "Last reading"
         val gaps = regens.mapNotNull { it.gapM }
         miles.text = db.metresSinceRegen()?.let { "%.0f $unit".format(it / perUnit) } ?: "—"
-        milesSub.text = if (gaps.isEmpty()) "average after two regens" else "avg %.0f $unit between".format(gaps.average() / perUnit)
+        milesSub.text = if (gaps.isEmpty()) "Average after two regens" else "Avg %.0f $unit between".format(gaps.average() / perUnit)
+        regenState.text = if (regenNow) "Burning" else "Off"
+        regenState.setTextColor(ui.color(if (regenNow) R.color.primary else R.color.on_instrument))
+        regenSub.text = when {
+            regenNow -> "$mins min so far"
+            regens.lastOrNull()?.end != null -> "Last took ${duration(regens.last())}"
+            else -> "None logged yet"
+        }
 
         val series = db.sootSeries(now - 14 * DAY_MS)
         sootChart.set(
@@ -244,39 +297,79 @@ class MainActivity : Activity() {
         }
     }
 
-    /** "All good", or what the checks found: open alerts first, then the ones seen in the last 7 days. */
+    /** Counts the soot figure from the old value to the new one alongside the fill (700 ms); jumps without animations. */
+    private fun showSoot(v: Int?) {
+        val from = sootShown
+        sootShown = v
+        sootAnim?.cancel()
+        fun put(n: Int?) { soot.text = ui.signalWith(n?.let { "$it%" } ?: "—", sootSquare) }
+        if (v == null || from == null || from == v || !Ui.animationsOn()) return put(v)
+        sootAnim = ValueAnimator.ofInt(from, v).apply {
+            duration = 700; interpolator = DecelerateInterpolator(1.5f)
+            addUpdateListener { put(it.animatedValue as Int) }
+            start()
+        }
+    }
+
+    /** The square after the soot % breathes (1 → 0.45, 1.2 s) while a regen runs; static otherwise. */
+    private fun setPulse(on: Boolean) {
+        if (on == (pulse != null)) return
+        pulse?.cancel(); pulse = null
+        sootSquare.alpha = 1f
+        soot.invalidate()
+        if (!on || !Ui.animationsOn()) return
+        pulse = ValueAnimator.ofFloat(1f, 0.45f).apply {
+            duration = 1200; repeatMode = ValueAnimator.REVERSE; repeatCount = ValueAnimator.INFINITE
+            addUpdateListener { sootSquare.alpha = it.animatedValue as Float; soot.invalidate() }
+            start()
+        }
+    }
+
+    /** The verdict set huge and ended by a square in the status colour, then what the checks found. */
     private fun renderHealth(alerts: List<Db.Alert>) {
         health.removeAllViews()
         val open = alerts.filter { it.end == null }
+        val earlier = alerts.filter { it.end != null }
         val level = open.maxOfOrNull { it.level } ?: 0
-        val (title, dot) = when (level) {
-            CRIT -> "Check the car now" to R.color.primary
-            WARN -> "Warning" to R.color.primary
+        val (title, statusColor) = when (level) {
+            CRIT -> "Check the car now" to R.color.status_crit
+            WARN -> "Warning" to R.color.status_warn
             else -> "All good" to R.color.accent_teal
         }
-        health.addView(LinearLayout(this).apply {
+        health.addView(ui.eyebrow("Health"))
+        health.addView(ui.text(Type.HERO, R.color.ink, ui.signal(title, statusColor).first).apply { setPadding(0, ui.px(10), 0, 0) })
+        val summary = (if (open.isEmpty()) "No warnings on this drive." else "") +
+            (if (earlier.isEmpty()) "" else (if (open.isEmpty()) " " else "") + "${earlier.size} seen in the last 7 days.")
+        if (summary.isNotBlank()) health.addView(ui.text(Type.BODY_MD, R.color.body, summary).apply { setPadding(0, ui.px(14), ui.px(40), 0) })
+        for (a in open) health.addView(alertRow(a, if (a.level == CRIT) R.color.status_crit else R.color.status_warn, R.color.ink))
+        for (a in earlier.take(3)) health.addView(alertRow(a, R.color.muted_soft, R.color.muted))
+        health.addView(ui.text(Type.CAPTION, R.color.primary, SpannableString("SEE THE RULES  ↗").apply { setSpan(UnderlineSpan(), 0, 13, 0) }).apply {
+            minHeight = ui.px(48)
             gravity = Gravity.CENTER_VERTICAL
-            addView(ui.dot(dot), LinearLayout.LayoutParams(ui.px(10), ui.px(10)).apply { marginEnd = ui.px(10) })
-            addView(ui.text(Type.TITLE_MD, R.color.ink, title))
-        })
-        if (open.isEmpty()) {
-            health.addView(ui.text(Type.BODY_SM, R.color.muted, "Every check on the engine data is within range.").apply { setPadding(0, ui.px(4), 0, 0) })
-        }
-        for (a in open) {
-            health.addView(ui.text(Type.BODY_SM, R.color.ink, (if (a.level == CRIT) "Critical: " else "") + a.text).apply { setPadding(0, ui.px(8), 0, 0) })
-        }
-        val earlier = alerts.filter { it.end != null }
-        if (earlier.isNotEmpty()) {
-            health.addView(ui.text(Type.CAPTION_UPPER, R.color.muted, "Seen in the last 7 days").apply { setPadding(0, ui.px(16), 0, 0) })
-            for (a in earlier) health.addView(ui.text(Type.BODY_SM, R.color.muted, "${fmt(a.start)} · ${a.text}").apply { setPadding(0, ui.px(6), 0, 0) })
-        }
+            letterSpacing = 0.04f
+            contentDescription = "See the rules"
+            isClickable = true
+            ui.ripple(this)
+            setOnClickListener { showTab(2) }
+        }, LinearLayout.LayoutParams(-2, -2).apply { topMargin = ui.px(8) })
+        health.addView(ui.divider(R.color.hairline), LinearLayout.LayoutParams(-1, ui.px(1).coerceAtLeast(1)).apply { topMargin = ui.px(8) })
+    }
+
+    private fun alertRow(a: Db.Alert, dot: Int, ink: Int) = LinearLayout(this).apply {
+        gravity = Gravity.CENTER_VERTICAL
+        setPadding(0, ui.px(12), 0, 0)
+        addView(ui.dot(dot), LinearLayout.LayoutParams(ui.px(10), ui.px(10)).apply { marginEnd = ui.px(12) })
+        addView(ui.column(
+            ui.text(Type.TITLE_SM, ink, (if (a.level == CRIT) "Critical: " else "") + a.text),
+            ui.eyebrow(fmt(a.start)).apply { setPadding(0, ui.px(2), 0, 0) },
+        ), LinearLayout.LayoutParams(0, -2, 1f))
     }
 
     /** Newest first, capped at 50 rows. */
     private fun renderHistory(regens: List<Db.Regen>, perUnit: Double, unit: String) {
         history.removeAllViews()
         if (regens.isEmpty()) {
-            history.addView(ui.text(Type.BODY_MD, R.color.muted, "None logged yet. Regens appear here after a drive."))
+            history.addView(ui.text(Type.BODY_MD, R.color.muted, "None logged yet. Regens appear here after a drive.").apply { gravity = Gravity.CENTER_HORIZONTAL })
             return
         }
         regens.reversed().take(50).forEachIndexed { i, r ->
@@ -292,23 +385,28 @@ class MainActivity : Activity() {
                 setPadding(0, ui.px(12), 0, ui.px(12))
                 addView(ui.column(
                     ui.text(Type.TITLE_SM, R.color.ink, fmt(r.start)),
-                    ui.text(Type.BODY_SM, R.color.muted, "${duration(r)} · soot ${r.sootStart ?: "?"}→${r.sootEnd ?: "?"}%"),
+                    ui.eyebrow("${duration(r)} · soot ${r.sootStart ?: "?"}→${r.sootEnd ?: "?"}%").apply { setPadding(0, ui.px(4), 0, 0) },
                 ), LinearLayout.LayoutParams(0, -2, 1f))
                 addView(badge)
             })
         }
     }
 
-    private fun stat(label: String, value: TextView, sub: TextView) = ui.column(
-        ui.text(Type.CAPTION_UPPER, R.color.on_instrument_soft, label),
-        value.apply { setPadding(0, ui.px(8), 0, ui.px(4)) },
+    private fun tile(label: String, value: TextView, sub: TextView) = ui.column(
+        ui.eyebrow(label, R.color.on_instrument_soft),
+        value.apply { setPadding(0, ui.px(14), 0, ui.px(6)) },
         sub,
-    )
+    ).apply {
+        background = ui.shape(R.color.instrument, 20)
+        setPadding(ui.px(20), ui.px(18), ui.px(20), ui.px(18))
+        minimumHeight = ui.px(120)
+    }
 
-    private fun chartCard(title: TextView, sub: String, chart: ChartView) = ui.card(R.color.surface_card, 20,
-        title,
-        ui.text(Type.BODY_SM, R.color.muted, sub).apply { setPadding(0, ui.px(2), 0, ui.px(12)) },
-    ).apply { addView(chart, LinearLayout.LayoutParams(-1, ui.px(180))) }
+    private fun chartCard(label: String, title: TextView, chart: ChartView) = ui.card(R.color.surface_card, 20,
+        ui.eyebrow(label),
+        title.apply { setPadding(0, ui.px(6), 0, ui.px(4)) },
+        ui.text(Type.BODY_SM, R.color.muted, "Tap or drag the chart to read values").apply { setPadding(0, 0, 0, ui.px(12)) },
+    ).apply { addView(chart, LinearLayout.LayoutParams(-1, ui.px(190))) }
 
     private fun duration(r: Db.Regen) = r.end?.let { "${(it - r.start) / 60_000} min" } ?: "ongoing"
     private fun fmt(t: Long) = SimpleDateFormat("EEE d MMM, HH:mm", Locale.getDefault()).format(t)

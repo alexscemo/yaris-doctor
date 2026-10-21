@@ -1,17 +1,24 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Dark mode: canvas becomes surface-dark, cards step up to surface-dark-elevated, text uses on-dark. -->
+<!-- Dark mode: near-black canvas, cards step up one tone, the orange brightens to hold contrast. -->
 <resources>
-    <color name="canvas">#181715</color>
-    <color name="surface_card">#252320</color>
-    <color name="hairline">#252320</color>
-    <color name="hairline_soft">#1f1e1b</color>
-    <color name="ink">#faf9f5</color>
-    <color name="body">#faf9f5</color>
-    <color name="muted">#a09d96</color>
-    <color name="muted_soft">#8e8b82</color>
-    <color name="instrument">#252320</color>
-    <color name="chart_grid">#1f1e1b</color>
-    <color name="flash_up">#26422c</color>
-    <color name="flash_down">#4a2a22</color>
-    <color name="soot_fill">#36332f</color>
+    <color name="primary">#ff6a2b</color>
+    <color name="canvas">#050609</color>
+    <color name="surface_card">#141519</color>
+    <color name="surface_alt">#26272c</color>
+    <color name="hairline">#2e3036</color>
+    <color name="hairline_soft">#1f2026</color>
+    <color name="control_border">#85868b</color>
+    <color name="ink">#e9ebf1</color>
+    <color name="body">#d2d4da</color>
+    <color name="muted">#a2a3a9</color>
+    <color name="muted_soft">#8a8b90</color>
+    <color name="instrument">#1a1b21</color>
+    <color name="accent_teal">#3ddc84</color>
+    <color name="status_warn">#ffb81f</color>
+    <color name="status_crit">#ff4d63</color>
+    <color name="chart_grid">#24262c</color>
+    <color name="flash_up">#173a26</color>
+    <color name="flash_down">#4a2214</color>
+    <!-- on_instrument_soft keeps 5.5:1 on it -->
+    <color name="soot_fill">#30323a</color>
 </resources>

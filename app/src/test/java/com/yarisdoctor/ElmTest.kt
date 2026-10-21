@@ -1,6 +1,8 @@
 package com.yarisdoctor
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Assert.assertNull
 import org.junit.Test
 
@@ -37,6 +39,15 @@ class ElmTest {
         assertEquals(true, regenOf(p)) // char 33 (byte 16) low nibble = 1, as in DPFViewer
         assertEquals(84, sootOf(p))    // 0x2A * 2
         assertNull(sootOf("61DD"))
+    }
+
+    @Test fun regenBitAtEngineStopIsNotARegen() {
+        // Frames from the 21 Oct drive: mid-regen at 2421 rpm, and the same bit set after the engine stopped
+        assertEquals(true, regenOf("61DF" + "08D004FF00670A483E001284FA5C01"))
+        assertFalse(engineStopped("610C25D6"))
+        assertEquals(true, regenOf("61DF" + "08D004FF006400483E001432FFF501"))
+        assertTrue(engineStopped("610C0000"))
+        assertFalse(engineStopped(null))
     }
 
     @Test fun formulasParseAndEvaluate() {

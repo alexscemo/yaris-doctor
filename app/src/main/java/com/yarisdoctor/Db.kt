@@ -133,6 +133,11 @@ class Db private constructor(ctx: Context, name: String?) : SQLiteOpenHelper(ctx
         arrayOf(lid, from.toString()),
     ).use { if (it.moveToFirst()) it.getLong(0) else null }
 
+    /** Deletes closed regens shorter than a minute that covered no distance: the engine-stop blip of the 21DF bit, not a burn. */
+    fun dropStopBlips() = writableDatabase.execSQL(
+        "DELETE FROM regen WHERE end_t IS NOT NULL AND end_t - start_t < 60000 AND COALESCE(odo_end, odo_start, 0) - COALESCE(odo_start, 0) < 50",
+    )
+
     /** A consistent copy of the whole database in [file] (replaced), taken while the service may still be writing. */
     fun exportTo(file: java.io.File) {
         file.delete() // VACUUM INTO refuses an existing file

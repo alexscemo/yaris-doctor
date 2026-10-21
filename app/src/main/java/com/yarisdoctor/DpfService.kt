@@ -52,7 +52,8 @@ class DpfService : Service() {
     // Outlives a session, so a regen survives a dropped Bluetooth link (see run())
     private val rec by lazy { Recorder(db) }
     private var trend = emptyList<Finding>() // regen-history findings, redone at start and after each regen
-    private val notified = HashSet<String>()  // alert keys notified and still active
+    private val notified = HashSet<String>()  // alert keys notified this drive: a value flapping around its limit notifies once
+    private val showing = HashSet<String>()   // of those, the ones whose notification is still up
     // A drive outlives a Bluetooth drop shorter than REGEN_GAP_MS, like a regen: the checker and live alerts carry over
     private var checker = Checker()
     private var lastSeen = 0L // last cycle the ECU answered
@@ -83,6 +84,11 @@ class DpfService : Service() {
         Prefs.migrate(this)
         // A previous process killed mid-regen never closed its row; it would show "Ongoing" forever
         Db.real(this).closeOrphanRegens()
+        // Engine-stop blips logged as regens before engineStopped() existed: under a minute and no distance. Once only.
+        if (!Prefs.bool(this, Prefs.STOP_BLIPS_DROPPED, false)) {
+            Db.real(this).dropStopBlips()
+            Prefs.put(this, Prefs.STOP_BLIPS_DROPPED, true)
+        }
         // Live alerts left open by a killed process end now; regen-history ones open if they apply
         trend = trends(db.regens())
         checks(System.currentTimeMillis(), emptyList())
@@ -117,6 +123,7 @@ class DpfService : Service() {
                 lastSeen = 0
                 checker = Checker()
                 checks(System.currentTimeMillis(), emptyList()) // closes the drive's live alerts and cancels their notifications
+                notified.clear()
             }
             try {
                 session()
@@ -182,7 +189,7 @@ class DpfService : Service() {
                     db.frames(t, replies)
                     val soot = replies[pidSoot]?.let { sootOf(it, byteSoot, fSoot) }
                     val temp = replies[pidTemp]?.let { tempOf(it, byteTemp, fTemp) }
-                    val regen = replies[pidRegen]?.let { regenOf(it, byteRegen, fRegen) }
+                    val regen = replies[pidRegen]?.let { regenOf(it, byteRegen, fRegen) }?.let { it && !engineStopped(replies["210C"]) }
                     // The DPF log keeps its old pace (5 s, 1 s in regen); a regen start or end is written at once
                     if (t - lastSample >= (if (rec.inRegen) 1000 else 5000) || (regen != null && regen != rec.inRegen)) {
                         publish(rec, soot, temp, regen)
@@ -258,9 +265,10 @@ class DpfService : Service() {
     private fun checks(t: Long, live: List<Finding>) {
         val active = live + trend
         // A value back in range: its alert row is closed (kept as history), and the notification it raised goes away
-        notified.removeAll { k -> active.none { it.key == k }.also { gone -> if (gone) nm.cancel(alertId(k)) } } // notifies again if it comes back
+        showing.removeAll { k -> active.none { it.key == k }.also { gone -> if (gone) nm.cancel(alertId(k)) } }
         for (f in db.syncAlerts(t, active)) {
             if (!notified.add(f.key)) continue
+            showing += f.key
             nm.notify(alertId(f.key), Notification.Builder(this, CH_HEALTH)
                 .setSmallIcon(R.drawable.ic_stat_gauge)
                 .setColor(getColor(R.color.primary))

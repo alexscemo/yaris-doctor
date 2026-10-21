@@ -47,7 +47,7 @@ CI (`.github/workflows/build.yml`) runs `gradle test assembleDebug` on every pus
   - **History checks:** `trends()` checks the regen history: interval under 150 km, last 3 regens under 10 min. The service recomputes it at start and whenever a regen closes.
   - **Rules tab:** every `Checker.Rule` carries a `title`, an `about` (condition, threshold, source) and `uses` (the `PIDS` names it reads). The **Rules** tab (`RulesTab`, third chip on the main screen) lists them with their hold time and each input's poll rate from `Poller.pollRate()`; `TREND_RULES` describes the `trends()` checks. A new rule must fill all three, and `ChecksTest` fails if a `uses` name isn't in the table.
   - **Thresholds:** each rule's `about` names its source. "Estimate" marks the ones taken from other Toyota diesels or generic OBD logic, because no 1ND-TV figure was found. Tighten them once real drives show the normal range.
-  - **Alerts:** `Db.syncAlerts()` (table `alert`, schema v5) keeps one open row per active key. It closes the row when the key goes away and returns newly opened keys. The service notifies each of those on the low-importance "Health warnings" channel. When the value recovers, the row is closed (kept as history and synced) and its notification cancelled; it notifies again if it comes back.
+  - **Alerts:** `Db.syncAlerts()` (table `alert`, schema v5) keeps one open row per active key. It closes the row when the key goes away and returns newly opened keys. The service notifies each of those on the low-importance "Health warnings" channel. When the value recovers, the row is closed (kept as history and synced) and its notification cancelled. Each key notifies at most once per drive (`notified`), so a value flapping around its limit doesn't spam; `showing` tracks which notifications are still up.
   - **`diffAlerts()`:** the open/close/update decision is a pure function in `Checks.kt`, tested in `ChecksTest`. `Db.syncAlerts()` only applies it.
   - **When alerts close:** a drive outlives a Bluetooth drop, like a regen does. `checker`, `notified` and the open live alerts live on the service. `run()` resets them, and closes the live alerts, once the ECU has been silent (`lastSeen`) for more than `REGEN_GAP_MS`. So a flaky dongle neither re-notifies a warning nor splits its row. Regen-history alerts stay open while they apply.
   - **Overview:** the status card at the top shows "All good", "Warning" or "Check the car now", with the open alerts only. Recovered ones leave the dashboard.
@@ -108,7 +108,7 @@ CI (`.github/workflows/build.yml`) runs `gradle test assembleDebug` on every pus
 - Defaults (byte 0 = the echoed `61`):
   - soot: byte 19, `A*2` (%)
   - DPF temp: byte 8, `(A*256+B)*0.625` (°C)
-  - regen: byte 16, `A&15`, on when it is 1 (DPFViewer's char 33). Confirmed on the car.
+  - regen: byte 16, `A&15`, on when it is 1 (DPFViewer's char 33). Confirmed on the car: the 21 Oct drive's regen (09:33-09:44, DPF ~600 °C, soot 90 → 10) had it on throughout while byte 11 stayed 0. The ECU also sets it when the engine stops with the ignition on (rpm 0), so `engineStopped()` gates it on the `210C` reply; a one-time `Db.dropStopBlips()` removed the short, zero-distance rows those blips had logged.
 
   Soot and temp are DPFViewer's char offsets 38 and 16; the temp is Exhaust Temperature B1S2. The Techstream capture (`../techstream/NLP130_RUNTIME_RESULTS.md`) confirmed both.
 

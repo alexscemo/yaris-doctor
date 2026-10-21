@@ -26,6 +26,7 @@ object Prefs {
     const val SYNCED_FRAME_ROWID = "synced_frame_rowid"
     const val SYNCED_ALERTS = "synced_alerts"
     const val HUB_FRAMES = "hub_frames"
+    const val STOP_BLIPS_DROPPED = "stop_blips_dropped"
     private const val DEVICE_ID = "device_id"
 
     /** OBD requests per reading, defaulting to the ones DPFViewer found on the owner's Yaris; other years may differ. */

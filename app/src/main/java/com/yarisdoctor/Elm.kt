@@ -161,9 +161,15 @@ private val REGEN = Formula.parse(Prefs.FORMULA_DEFAULTS.getValue(Prefs.PID_REGE
 fun sootOf(p: String, byte: Int = 19, f: Formula = SOOT): Int? = f.eval(p, byte)?.toInt()
 fun tempOf(p: String, byte: Int = 8, f: Formula = TEMP): Int? = f.eval(p, byte)?.toInt()
 /**
- * The 21DF regen bit is also set when the engine stops with the ignition still on (seen on the car: rpm 0, DPF 151 °C),
- * so a regen only counts while the engine turns. [rpmReply] is the 210C reply; unknown rpm trusts the flag.
+ * The 21DF regen bit is also set as the engine stops with the ignition still on (seen on the car: first at 346 rpm while
+ * spinning down, then at 0), so a regen only counts above [RUNNING_RPM]; idle is ~770. [rpmReply] is the 210C reply
+ * (rpm = raw / 4); unknown rpm trusts the flag.
  */
-fun engineStopped(rpmReply: String?) = rpmReply != null && rpmReply.length >= 8 && rpmReply.substring(4, 8) == "0000"
+fun engineStopped(rpmReply: String?): Boolean {
+    val raw = rpmReply?.takeIf { it.length >= 8 }?.substring(4, 8)?.toIntOrNull(16) ?: return false
+    return raw / 4 < RUNNING_RPM
+}
+
+const val RUNNING_RPM = 500
 
 fun regenOf(p: String, byte: Int = 16, f: Formula = REGEN): Boolean? = f.eval(p, byte)?.let { it == 1.0 }

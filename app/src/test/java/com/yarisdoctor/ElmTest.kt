@@ -47,6 +47,8 @@ class ElmTest {
         assertFalse(engineStopped("610C25D6"))
         assertEquals(true, regenOf("61DF" + "08D004FF006400483E001432FFF501"))
         assertTrue(engineStopped("610C0000"))
+        assertTrue(engineStopped("610C0568")) // 346 rpm, spinning down: the 15:33:54 frame of the 21 Oct afternoon drive
+        assertFalse(engineStopped("610C0C08")) // 770 rpm idle
         assertFalse(engineStopped(null))
     }
 

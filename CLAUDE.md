@@ -108,7 +108,7 @@ CI (`.github/workflows/build.yml`) runs `gradle test assembleDebug` on every pus
 - Defaults (byte 0 = the echoed `61`):
   - soot: byte 19, `A*2` (%)
   - DPF temp: byte 8, `(A*256+B)*0.625` (°C)
-  - regen: byte 16, `A&15`, on when it is 1 (DPFViewer's char 33). Confirmed on the car: the 21 Oct drive's regen (09:33-09:44, DPF ~600 °C, soot 90 → 10) had it on throughout while byte 11 stayed 0. The ECU also sets it when the engine stops with the ignition on (rpm 0), so `engineStopped()` gates it on the `210C` reply; a one-time `Db.dropStopBlips()` removed the short, zero-distance rows those blips had logged.
+  - regen: byte 16, `A&15`, on when it is 1 (DPFViewer's char 33). Confirmed on the car: the 21 Oct drive's regen (09:33-09:44, DPF ~600 °C, soot 90 → 10) had it on throughout while byte 11 stayed 0. The ECU also sets it as the engine stops with the ignition on (first seen at 346 rpm spinning down, then 0), so `engineStopped()` ignores it below `RUNNING_RPM` (500; idle is ~770) on the `210C` reply. `Db.dropStopBlips()` deletes closed regens under a minute with no distance, at every service start and whenever a regen closes, so a blip that slips through never counts in `trends()`.
 
   Soot and temp are DPFViewer's char offsets 38 and 16; the temp is Exhaust Temperature B1S2. The Techstream capture (`../techstream/NLP130_RUNTIME_RESULTS.md`) confirmed both.
 

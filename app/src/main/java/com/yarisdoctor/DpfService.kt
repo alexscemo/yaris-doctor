@@ -84,11 +84,8 @@ class DpfService : Service() {
         Prefs.migrate(this)
         // A previous process killed mid-regen never closed its row; it would show "Ongoing" forever
         Db.real(this).closeOrphanRegens()
-        // Engine-stop blips logged as regens before engineStopped() existed: under a minute and no distance. Once only.
-        if (!Prefs.bool(this, Prefs.STOP_BLIPS_DROPPED, false)) {
-            Db.real(this).dropStopBlips()
-            Prefs.put(this, Prefs.STOP_BLIPS_DROPPED, true)
-        }
+        // Engine-stop blips (under a minute, no distance) are not burns; every start, so one that slips past engineStopped() goes too
+        Db.real(this).dropStopBlips()
         // Live alerts left open by a killed process end now; regen-history ones open if they apply
         trend = trends(db.regens())
         checks(System.currentTimeMillis(), emptyList())
@@ -241,7 +238,10 @@ class DpfService : Service() {
     private fun publish(rec: Recorder, soot: Int?, temp: Int?, regen: Boolean?) {
         val was = rec.inRegen
         rec.record(System.currentTimeMillis(), soot, temp, regen, odoM)
-        if (was && !rec.inRegen) trend = trends(db.regens()) // a regen just finished: interval and length are known
+        if (was && !rec.inRegen) {
+            db.dropStopBlips() // a blip that got past engineStopped() must not count as a regen in the interval checks
+            trend = trends(db.regens()) // a regen just finished: interval and length are known
+        }
         if (rec.inRegen && Prefs.alerts(this)) nm.notify(ID_REGEN, regenNotification(rec.regenStart, rec.regenSootStart, soot, temp))
         else nm.cancel(ID_REGEN)
         edge.show(rec.inRegen && Prefs.edge(this))

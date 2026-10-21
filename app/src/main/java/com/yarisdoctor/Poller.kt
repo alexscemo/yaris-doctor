@@ -66,9 +66,11 @@ class Poller(private val send: (String) -> String?) {
         /** Every cycle: drive state, DPF, the temperatures and pressures the checks watch. */
         val FAST = listOf("210C", "210D", "2105", "210B", "2110", "2123", "21DD", "21DF", "21EF", "21F1",
             // EGR target (2C) and actual position (EA) are compared by egr_tracking: read in the same cycle
-            "212C", "21EA")
+            "212C", "21EA",
+            // MAF / estimated MAF ratio, read with MAF itself so the two line up while the ratio's meaning is worked out
+            "21A3")
         /** Two per cycle, in turn. */
-        val MEDIUM = listOf("2104", "210F", "2111", "2124", "2134", "2142", "2149", "214A", "214C", "21A3", "21AD", "21DA", "21DE", "21E6", "21EE")
+        val MEDIUM = listOf("2104", "210F", "2111", "2124", "2134", "2142", "2149", "214A", "214C", "21AD", "21DA", "21DE", "21E6", "21EE")
         /** Counters and learned values: once a session, then every [SLOW_MS]. */
         val SLOW = listOf("211F", "2121", "2130", "2131", "2133", "214D", "214E", "21E1")
         const val SLOW_MS = 5 * 60_000L

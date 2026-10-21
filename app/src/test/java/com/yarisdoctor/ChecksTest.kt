@@ -136,7 +136,7 @@ class ChecksTest {
             for (name in r.uses) assertTrue("${r.key} reads unknown value $name", PIDS.any { it.name == name })
         }
         assertEquals("every cycle", Poller.pollRate("0C"))
-        assertEquals("every 8 cycles", Poller.pollRate("AD"))
+        assertEquals("every 7 cycles", Poller.pollRate("AD"))
         assertEquals("every 5 min", Poller.pollRate("E1"))
     }
 }

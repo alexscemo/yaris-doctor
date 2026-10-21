@@ -135,8 +135,8 @@ class ChecksTest {
             assertTrue(r.key, r.title.isNotBlank() && r.about.isNotBlank() && r.uses.isNotEmpty())
             for (name in r.uses) assertTrue("${r.key} reads unknown value $name", PIDS.any { it.name == name })
         }
-        assertEquals("every 2 s", Poller.pollRate("0C"))
-        assertEquals("about every 16 s", Poller.pollRate("AD"))
+        assertEquals("every cycle", Poller.pollRate("0C"))
+        assertEquals("every 8 cycles", Poller.pollRate("AD"))
         assertEquals("every 5 min", Poller.pollRate("E1"))
     }
 }

@@ -15,9 +15,9 @@ class RulesTab(private val a: Activity, private val ui: Ui) {
         addView(ui.text(Type.DISPLAY_MD, R.color.ink, "Each warning has a rule").apply { gravity = Gravity.CENTER_HORIZONTAL; setPadding(0, ui.px(10), 0, ui.px(12)) })
         addView(ui.text(Type.BODY_SM, R.color.muted,
             "The phone checks the engine values while you drive. A rule has to stay true for its hold time before it warns, so " +
-                "one odd reading never does. Values are read in tiers: key ones every ${Poller.CYCLE_MS / 1000} s " +
-                "(${Poller.REGEN_CYCLE_MS / 1000} s during a regen), the rest about every ${Poller.MEDIUM_MS / 1000} s, counters every " +
-                "${Poller.SLOW_MS / 60_000} min. A slow Bluetooth link stretches every tier."))
+                "one odd reading never does. Requests run back to back, as fast as the dongle answers: key values every cycle, the " +
+                "rest every ${Poller.MEDIUM_CYCLES} cycles, counters every ${Poller.SLOW_MS / 60_000} min. The All data tab shows how " +
+                "often each value actually updates."))
         section("While driving · ${Checker.RULES.size} rules")
         Checker.RULES.forEachIndexed { i, r ->
             if (i > 0) addView(ui.divider())

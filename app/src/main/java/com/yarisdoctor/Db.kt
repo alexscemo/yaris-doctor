@@ -110,15 +110,34 @@ class Db private constructor(ctx: Context, name: String?) : SQLiteOpenHelper(ctx
     }.toMap()
 
     /** [lid]'s payloads over the last [spanMs] it was read, oldest first. */
-    fun frameSeries(lid: String, spanMs: Long): List<Pair<Long, String>> =
-        readableDatabase.rawQuery(
-            "SELECT t, hex FROM frame WHERE lid = ?1 AND t >= (SELECT MAX(t) FROM frame WHERE lid = ?1) - ?2 ORDER BY t",
-            arrayOf(lid, spanMs.toString()),
-        ).use {
+    /**
+     * Start of the last trip: the newest engine-speed frame (read every cycle) with none in the [TRIP_GAP_MS] before it.
+     * Walks the (lid, t) index back from the newest frame, so it costs one probe per frame of the trip.
+     */
+    fun tripStart(): Long? = readableDatabase.rawQuery(
+        "SELECT t FROM frame f WHERE lid = '0C' AND NOT EXISTS (SELECT 1 FROM frame g WHERE g.lid = '0C' AND g.t < f.t AND g.t >= f.t - ?) ORDER BY t DESC LIMIT 1",
+        arrayOf(TRIP_GAP_MS.toString()),
+    ).use { if (it.moveToFirst()) it.getLong(0) else null }
+
+    /** [lid]'s frames from [from] on, oldest first. */
+    fun frameSeries(lid: String, from: Long): List<Pair<Long, String>> =
+        readableDatabase.rawQuery("SELECT t, hex FROM frame WHERE lid = ? AND t >= ? ORDER BY t", arrayOf(lid, from.toString())).use {
             val out = ArrayList<Pair<Long, String>>(it.count)
             while (it.moveToNext()) out += it.getLong(0) to it.getString(1)
             out
         }
+
+    /** Average time between [lid]'s last 10 frames since [from] (the trip start), i.e. how often it is read; null with fewer than 2. */
+    fun readEvery(lid: String, from: Long): Long? = readableDatabase.rawQuery(
+        "SELECT (MAX(t) - MIN(t)) / (COUNT(*) - 1) FROM (SELECT t FROM frame WHERE lid = ? AND t >= ? ORDER BY t DESC LIMIT 10) HAVING COUNT(*) > 1",
+        arrayOf(lid, from.toString()),
+    ).use { if (it.moveToFirst()) it.getLong(0) else null }
+
+    /** A consistent copy of the whole database in [file] (replaced), taken while the service may still be writing. */
+    fun exportTo(file: java.io.File) {
+        file.delete() // VACUUM INTO refuses an existing file
+        writableDatabase.execSQL("VACUUM INTO ?", arrayOf(file.path))
+    }
 
     /** Keeps the first frame per request per minute in [[from], [to]): old drives stay chartable at a fraction of the size. */
     fun thinFrames(from: Long, to: Long) = writableDatabase.execSQL(
@@ -320,6 +339,8 @@ class Db private constructor(ctx: Context, name: String?) : SQLiteOpenHelper(ctx
     companion object {
         /** Regens from two phones (dongle hand-over mid-burn) closer than this are the same burn; matches the hub. */
         const val MERGE_SLACK_MS = 2 * 60_000L
+        /** ECU silent longer than this ends a trip; the service's REGEN_GAP_MS ends a drive at the same point. */
+        const val TRIP_GAP_MS = 2 * 60_000L
         private const val PEER_CLOCK_SLACK_MS = 5 * 60_000L
         const val METRES_PER_MILE = 1609.344
         private const val SAMPLE_T_INDEX = "CREATE INDEX IF NOT EXISTS sample_t ON sample(t)"

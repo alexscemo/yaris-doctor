@@ -7,7 +7,9 @@ import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.RectF
+import android.view.GestureDetector
 import android.view.MotionEvent
+import android.view.ScaleGestureDetector
 import android.view.View
 import android.view.animation.DecelerateInterpolator
 import kotlin.math.abs
@@ -18,7 +20,8 @@ import kotlin.math.pow
 
 /**
  * Single-series chart: a 2dp line on a time axis, or columns by index. The top row reads out the
- * latest point, or the touched one (tap/drag horizontally to inspect).
+ * latest point, or the touched one (tap/drag horizontally to inspect). Pinch zooms the x axis, two fingers pan,
+ * double-tap resets.
  */
 class ChartView(ctx: Context, private val columns: Boolean, private val p: Colors) : View(ctx) {
 
@@ -36,6 +39,35 @@ class ChartView(ctx: Context, private val columns: Boolean, private val p: Color
     private var yMax = 1f
     private var reveal = 1f     // share of the plot drawn, left to right
     private var revealed = false
+    // Visible share of the x range, 0..1: a window kept as fractions so new data on the right stays in view when vHi = 1
+    private var vLo = 0f
+    private var vHi = 1f
+    private var pinching = false
+
+    private val scaler = ScaleGestureDetector(ctx, object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
+        private var lastFocus = 0f
+        override fun onScaleBegin(g: ScaleGestureDetector): Boolean {
+            pinching = true; lastFocus = g.focusX
+            parent.requestDisallowInterceptTouchEvent(true)
+            return true
+        }
+
+        override fun onScale(g: ScaleGestureDetector): Boolean {
+            val span = vHi - vLo
+            val at = vLo + span * ((g.focusX - left) / (right - left)).coerceIn(0f, 1f) // the fraction under the fingers stays put
+            val next = (span / g.scaleFactor).coerceIn(MIN_SPAN, 1f)
+            val pan = (lastFocus - g.focusX) / (right - left) * next
+            lastFocus = g.focusX
+            var lo = at - (at - vLo) * next / span + pan
+            lo = lo.coerceIn(0f, 1f - next)
+            vLo = lo; vHi = lo + next
+            invalidate()
+            return true
+        }
+    })
+    private val taps = GestureDetector(ctx, object : GestureDetector.SimpleOnGestureListener() {
+        override fun onDoubleTap(e: MotionEvent): Boolean { vLo = 0f; vHi = 1f; sel = -1; selX = null; invalidate(); return true }
+    })
 
     private val d = resources.displayMetrics.density
     private val line = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -88,15 +120,19 @@ class ChartView(ctx: Context, private val columns: Boolean, private val p: Color
         c.drawLine(left, bottom, right, bottom, axis)
 
         c.save()
-        c.clipRect(0f, 0f, left + (right - left + 8 * d) * reveal, height.toFloat())
+        c.clipRect(left - 8 * d, 0f, minOf(right + 8 * d, left + (right - left + 8 * d) * reveal), height.toFloat())
         if (columns) drawColumns(c) else drawLine(c)
         c.restore()
 
-        val first = axisLabel(xs.first())
-        val last = axisLabel(xs.last())
-        c.drawText(first, left, height - 4 * d, muted)
-        if (xs.size > 1) c.drawText(last, right - muted.measureText(last), height - 4 * d, muted)
-        val shown = if (sel >= 0) sel else ys.lastIndex
+        val seen = visible()
+        if (!seen.isEmpty()) {
+            val first = axisLabel(xs[seen.first])
+            val last = axisLabel(xs[seen.last])
+            c.drawText(first, left, height - 4 * d, muted)
+            if (seen.last > seen.first) c.drawText(last, right - muted.measureText(last), height - 4 * d, muted)
+        }
+        if (vHi - vLo < 1f) "×%.0f · double-tap resets".format(1f / (vHi - vLo)).let { c.drawText(it, (left + right - muted.measureText(it)) / 2, height - 4 * d, muted) } // between the axis ends
+        val shown = if (sel >= 0) sel else seen.last.coerceAtLeast(0)
         c.drawText(readoutOf(shown), left, 16 * d, readout)
     }
 
@@ -104,7 +140,7 @@ class ChartView(ctx: Context, private val columns: Boolean, private val p: Color
         path.reset()
         for (i in ys.indices) if (i == 0) path.moveTo(xOf(i), yOf(ys[i])) else path.lineTo(xOf(i), yOf(ys[i]))
         c.drawPath(path, line)
-        val i = if (sel >= 0) sel else ys.lastIndex
+        val i = if (sel >= 0) sel else visible().last.coerceAtLeast(0)
         if (sel >= 0) c.drawLine(xOf(i), top, xOf(i), bottom, axis)
         // 8dp marker with a 2dp surface ring
         c.drawCircle(xOf(i), yOf(ys[i]), 6 * d, ring)
@@ -112,7 +148,7 @@ class ChartView(ctx: Context, private val columns: Boolean, private val p: Color
     }
 
     private fun drawColumns(c: Canvas) {
-        val slot = (right - left) / ys.size
+        val slot = (right - left) / ys.size / (vHi - vLo)
         val w = min(24 * d, slot - 2 * d)
         for (i in ys.indices) {
             val h = bottom - yOf(ys[i])
@@ -127,10 +163,20 @@ class ChartView(ctx: Context, private val columns: Boolean, private val p: Color
         fill.alpha = 255
     }
 
-    private fun xOf(i: Int): Float = when {
-        columns -> left + (right - left) / ys.size * (i + 0.5f)
-        xs.size == 1 || xs.last() == xs.first() -> (left + right) / 2
-        else -> left + (right - left) * (xs[i] - xs.first()) / (xs.last() - xs.first()).toFloat()
+    /** Where point [i] sits along the whole x range, 0..1. */
+    private fun frac(i: Int): Float = when {
+        columns -> (i + 0.5f) / ys.size
+        xs.size == 1 || xs.last() == xs.first() -> 0.5f
+        else -> (xs[i] - xs.first()) / (xs.last() - xs.first()).toFloat()
+    }
+
+    private fun xOf(i: Int): Float = left + (right - left) * (frac(i) - vLo) / (vHi - vLo)
+
+    /** Indices inside the zoom window (empty only when there is no data). */
+    private fun visible(): IntRange {
+        val lo = ys.indices.firstOrNull { frac(it) >= vLo } ?: return IntRange.EMPTY
+        val hi = ys.indices.lastOrNull { frac(it) <= vHi } ?: return IntRange.EMPTY
+        return if (hi >= lo) lo..hi else IntRange.EMPTY
     }
 
     private fun yOf(v: Float) = bottom - (bottom - top) * (v / yMax)
@@ -138,10 +184,12 @@ class ChartView(ctx: Context, private val columns: Boolean, private val p: Color
     @SuppressLint("ClickableViewAccessibility") // readout-only; values are also in contentDescription and the history list
     override fun onTouchEvent(e: MotionEvent): Boolean {
         if (ys.isEmpty()) return false
+        scaler.onTouchEvent(e)
+        taps.onTouchEvent(e)
         when (e.actionMasked) {
-            MotionEvent.ACTION_DOWN -> { downX = e.x; downY = e.y; select(e.x) }
+            MotionEvent.ACTION_DOWN -> { pinching = false; downX = e.x; downY = e.y; select(e.x) }
             // Claim the gesture only when it is horizontal, so vertical drags still scroll the page
-            MotionEvent.ACTION_MOVE -> if (abs(e.x - downX) > abs(e.y - downY)) {
+            MotionEvent.ACTION_MOVE -> if (!pinching && e.pointerCount == 1 && abs(e.x - downX) > abs(e.y - downY)) {
                 parent.requestDisallowInterceptTouchEvent(true)
                 select(e.x)
             }
@@ -150,10 +198,12 @@ class ChartView(ctx: Context, private val columns: Boolean, private val p: Color
     }
 
     private fun select(x: Float) {
-        sel = ys.indices.minBy { abs(xOf(it) - x) }
+        sel = visible().takeIf { !it.isEmpty() }?.minBy { abs(xOf(it) - x) } ?: return
         selX = xs[sel]
         invalidate()
     }
+
+    private companion object { const val MIN_SPAN = 0.01f } // ×100 at most
 
     private fun fmtTick(v: Float) = if (yMax < 10) "%.1f".format(v) else "%.0f".format(v)
 

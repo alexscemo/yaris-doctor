@@ -52,7 +52,7 @@ class DpfService : Service() {
     // Outlives a session, so a regen survives a dropped Bluetooth link (see run())
     private val rec by lazy { Recorder(db) }
     private var trend = emptyList<Finding>() // regen-history findings, redone at start and after each regen
-    private val notified = HashSet<String>()  // alert keys already notified this drive
+    private val notified = HashSet<String>()  // alert keys notified and still active
     // A drive outlives a Bluetooth drop shorter than REGEN_GAP_MS, like a regen: the checker and live alerts carry over
     private var checker = Checker()
     private var lastSeen = 0L // last cycle the ECU answered
@@ -116,8 +116,7 @@ class DpfService : Service() {
             if (lastSeen > 0 && System.currentTimeMillis() - lastSeen > REGEN_GAP_MS) {
                 lastSeen = 0
                 checker = Checker()
-                notified.clear()
-                checks(System.currentTimeMillis(), emptyList())
+                checks(System.currentTimeMillis(), emptyList()) // closes the drive's live alerts and cancels their notifications
             }
             try {
                 session()
@@ -190,7 +189,8 @@ class DpfService : Service() {
                         lastSample = t
                     }
                     checks(t, checker.check(t, replies, odoM, rec.inRegen))
-                    Thread.sleep(((if (rec.inRegen) Poller.REGEN_CYCLE_MS else Poller.CYCLE_MS) - (System.currentTimeMillis() - t)).coerceAtLeast(0))
+                    // No pause: the next cycle starts at once, so the pace is set by how fast this dongle answers, regen or not
+
                 }
             } finally {
                 // The regen row and live alerts stay open: run() closes them unless the link comes back within REGEN_GAP_MS
@@ -254,11 +254,14 @@ class DpfService : Service() {
         Prefs.put(this, Prefs.THINNED_TO, to)
     }
 
-    /** Stores [live] plus the regen-history findings as alerts; each new one is notified once per drive. */
+    /** Stores [live] plus the regen-history findings as alerts; each is notified when it opens and the notification is cancelled when it recovers. */
     private fun checks(t: Long, live: List<Finding>) {
-        for (f in db.syncAlerts(t, live + trend)) {
+        val active = live + trend
+        // A value back in range: its alert row is closed (kept as history), and the notification it raised goes away
+        notified.removeAll { k -> active.none { it.key == k }.also { gone -> if (gone) nm.cancel(alertId(k)) } } // notifies again if it comes back
+        for (f in db.syncAlerts(t, active)) {
             if (!notified.add(f.key)) continue
-            nm.notify(ID_ALERT + (f.key.hashCode() and 0xFFFF), Notification.Builder(this, CH_HEALTH)
+            nm.notify(alertId(f.key), Notification.Builder(this, CH_HEALTH)
                 .setSmallIcon(R.drawable.ic_stat_gauge)
                 .setColor(getColor(R.color.primary))
                 .setContentTitle(if (f.level == CRIT) "Check the car now" else "Car warning")
@@ -269,6 +272,8 @@ class DpfService : Service() {
                 .build())
         }
     }
+
+    private fun alertId(key: String) = ID_ALERT + (key.hashCode() and 0xFFFF)
 
     private fun startGps() {
         if (checkSelfPermission(ACCESS_FINE_LOCATION) != PERMISSION_GRANTED) return

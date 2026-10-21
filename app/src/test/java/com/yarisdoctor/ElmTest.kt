@@ -31,10 +31,10 @@ class ElmTest {
     }
 
     @Test fun decodersUseDpfViewerOffsets() {
-        val p = "0".repeat(16) + "0190" + "00" + "02" + "0".repeat(14) + "2A"
+        val p = "0".repeat(16) + "0190" + "0".repeat(12) + "F1" + "0000" + "2A"
         assertEquals(40, p.length)
         assertEquals(250, tempOf(p))   // 0x0190 * 0.625
-        assertEquals(true, regenOf(p)) // byte 11 = DPF status 2 (Operate)
+        assertEquals(true, regenOf(p)) // char 33 (byte 16) low nibble = 1, as in DPFViewer
         assertEquals(84, sootOf(p))    // 0x2A * 2
         assertNull(sootOf("61DD"))
     }
@@ -53,11 +53,11 @@ class ElmTest {
         assertEquals("A*2", formulaText(" ", "A*2"))
         assertNull(formulaText("A*", "A*2"))
         assertEquals(41, sootOf(p, 2, f("A-1")))
-        assertEquals(false, regenOf(p, 5)) // default A-1 = 18, not 1
+        assertEquals(false, regenOf(p, 5)) // default A&15 = 3, not 1
     }
 
     @Test fun decodersReadOtherBytePositions() {
-        val p = "61DD" + "2A" + "0190" + "02" // bytes 0-1 echo, 2 = soot, 3-4 = temp, 5 = regen (2 = Operate)
+        val p = "61DD" + "2A" + "0190" + "21" // bytes 0-1 echo, 2 = soot, 3-4 = temp, 5 = regen (low nibble 1)
         assertEquals(84, sootOf(p, 2))
         assertEquals(250, tempOf(p, 3))
         assertEquals(true, regenOf(p, 5))

@@ -32,20 +32,17 @@ object Prefs {
     val PID_DEFAULTS = mapOf(PID_SOOT to "21DD", PID_TEMP to "21F1", PID_REGEN to "21DF")
 
     /** Byte position of each value in its reply (see sootOf/tempOf/regenOf), keyed like the codes: "<pid key>_byte". */
-    val BYTE_DEFAULTS = mapOf(PID_SOOT to 19, PID_TEMP to 8, PID_REGEN to 11)
+    val BYTE_DEFAULTS = mapOf(PID_SOOT to 19, PID_TEMP to 8, PID_REGEN to 16)
+
+    /** Formula per reading (see Formula): A = byte at the position, B the next. Regen is DPFViewer's, confirmed on the car. */
+    val FORMULA_DEFAULTS = mapOf(PID_SOOT to "A*2", PID_TEMP to "(A*256+B)*0.625", PID_REGEN to "A&15")
 
     /**
-     * Formula per reading (see Formula): A = byte at the position, B the next. Regen: "DPNR/DPF Status Reju(PM)" (0 Standby,
-     * 1 Ready, 2 Operate, 3 Compl, from the Techstream capture), so A-1 is 1 exactly while it burns.
-     */
-    val FORMULA_DEFAULTS = mapOf(PID_SOOT to "A*2", PID_TEMP to "(A*256+B)*0.625", PID_REGEN to "A-1")
-
-    /**
-     * The regen default used to be DPFViewer's byte 16, A&15, which the Techstream capture showed is "VN Turbo Operation
-     * Prohibit". Settings saves every field, so installs that saved that old default still hold it: move them to the new one.
+     * v0.9-era builds defaulted the regen flag to byte 11, A-1 ("DPNR/DPF Status Reju(PM)"), which never fired on the car.
+     * Settings saves every field, so installs that saved that default still hold it: move them back to DPFViewer's.
      */
     fun migrate(c: Context) {
-        if (byte(c, PID_REGEN) == 16 && formula(c, PID_REGEN) == "A&15") sp(c).edit().remove("${PID_REGEN}_byte").remove("${PID_REGEN}_formula").apply()
+        if (byte(c, PID_REGEN) == 11 && formula(c, PID_REGEN) == "A-1") sp(c).edit().remove("${PID_REGEN}_byte").remove("${PID_REGEN}_formula").apply()
     }
 
     // DPFViewer's dongle, kept as the default so existing installs keep connecting

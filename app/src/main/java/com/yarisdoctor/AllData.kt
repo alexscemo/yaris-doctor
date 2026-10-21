@@ -16,13 +16,14 @@ import com.yarisdoctor.Ui.Type
 import java.text.SimpleDateFormat
 import java.util.Locale
 
-/** The "All data" tab: every value in [PIDS], filtered by category or name; tap one for its last half hour. */
+/** The "All data" tab: every value in [PIDS], filtered by category or name; tap one for its chart over the last trip. */
 class AllData(private val a: Activity, private val ui: Ui) {
 
     private var category: String? = null
     private var query = ""
     private var open: Pid? = null
     private val values = HashMap<String, TextView>() // pid id → value text of the rows on screen
+    private val rates = HashMap<String, TextView>()  // pid id → "every 0.8 s" under its name
     private val last = HashMap<String, Double>()       // pid id → value at the previous refresh, to flash changes
     private val rows = ui.column()
     private val header = ui.text(Type.BODY_SM, R.color.muted)
@@ -72,6 +73,7 @@ class AllData(private val a: Activity, private val ui: Ui) {
     private fun render() {
         rows.removeAllViews()
         values.clear()
+        rates.clear()
         val shown = PIDS.filter { (category == null || it.category == category) && (query.isEmpty() || it.name.contains(query, ignoreCase = true)) }
         if (shown.isEmpty()) rows.addView(ui.text(Type.BODY_MD, R.color.muted, "No value matches.").apply { setPadding(0, ui.px(16), 0, 0) })
         shown.forEachIndexed { i, p ->
@@ -82,6 +84,8 @@ class AllData(private val a: Activity, private val ui: Ui) {
                 background = GradientDrawable().apply { cornerRadius = ui.px(999).toFloat(); setColor(Color.TRANSPARENT) }
             }
             values[p.id] = value
+            val rate = ui.text(Type.CAPTION, R.color.muted, "").apply { setPadding(0, ui.px(2), 0, 0) }
+            rates[p.id] = rate
             rows.addView(LinearLayout(a).apply {
                 gravity = Gravity.CENTER_VERTICAL
                 minimumHeight = ui.px(64)
@@ -92,11 +96,12 @@ class AllData(private val a: Activity, private val ui: Ui) {
                 addView(ui.column(
                     ui.eyebrow("21 ${p.lid} · ${p.category}"),
                     ui.text(Type.BODY_MD, R.color.ink, p.name).apply { setPadding(0, ui.px(4), 0, 0) },
+                    rate,
                 ), LinearLayout.LayoutParams(0, -2, 1f))
                 addView(value, LinearLayout.LayoutParams(-2, -2).apply { marginStart = ui.px(12) })
             })
             if (p === open) rows.addView(ui.card(R.color.surface_card, 16,
-                ui.eyebrow("Last 30 minutes it was read").apply { setPadding(0, 0, 0, ui.px(10)) },
+                ui.eyebrow("Last trip · pinch to zoom").apply { setPadding(0, 0, 0, ui.px(10)) },
             ).apply {
                 (chart.parent as? LinearLayout)?.removeView(chart)
                 addView(chart, LinearLayout.LayoutParams(-1, ui.px(160)))
@@ -112,10 +117,14 @@ class AllData(private val a: Activity, private val ui: Ui) {
         val newest = latest.values.maxOfOrNull { it.first }
         header.text = when {
             newest == null -> "No live data yet. Values appear here after a drive with the dongle connected."
-            System.currentTimeMillis() - newest <= 30_000 -> "Live from the engine ECU · ${PIDS.size} values · tap a row for its last 30 minutes"
+            System.currentTimeMillis() - newest <= 30_000 -> "Live from the engine ECU · ${PIDS.size} values · tap a row for the last trip"
             else -> "From the last drive, ${fmt(newest)}"
         }
+        // How often each request comes back, measured from its own frames: it follows whatever pace the dongle manages
+        val trip = db.tripStart() ?: 0L
+        val every = rates.keys.mapNotNull { id -> PIDS.firstOrNull { it.id == id }?.lid }.distinct().associateWith { db.readEvery(it, trip) }
         for (p in PIDS) {
+            rates[p.id]?.text = every[p.lid]?.let { "Updates every " + interval(it) } ?: ""
             val v = latest[p.lid]?.let { p.decode(it.second) }
             val view = values[p.id]
             view?.text = v?.let(p::format) ?: "—"
@@ -124,7 +133,8 @@ class AllData(private val a: Activity, private val ui: Ui) {
             if (view != null && before != null && v != before) flash(view, v > before)
         }
         open?.let { p ->
-            val series = db.frameSeries(p.lid, 30 * 60_000L).mapNotNull { (t, hex) -> p.decode(hex)?.let { t to it } }
+            // Whole last trip, however short; a lid read only once a trip still shows its point(s)
+            val series = db.frameSeries(p.lid, trip).mapNotNull { (t, hex) -> p.decode(hex)?.let { t to it } }
             chart.set(
                 series.map { it.first }.toLongArray(), series.map { it.second.toFloat() }.toFloatArray(),
                 { i -> "${time(series[i].first)} · ${p.format(series[i].second)}" },
@@ -142,6 +152,12 @@ class AllData(private val a: Activity, private val ui: Ui) {
             addUpdateListener { bg.setColor(it.animatedValue as Int) }
             start()
         }
+    }
+
+    private fun interval(ms: Long) = when {
+        ms < 10_000 -> "%.1f s".format(ms / 1000.0)
+        ms < 90_000 -> "${ms / 1000} s"
+        else -> "${(ms + 30_000) / 60_000} min"
     }
 
     private fun fmt(t: Long) = SimpleDateFormat("EEE d MMM, HH:mm", Locale.getDefault()).format(t)

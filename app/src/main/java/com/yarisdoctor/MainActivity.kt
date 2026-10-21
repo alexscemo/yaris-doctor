@@ -282,7 +282,7 @@ class MainActivity : Activity() {
             { i -> "${fmt(withGap[i].start)} · %.0f $unit · ${duration(withGap[i])}".format(withGap[i].gapM!! / perUnit) }, ::fmtDay,
         )
 
-        val alerts = db.alerts(now - 7 * DAY_MS)
+        val alerts = db.alerts(now) // open ones only: a recovered warning stays stored (and on the hub) but leaves the dashboard
         val alertsKey = alerts.joinToString("|") { "${it.key}${it.text}${it.end}" }
         if (alertsKey != healthKey) {
             healthKey = alertsKey
@@ -329,7 +329,6 @@ class MainActivity : Activity() {
     private fun renderHealth(alerts: List<Db.Alert>) {
         health.removeAllViews()
         val open = alerts.filter { it.end == null }
-        val earlier = alerts.filter { it.end != null }
         val level = open.maxOfOrNull { it.level } ?: 0
         val (title, statusColor) = when (level) {
             CRIT -> "Check the car now" to R.color.status_crit
@@ -338,11 +337,8 @@ class MainActivity : Activity() {
         }
         health.addView(ui.eyebrow("Health"))
         health.addView(ui.text(Type.HERO, R.color.ink, ui.signal(title, statusColor).first).apply { setPadding(0, ui.px(10), 0, 0) })
-        val summary = (if (open.isEmpty()) "No warnings on this drive." else "") +
-            (if (earlier.isEmpty()) "" else (if (open.isEmpty()) " " else "") + "${earlier.size} seen in the last 7 days.")
-        if (summary.isNotBlank()) health.addView(ui.text(Type.BODY_MD, R.color.body, summary).apply { setPadding(0, ui.px(14), ui.px(40), 0) })
+        if (open.isEmpty()) health.addView(ui.text(Type.BODY_MD, R.color.body, "No warnings right now.").apply { setPadding(0, ui.px(14), ui.px(40), 0) })
         for (a in open) health.addView(alertRow(a, if (a.level == CRIT) R.color.status_crit else R.color.status_warn, R.color.ink))
-        for (a in earlier.take(3)) health.addView(alertRow(a, R.color.muted_soft, R.color.muted))
         health.addView(ui.text(Type.CAPTION, R.color.primary, SpannableString("SEE THE RULES  ↗").apply { setSpan(UnderlineSpan(), 0, 13, 0) }).apply {
             minHeight = ui.px(48)
             gravity = Gravity.CENTER_VERTICAL

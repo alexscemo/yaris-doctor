@@ -160,4 +160,4 @@ private val REGEN = Formula.parse(Prefs.FORMULA_DEFAULTS.getValue(Prefs.PID_REGE
 
 fun sootOf(p: String, byte: Int = 19, f: Formula = SOOT): Int? = f.eval(p, byte)?.toInt()
 fun tempOf(p: String, byte: Int = 8, f: Formula = TEMP): Int? = f.eval(p, byte)?.toInt()
-fun regenOf(p: String, byte: Int = 11, f: Formula = REGEN): Boolean? = f.eval(p, byte)?.let { it == 1.0 }
+fun regenOf(p: String, byte: Int = 16, f: Formula = REGEN): Boolean? = f.eval(p, byte)?.let { it == 1.0 }

@@ -84,6 +84,8 @@ class SettingsActivity : Activity() {
                 },
             ))
             addView(syncBlock(), LinearLayout.LayoutParams(-1, -2).apply { topMargin = ui.px(12) })
+            addView(section("Your data"))
+            addView(group(row("Export database", "Saves every reading, regen, engine frame and warning to Downloads as a SQLite file") { export() }))
             addView(section("Developer"))
             addView(group(
                 toggle("Debug mode", "Simulated dongle with random data, for testing without the car. Nothing is saved, and it turns off when the app is closed or the phone restarts.", Prefs.debug) {
@@ -317,6 +319,35 @@ class SettingsActivity : Activity() {
             setOnCheckedChangeListener { _, checked -> onChange(checked) }
         }
         return row(title, sub, sw) { sw.toggle() }
+    }
+
+    /** Snapshot of the real log (never Debug data) into Downloads; MediaStore needs no storage permission on Android 10+. */
+    private fun export() {
+        toast("Exporting…")
+        Thread {
+            val result = try {
+                val tmp = java.io.File(cacheDir, "export.db")
+                Db.real(this).exportTo(tmp)
+                val name = "yaris-doctor-" + java.text.SimpleDateFormat("yyyyMMdd-HHmm", java.util.Locale.ROOT).format(System.currentTimeMillis()) + ".db"
+                val values = android.content.ContentValues().apply {
+                    put(android.provider.MediaStore.Downloads.DISPLAY_NAME, name)
+                    put(android.provider.MediaStore.Downloads.MIME_TYPE, "application/vnd.sqlite3")
+                }
+                val uri = contentResolver.insert(android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI, values) ?: error("Downloads refused the file")
+                try {
+                    contentResolver.openOutputStream(uri)!!.use { out -> tmp.inputStream().use { it.copyTo(out) } }
+                } catch (e: Exception) {
+                    contentResolver.delete(uri, null, null) // no half-written file left in Downloads
+                    throw e
+                } finally {
+                    tmp.delete()
+                }
+                "Saved to Downloads as $name"
+            } catch (e: Exception) {
+                "Export failed: ${e.message ?: e.javaClass.simpleName}"
+            }
+            runOnUiThread { toast(result) }
+        }.start()
     }
 
     private fun toast(s: String) = Toast.makeText(this, s, Toast.LENGTH_LONG).show()

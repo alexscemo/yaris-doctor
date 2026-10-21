@@ -55,6 +55,19 @@ class ChecksTest {
         assertEquals(setOf("dtc"), keys(c.check(600_000, replies(warm), 0.0, false)))
     }
 
+    @Test fun railPressureNeedsHalfAMinuteOffTarget() {
+        // 25 MPa at the captured idle against a 59 MPa target: a pedal transient for 20 s is normal, half a minute is not
+        val off = replies(Triple("DD", 9, 0x17), Triple("DD", 10, 0x0C))
+        assertTrue(firesAfter("rail_pressure", 30_000, off))
+    }
+
+    @Test fun mafLowOnlyCountsWithTheEgrClosed() {
+        val revs = arrayOf(Triple("0C", 0, 0x1F), Triple("0C", 1, 0x40)) // 2000 rpm
+        assertTrue(firesAfter("maf_low", 30_000, replies(*revs, Triple("EA", 2, 0), Triple("A3", 6, 70))))  // EGR shut, 0.70
+        assertTrue(!firesAfter("maf_low", 30_000, replies(*revs, Triple("EA", 2, 0), Triple("A3", 6, 92)))) // healthy 0.92
+        assertTrue(!firesAfter("maf_low", 30_000, replies(*revs, Triple("A3", 6, 60))))                     // EGR open: dilution, not a fault
+    }
+
     @Test fun egrAndActuatorsOffTarget() {
         assertTrue(firesAfter("egr_tracking", 15_000, replies(Triple("EA", 2, 230))))              // 90 % against 55 %
         assertTrue(firesAfter("throttle_tracking", 10_000, replies(Triple("DD", 2, 0x50))))        // 80 % against 41 %

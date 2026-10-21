@@ -89,10 +89,15 @@ class Checker {
             Rule("exhaust_hot", "Exhaust too hot", WARN, 5_000, "Estimate: either exhaust temperature at 800 °C or more. Active regens run around 600-650 °C.", listOf("Exhaust Temperature B1S1", "Exhaust Temperature B1S2")) {
                 listOfNotNull(v("Exhaust Temperature B1S1"), v("Exhaust Temperature B1S2")).maxOrNull()?.takeIf { it >= 800 }?.let { "Exhaust is at ${f0(it)} °C, hotter than a normal regen." }
             },
-            Rule("rail_pressure", "Fuel rail pressure off target", WARN, 5_000, "Estimate: fuel rail pressure off its target by more than 10 MPa or 15 %, above 600 rpm (generic P0087/P0088 logic).", listOf("Fuel Press", "Target Common Rail Pressure", "Engine Speed")) {
+            Rule("rail_pressure", "Fuel rail pressure off target", WARN, 30_000, "Estimate: fuel rail pressure off its target by more than 10 MPa or 15 % for 30 s, above 600 rpm (generic P0087/P0088 logic). The target moves 30-120 MPa within seconds when the pedal moves, and actual and target are read a moment apart, so short gaps are normal: on the owner's car they lasted up to 20 s.", listOf("Fuel Press", "Target Common Rail Pressure", "Engine Speed")) {
                 val a = v("Fuel Press") ?: return@Rule null
                 val target = v("Target Common Rail Pressure") ?: return@Rule null
                 if ((v("Engine Speed") ?: 0.0) > 600 && abs(a - target) > maxOf(10_000.0, target * 0.15)) "Fuel rail is at ${f0(a / 1000)} MPa against a target of ${f0(target / 1000)} MPa." else null
+            },
+            Rule("maf_low", "Air flow sensor reading low", WARN, 30_000, "Estimate: MAF under 80 % of the ECU's estimate for 30 s with the EGR valve under 15 % open, above 1000 rpm. The ratio is the fresh-air share, so it only means something with the EGR closed; there the owner's car reads 0.92-0.96 (never under 0.82). A dirty or failing MAF reads low, which makes extra soot.", listOf("MAF/Estimate MAF Ratio", "Actual EGR Valve Pos.", "Engine Speed")) {
+                val ratio = v("MAF/Estimate MAF Ratio") ?: return@Rule null
+                val egr = v("Actual EGR Valve Pos.") ?: return@Rule null
+                if ((v("Engine Speed") ?: 0.0) > 1000 && egr < 15 && ratio < 0.8) "Air flow sensor reads ${f0(ratio * 100)} % of what the ECU expects with the EGR closed: it may be dirty or failing." else null
             },
             Rule("boost_deviation", "Boost off target", WARN, 5_000, "Boost off target by 28 kPa or more with the engine running (generic P0299 logic: 27.6 kPa for 5 s).", listOf("Boost Pressure Deviation", "Engine Speed")) { v("Boost Pressure Deviation")?.takeIf { running && abs(it) >= 28 }?.let { "Boost is ${f0(abs(it))} kPa off target: check for leaks in the turbo hoses or a sticking turbo vane." } },
             Rule("injector", "Injector correction high", WARN, 30_000, "Estimate: an injector correction beyond ±3 mm³/stroke at warm idle, pointing at a worn or blocked injector (Hilux 1KD-FTV owners; no 1ND-TV figure).", listOf("Injection Feedback Val #1", "Injection Feedback Val #2", "Injection Feedback Val #3", "Injection Feedback Val #4", "Coolant Temp", "Engine Speed", "Vehicle Speed")) {

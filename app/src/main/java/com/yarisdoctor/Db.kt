@@ -22,13 +22,13 @@ import com.yarisdoctor.domain.model.Regen
 import com.yarisdoctor.domain.model.Sample
 import com.yarisdoctor.domain.model.TRIP_GAP_MS
 import com.yarisdoctor.domain.model.TripStats
-import com.yarisdoctor.domain.repo.RegenLog
+import com.yarisdoctor.domain.repo.DriveStore
 import java.io.File
 import org.json.JSONArray
 import org.json.JSONObject
 
 /** [name] null = in-memory database (Debug mode), gone when closed. Created by [AppContainer]: one per database per process. */
-class Db internal constructor(ctx: Context, name: String?) : SQLiteOpenHelper(ctx, name, null, 6), RegenLog {
+class Db internal constructor(ctx: Context, name: String?) : SQLiteOpenHelper(ctx, name, null, 6), DriveStore {
 
     override fun onCreate(db: SQLiteDatabase) {
         // odo_m: GPS distance accumulated by this app (metres), our stand-in for the odometer
@@ -88,7 +88,7 @@ class Db internal constructor(ctx: Context, name: String?) : SQLiteOpenHelper(ct
      * Makes the open alert rows match [active]: new keys open a row, keys no longer active get [t] as their end, open
      * ones take the latest text (the numbers in it change). Returns the newly opened findings, to notify.
      */
-    fun syncAlerts(t: Long, active: List<Finding>): List<Finding> = tx { db ->
+    override fun syncAlerts(t: Long, active: List<Finding>): List<Finding> = tx { db ->
         val ids = HashMap<String, Long>()
         val texts = HashMap<String, String>()
         db.rawQuery("SELECT id, key, text FROM alert WHERE end_t IS NULL", null).use {
@@ -125,7 +125,7 @@ class Db internal constructor(ctx: Context, name: String?) : SQLiteOpenHelper(ct
      * [replies]: request code → cleaned reply, as Poller.cycle returns them; codes outside the table aren't stored, except the
      * ash record, kept under its whole code ("A918") so it can't clash with a `21` lid.
      */
-    fun frames(t: Long, replies: Map<String, String>) = tx { db ->
+    override fun frames(t: Long, replies: Map<String, String>) = tx { db ->
         for ((code, reply) in replies) {
             val lid = when (code) {
                 in PID_LENGTHS -> code.substring(2)
@@ -158,6 +158,8 @@ class Db internal constructor(ctx: Context, name: String?) : SQLiteOpenHelper(ct
         while (it.moveToNext()) out += it.getLong(0) to it.getString(1)
         out
     }
+
+    override fun recentRegens(n: Int) = withSigns(regens().takeLast(n))
 
     /**
      * [regens] with each one's peak DPF temperature (B1S2, the samples' temp) and, once finished, its soot floor: the first
@@ -206,7 +208,7 @@ class Db internal constructor(ctx: Context, name: String?) : SQLiteOpenHelper(ct
     private fun pid(name: String) = PIDS.first { it.name == name }
 
     /** Newest DPF pressure readings (kPa) taken with the engine stopped (rpm 0) and the ignition on, newest first. */
-    fun engineOffDp(limit: Int = 5): List<Double> = readableDatabase.rawQuery(
+    override fun engineOffDp(limit: Int): List<Double> = readableDatabase.rawQuery(
         "SELECT e.hex FROM frame e JOIN frame c ON c.t = e.t AND c.lid = '0C' AND c.hex = '0000' WHERE e.lid = 'EF' ORDER BY e.t DESC LIMIT ?",
         arrayOf(limit.toString()),
     ).use {
@@ -262,7 +264,7 @@ class Db internal constructor(ctx: Context, name: String?) : SQLiteOpenHelper(ct
     }
 
     /** Deletes closed regens shorter than a minute that covered no distance: the engine-stop blip of the 21DF bit, not a burn. */
-    fun dropStopBlips() = writableDatabase.execSQL(
+    override fun dropStopBlips() = writableDatabase.execSQL(
         "DELETE FROM regen WHERE end_t IS NOT NULL AND end_t - start_t < 60000 AND COALESCE(odo_end, odo_start, 0) - COALESCE(odo_start, 0) < 50",
     )
 
@@ -273,7 +275,7 @@ class Db internal constructor(ctx: Context, name: String?) : SQLiteOpenHelper(ct
     }
 
     /** Keeps the first frame per request per minute in [[from], [to]): old drives stay chartable at a fraction of the size. */
-    fun thinFrames(from: Long, to: Long) = writableDatabase.execSQL(
+    override fun thinFrames(from: Long, to: Long) = writableDatabase.execSQL(
         "DELETE FROM frame WHERE t >= ? AND t < ? AND rowid NOT IN (SELECT MIN(rowid) FROM frame WHERE t >= ? AND t < ? GROUP BY lid, t / 60000)",
         arrayOf(from, to, from, to),
     )

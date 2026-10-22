@@ -25,36 +25,24 @@ import android.os.Looper
 import android.os.PowerManager
 import android.os.SystemClock
 import android.util.Log
-import com.yarisdoctor.domain.car.PID_REGEN
-import com.yarisdoctor.domain.car.PID_SOOT
-import com.yarisdoctor.domain.car.PID_TEMP
-import com.yarisdoctor.domain.car.engineStopped
-import com.yarisdoctor.domain.car.regenOf
-import com.yarisdoctor.domain.car.sootOf
-import com.yarisdoctor.domain.car.tempOf
-import com.yarisdoctor.domain.drive.Poller
-import com.yarisdoctor.domain.drive.Recorder
+import com.yarisdoctor.domain.drive.DriveEffects
+import com.yarisdoctor.domain.drive.DriveSession
 import com.yarisdoctor.domain.drive.Sim
 import com.yarisdoctor.domain.drive.burnPercent
 import com.yarisdoctor.domain.health.CRIT
-import com.yarisdoctor.domain.health.Checker
 import com.yarisdoctor.domain.health.Finding
-import com.yarisdoctor.domain.health.oilDue
-import com.yarisdoctor.domain.health.sensorZero
-import com.yarisdoctor.domain.health.trends
 import com.yarisdoctor.domain.health.tripSummary
-import com.yarisdoctor.domain.model.TRIP_GAP_MS
 import java.util.UUID
 import java.util.concurrent.Semaphore
 
 /**
  * Always-on foreground service. Idle: probes the dongle once a minute (alarm-driven so it survives CPU sleep).
- * Connected: polls the ECU like DPFViewer's loop(), logs to SQLite, tracks GPS distance and shows a regen notification.
+ * Connected: hands the dongle to [DriveSession], which polls the ECU and logs to SQLite. This class keeps the Android
+ * side: the Bluetooth socket, GPS distance, the wakelock, the notifications and the edge light.
  */
 class DpfService : Service() {
 
     @Volatile private var running = true
-    @Volatile private var odoM = 0.0 // written by the GPS callback (main thread), or by simulate() when GPS is off
     @Volatile private var socket: BluetoothSocket? = null
     private var lastFix: Location? = null
     private val db by lazy { container.db() }
@@ -68,23 +56,40 @@ class DpfService : Service() {
     private val idle = Semaphore(0)
     private val probe = AlarmManager.OnAlarmListener { wake.acquire(30_000); idle.release() }
     private val worker = Thread(::run, "dpf")
-    // Outlives a session, so a regen survives a dropped Bluetooth link (see run())
-    private val rec by lazy { Recorder(db) }
-    private var trend = emptyList<Finding>() // regen-history findings, redone at start and after each regen
-    private val notified = HashSet<String>()  // alert keys notified this drive: a value flapping around its limit notifies once
-    private val showing = HashSet<String>()   // of those, the ones whose notification is still up
-    // A drive outlives a Bluetooth drop shorter than REGEN_GAP_MS, like a regen: the checker and live alerts carry over
-    private val model2015 by lazy { Prefs.model2015(this) } // read once: Settings restarts the service on a change
-    private lateinit var checker: Checker // made in onCreate: the model year needs the context
-    private var lastSeen = 0L // last cycle the ECU answered
+    // Outlives a dongle session, so a regen and a drive's alerts survive a dropped Bluetooth link
+    private lateinit var drive: DriveSession // made in onCreate: the model year and the odometer need the context
 
     private val gps = LocationListener { l ->
         if (l.accuracy <= 25f) {
             val prev = lastFix
             // Speed gate drops GPS drift while parked
-            if (prev != null && l.speed > 1f) odoM += prev.distanceTo(l)
+            if (prev != null && l.speed > 1f) drive.odoM += prev.distanceTo(l)
             lastFix = l
         }
+    }
+
+    /** The drive's notifications and edge light. Called on the worker thread; EdgeLight posts to the main thread itself. */
+    private val effects = object : DriveEffects {
+        override fun regen(start: Long, sootStart: Int?, soot: Int?, temp: Int?) {
+            if (Prefs.alerts(this@DpfService)) nm.notify(ID_REGEN, regenNotification(start, sootStart, soot, temp)) else nm.cancel(ID_REGEN)
+            edge.show(Prefs.edge(this@DpfService))
+        }
+
+        override fun regenHidden() {
+            nm.cancel(ID_REGEN)
+            edge.show(false)
+        }
+
+        override fun alertOpened(f: Finding) = nm.notify(alertId(f.key), notification(CH_HEALTH)
+            .setContentTitle(if (f.level == CRIT) "Check the car now" else "Car warning")
+            .setContentText(f.text)
+            .setStyle(Notification.BigTextStyle().bigText(f.text))
+            .setAutoCancel(true)
+            .build())
+
+        override fun alertCleared(key: String) = nm.cancel(alertId(key))
+
+        override fun driveEnded() = tripDone()
     }
 
     override fun onCreate() {
@@ -100,15 +105,13 @@ class DpfService : Service() {
             // Location type refused (e.g. started at boot without "Allow all the time"): log without GPS
             startForeground(ID_SERVICE, status("Waiting for dongle"), FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE)
         }
-        odoM = db.odometer()
-        checker = Checker(model2015)
+        // The model year is read once: Settings restarts the service on a change
+        drive = DriveSession(db, effects, Prefs.model2015(this), { Prefs.oilMetres(this) }).apply { odoM = db.odometer() }
         // A previous process killed mid-regen never closed its row; it would show "Ongoing" forever
         container.real.closeOrphanRegens()
         // Engine-stop blips (under a minute, no distance) are not burns; every start, so one that slips past engineStopped() goes too
         container.real.dropStopBlips()
-        // Live alerts left open by a killed process end now; regen-history ones open if they apply
-        trend = history()
-        checks(System.currentTimeMillis(), emptyList())
+        drive.start()
         Sync.watch(this)
         worker.start()
     }
@@ -129,21 +132,7 @@ class DpfService : Service() {
 
     private fun run() {
         while (running) {
-            // Link lost mid-regen and not back within REGEN_GAP_MS: the burn ended at the last reading
-            if (rec.inRegen && System.currentTimeMillis() - rec.lastT > REGEN_GAP_MS) {
-                rec.close(rec.lastT, odoM)
-                trend = history()
-                checks(System.currentTimeMillis(), emptyList())
-            }
-            // No ECU data for REGEN_GAP_MS: the drive is over, so its live alerts end and the next drive notifies afresh
-            if (lastSeen > 0 && System.currentTimeMillis() - lastSeen > REGEN_GAP_MS) {
-                lastSeen = 0
-                checker = Checker(model2015)
-                tripDone()
-                trend = history() // the engine-stop readings of this drive feed the DPF sensor check
-                checks(System.currentTimeMillis(), emptyList()) // closes the drive's live alerts and cancels their notifications
-                notified.clear()
-            }
+            drive.idle()
             try {
                 session()
             } catch (e: Exception) {
@@ -163,7 +152,10 @@ class DpfService : Service() {
     }
 
     private fun session() {
-        if (Prefs.debug) return simulate()
+        if (Prefs.debug) {
+            nm.notify(ID_SERVICE, status("Debug mode: simulated dongle"))
+            return drive.simulate(Sim.live()) { running }
+        }
         val adapter = getSystemService(BluetoothManager::class.java).adapter
         if (adapter == null || !adapter.isEnabled) return
         val s = adapter.getRemoteDevice(Prefs.dongle(this)).createRfcommSocketToServiceRecord(SPP)
@@ -175,93 +167,14 @@ class DpfService : Service() {
             elm.init()
             startGps()
             nm.notify(ID_SERVICE, status("Logging"))
-            val poller = Poller { elm.send(it) }
             val started = System.currentTimeMillis()
-            var fails = 0
-            var seen = false
-            var lastSample = 0L
             try {
-                // Ignition off (dongle may stay powered on the OBD port): give up after 1 dead cycle on a probe, 3 mid-drive
-                while (running && fails < (if (seen) 3 else 1)) {
-                    val t = System.currentTimeMillis()
-                    val replies = poller.cycle(t)
-                    if (replies.isEmpty()) {
-                        fails++
-                        // A wedged clone often recovers after a reset; the dead-cycle count still ends the session if not
-                        if (seen) elm.init() else Thread.sleep(2000)
-                        continue
-                    }
-                    fails = 0
-                    seen = true
-                    lastSeen = t
-                    db.frames(t, replies)
-                    val soot = replies[PID_SOOT]?.let(::sootOf)
-                    val temp = replies[PID_TEMP]?.let(::tempOf)
-                    val regen = replies[PID_REGEN]?.let(::regenOf)?.let { it && !engineStopped(replies["210C"]) }
-                    // The DPF log keeps its old pace (5 s, 1 s in regen); a regen start or end is written at once
-                    if (t - lastSample >= (if (rec.inRegen) 1000 else 5000) || (regen != null && regen != rec.inRegen)) {
-                        publish(rec, soot, temp, regen)
-                        lastSample = t
-                    }
-                    checks(t, checker.check(t, replies, rec.inRegen))
-                    // No pause: the next cycle starts at once, so the pace is set by how fast this dongle answers, regen or not
-
-                }
+                drive.drive(elm) { running }
             } finally {
-                // The regen row and live alerts stay open: run() closes them unless the link comes back within REGEN_GAP_MS
-                finish()
                 stopGps()
                 try { db.linkStats(started, elm.timings) } catch (e: Exception) { Log.d(TAG, "link stats not saved: $e") }
             }
         }
-    }
-
-    /** Debug mode: random readings into the in-memory Db (see Db.get) until the service is stopped. */
-    private fun simulate() {
-        nm.notify(ID_SERVICE, status("Debug mode: simulated dongle"))
-        val sim = Sim.live()
-        val rec = Recorder(db) // its own, never kept open across sessions like the real one
-        var thinnedTo = 0L
-        val checker = Checker(model2015)
-        notified.clear()
-        try {
-            while (running) {
-                val r = sim.next()
-                odoM += sim.metresPerTick
-                publish(rec, r.soot, r.temp, r.regen)
-                val t = System.currentTimeMillis()
-                val frames = sim.frames(r)
-                db.frames(t, frames)
-                checks(t, checker.check(t, frames, rec.inRegen))
-                // The debug Db lives in RAM: keep 30 min at full rate, older frames one per minute, or a day of it runs out of memory
-                if (t - 30 * 60_000L - thinnedTo >= 60_000L) {
-                    db.thinFrames(thinnedTo, t - 30 * 60_000L)
-                    thinnedTo = t - 30 * 60_000L
-                }
-                Thread.sleep(1000)
-            }
-        } finally {
-            rec.close(System.currentTimeMillis(), odoM)
-            finish()
-            checks(System.currentTimeMillis(), emptyList())
-        }
-    }
-
-    private fun publish(rec: Recorder, soot: Int?, temp: Int?, regen: Boolean?) {
-        val was = rec.inRegen
-        rec.record(System.currentTimeMillis(), soot, temp, regen, odoM)
-        if (was && !rec.inRegen) {
-            db.dropStopBlips() // a blip that got past engineStopped() must not count as a regen in the interval checks
-            trend = history() // a regen just finished: interval and length are known
-        }
-        if (rec.inRegen && Prefs.alerts(this)) nm.notify(ID_REGEN, regenNotification(rec.regenStart, rec.regenSootStart, soot, temp))
-        else nm.cancel(ID_REGEN)
-        edge.show(rec.inRegen && Prefs.edge(this))
-    }
-
-    private fun finish() {
-        nm.cancel(ID_REGEN)
-        edge.show(false)
     }
 
     /** Frames older than FULL_MS are thinned to one per request per minute, each stretch once (tracked in Prefs). */
@@ -272,30 +185,6 @@ class DpfService : Service() {
         container.real.thinFrames(from, to)
         Prefs.put(this, Prefs.THINNED_TO, to)
     }
-
-    /** Stores [live] plus the regen-history findings as alerts; each is notified when it opens and the notification is cancelled when it recovers. */
-    private fun checks(t: Long, live: List<Finding>) {
-        val active = live + trend
-        // A value back in range: its alert row is closed (kept as history), and the notification it raised goes away
-        showing.removeAll { k -> active.none { it.key == k }.also { gone -> if (gone) nm.cancel(alertId(k)) } }
-        for (f in db.syncAlerts(t, active)) {
-            if (!notified.add(f.key)) continue
-            showing += f.key
-            nm.notify(alertId(f.key), notification(CH_HEALTH)
-                .setContentTitle(if (f.level == CRIT) "Check the car now" else "Car warning")
-                .setContentText(f.text)
-                .setStyle(Notification.BigTextStyle().bigText(f.text))
-                .setAutoCancel(true)
-                .build())
-        }
-    }
-
-    /**
-     * Regen-history checks, the DPF sensor's engine-off zero and the oil change; kept open while they apply, rechecked at
-     * start and after drives and regens. Only the last regens get their floor and peak: trends() reads the newest.
-     */
-    private fun history() = trends(db.withSigns(db.regens().takeLast(10)), model2015) +
-        listOfNotNull(sensorZero(db.engineOffDp()), oilDue(Prefs.oilMetres(this)))
 
     /** One quiet notification when a drive ends: distance, soot, regens and warnings. */
     private fun tripDone() {
@@ -370,7 +259,6 @@ class DpfService : Service() {
     companion object {
         private val SPP: UUID = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB")
         private const val PROBE_MS = 60_000L
-        private const val REGEN_GAP_MS = TRIP_GAP_MS // a drive and a trip end at the same silence
         private const val FULL_MS = 30 * 24 * 3_600_000L
         private const val CH_SERVICE = "service"
         private const val CH_REGEN = "regen"

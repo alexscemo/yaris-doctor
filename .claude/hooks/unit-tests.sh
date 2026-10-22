@@ -2,7 +2,7 @@
 # PostToolUse: run the JVM unit tests after edits to the logic they cover; UI files are skipped (Gradle is memory-heavy)
 file=$(node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>console.log((JSON.parse(s).tool_input||{}).file_path||""))')
 case "$file" in
-  *Elm.kt|*Decoders.kt|*Pid.kt|*Normal.kt|*Checks.kt|*Poller.kt|*Regens.kt|*Db.kt|*Sync.kt|*Recorder.kt|*Sim.kt|*Test.kt) ;;
+  *Elm.kt|*Decoders.kt|*Pid.kt|*Normal.kt|*Checks.kt|*Poller.kt|*Regens.kt|*Db.kt|*Sync.kt|*Recorder.kt|*DriveSession.kt|*Sim.kt|*Test.kt) ;;
   *) exit 0 ;;
 esac
 export JAVA_HOME="C:/Users/alex/Android/jdk-17.0.20.1+1"

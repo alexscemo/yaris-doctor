@@ -1,5 +1,6 @@
 package com.yarisdoctor
 
+import com.yarisdoctor.domain.drive.ObdLink
 import java.io.IOException
 import java.io.InputStream
 import java.io.OutputStream
@@ -7,7 +8,7 @@ import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
 
 /** ELM327 over a Bluetooth SPP stream. Replies are cleaned exactly like ELMduino so DPFViewer's PID offsets still apply. */
-class Elm(input: InputStream, private val output: OutputStream) {
+class Elm(input: InputStream, private val output: OutputStream) : ObdLink {
     /**
      * Bytes from the dongle as they arrive, -1 once the link drops. A thread blocked in read() wakes the moment data comes,
      * where polling available() and sleeping 10 ms added up to 10 ms per burst. It ends when the socket closes.
@@ -35,7 +36,7 @@ class Elm(input: InputStream, private val output: OutputStream) {
     val timings = HashMap<String, Timing>()
 
     /** Returns the cleaned payload, or null on timeout / ELM error. Throws IOException when the link drops. */
-    fun send(cmd: String, timeoutMs: Long = 2000): String? {
+    override fun send(cmd: String, timeoutMs: Long): String? {
         rx.clear()
         output.write("$cmd\r".toByteArray())
         output.flush()
@@ -73,7 +74,7 @@ class Elm(input: InputStream, private val output: OutputStream) {
     }
 
     /** Same sequence as DPFViewer: myELM.begin(..., '6') then Toyota engine ECU header/filter, plus adaptive timing for the full table. */
-    fun init() {
+    override fun init() {
         for (cmd in listOf("AT D", "AT Z", "AT E0", "AT S0", "AT AL", "AT TP A6", "AT SH 7E0", "AT CRA 7E8", "AT AT2")) {
             send(cmd, 3000)
             Thread.sleep(100)

@@ -81,6 +81,7 @@ class DriveSession(
         // Link lost mid-regen and not back in time: the burn ended at the last reading
         if (rec.inRegen && now() - rec.lastT > REGEN_GAP_MS) {
             rec.close(rec.lastT, odoM)
+            store.dropStopBlips()
             trend = history()
             checks(now(), emptyList())
         }
@@ -122,7 +123,8 @@ class DriveSession(
                 store.frames(t, replies)
                 val soot = replies[PID_SOOT]?.let(::sootOf)
                 val temp = replies[PID_TEMP]?.let(::tempOf)
-                val regen = replies[PID_REGEN]?.let(::regenOf)?.let { it && !engineStopped(replies["210C"]) }
+                // The bit set without an rpm reply in the same cycle is unknown: ignition off mid-cycle answers 21DF but not 210C (22 Oct, 17:53)
+                val regen = replies[PID_REGEN]?.let(::regenOf)?.let { on -> if (!on) false else replies["210C"]?.let { !engineStopped(it) } }
                 // The DPF log keeps its old pace (5 s, 1 s in regen); a regen start or end is written at once
                 if (t - lastSample >= (if (rec.inRegen) 1000 else 5000) || (regen != null && regen != rec.inRegen)) {
                     publish(rec, soot, temp, regen)

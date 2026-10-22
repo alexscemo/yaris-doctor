@@ -90,6 +90,14 @@ class DriveSessionTest {
         assertFalse("regen" in effects.events)
     }
 
+    @Test fun theRegenBitWithoutAnRpmReplyNeitherOpensNorClosesARegen() {
+        session.drive(ScriptLink { if (it < 20_000) car(regen = true) - "210C" else null }) { true }
+        assertTrue(log.regens.isEmpty()) // ignition off mid-cycle: 21DF answered, 210C didn't
+        session.drive(ScriptLink { if (it < 40_000) car(regen = true).let { r -> if (it < 30_000) r else r - "210C" } else null }) { true }
+        assertEquals(1, log.regens.size)
+        assertTrue(session.inRegen) // a missed rpm read mid-regen keeps it open
+    }
+
     @Test fun aRegenSurvivesAShortDropAndClosesAtItsLastReadingAfterALongOne() {
         session.drive(ScriptLink { if (it < 20_000) car(soot = 80, temp = 600, regen = true) else null }) { true }
         assertTrue(session.inRegen) // the link dropped mid-regen: still open

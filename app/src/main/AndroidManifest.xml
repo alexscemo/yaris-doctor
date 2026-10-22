@@ -40,6 +40,8 @@
             android:exported="false"
             android:foregroundServiceType="connectedDevice|location" />
 
+        <receiver android:name=".HomeWatch" android:exported="false" />
+
         <receiver android:name=".BootReceiver" android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.BOOT_COMPLETED" />

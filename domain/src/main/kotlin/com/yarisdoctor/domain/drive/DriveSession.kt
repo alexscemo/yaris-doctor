@@ -67,6 +67,9 @@ class DriveSession(
 
     val inRegen get() = rec.inRegen
 
+    /** A regen or a drive is still open: the link may come back within [REGEN_GAP_MS] and must find the logger running. */
+    val busy get() = rec.inRegen || lastSeen > 0
+
     /** At service start: live alerts left open by a killed process end now; regen-history ones open if they apply. */
     fun start() {
         trend = history()

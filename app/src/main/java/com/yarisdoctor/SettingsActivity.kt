@@ -75,9 +75,9 @@ class SettingsActivity : Activity() {
                         Prefs.put(context, Prefs.SERVER, url)
                     }
                 },
-                row("Home Wi-Fi name", Prefs.wifi(context).ifBlank { "Not set: uploads are off" }) {
+                row("Home Wi-Fi name", Prefs.wifi(context).let { if (it.isBlank()) "Not set: uploads are off" else "$it · no dongle search while on it" }) {
                     // Pre-fill with the network the phone is on now, the usual answer
-                    ask("Home Wi-Fi name", "Uploads only happen on this Wi-Fi network (needs location \"Allow all the time\")",
+                    ask("Home Wi-Fi name", "Uploads only happen on this Wi-Fi network, and the dongle search (with its notification) pauses while you are on it (needs location \"Allow all the time\")",
                         Prefs.wifi(context).ifBlank { Sync.ssid.orEmpty() }) {
                         Prefs.put(context, Prefs.WIFI, it.trim())
                     }

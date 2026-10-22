@@ -34,7 +34,7 @@ object Sync {
     private const val TAG = "Sync"
     private const val ALERT_DAYS_MS = 30 * 86_400_000L
     private const val CH_SYNC = "sync"
-    private const val ID_SYNC = 3 // after DpfService's 1 (service) and 2 (regen)
+    private const val ID_SYNC = 4 // after DpfService's 1 (service), 2 (regen) and 3 (drive finished)
 
     /** Current Wi-Fi SSID, kept by [watch]; null when not on Wi-Fi or the name is hidden (no location permission). */
     @Volatile var ssid: String? = null
@@ -58,18 +58,28 @@ object Sync {
     }
 
     fun unwatch(c: Context) {
+        // Nothing reports a change from now on: a stale "home" would pause the next service instance wherever it is
+        ssid = null
         try { c.getSystemService(ConnectivityManager::class.java).unregisterNetworkCallback(wifiCallback) } catch (e: IllegalArgumentException) {}
+    }
+
+    /** On the Wi-Fi named in Settings, as [watch] last saw it. */
+    fun atHome(c: Context) = Prefs.wifi(c).let { it.isNotBlank() && ssid == it }
+
+    /** This phone has readings, regens, frames or warnings the hub hasn't confirmed; false when no hub is set. */
+    fun pending(c: Context): Boolean {
+        if (Prefs.server(c).isBlank()) return false
+        val db = c.container.real
+        return db.maxSampleRowid() > Prefs.long(c, Prefs.SYNCED_ROWID) || db.regenSignature() != Prefs.str(c, Prefs.SYNCED_REGENS) ||
+            // A hub from before frames and alerts can't take them: don't sync every minute for them (the 10-min pull rechecks)
+            (Prefs.bool(c, Prefs.HUB_FRAMES, true) &&
+                (db.maxFrameRowid() > Prefs.long(c, Prefs.SYNCED_FRAME_ROWID) || alertSignature(db) != Prefs.str(c, Prefs.SYNCED_ALERTS)))
     }
 
     /** Called by the service once a minute while idle: uploads only on the home Wi-Fi, only when there is something new. */
     fun maybe(c: Context) {
-        val home = Prefs.wifi(c)
-        if (Prefs.server(c).isBlank() || home.isBlank() || ssid != home) return
-        val db = c.container.real
-        val pending = db.maxSampleRowid() > Prefs.long(c, Prefs.SYNCED_ROWID) || db.regenSignature() != Prefs.str(c, Prefs.SYNCED_REGENS) ||
-            // A hub from before frames and alerts can't take them: don't sync every minute for them (the 10-min pull rechecks)
-            (Prefs.bool(c, Prefs.HUB_FRAMES, true) &&
-                (db.maxFrameRowid() > Prefs.long(c, Prefs.SYNCED_FRAME_ROWID) || alertSignature(db) != Prefs.str(c, Prefs.SYNCED_ALERTS)))
+        if (Prefs.server(c).isBlank() || !atHome(c)) return
+        val pending = pending(c)
         // Other phones' drives reach the hub whenever they get home, so check for them now and then even with nothing to send
         val pullDue = System.currentTimeMillis() - Prefs.long(c, Prefs.PULLED_AT) > PULL_MS
         if (!pending && !pullDue) return

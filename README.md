@@ -55,7 +55,7 @@ From then on it starts at boot. There is nothing to open before a drive.
 - **Settings** (icon, top right): dongle, background logging on/off, regen notification on/off, Live Updates (Android 16), edge light, miles or kilometres, model year (2011-2014 or 2015+, which sets the soot and temperature limits the checks use), and the date of the last oil change. Also the home hub and **Export database**, which saves a copy of the whole log to Downloads.
 - **Debug mode** (Settings → Developer): a simulated dongle feeds random but plausible data, with 14 days of fake history and a regen every few minutes, so you can try the screen and the notification without the car. Nothing is saved to your real log. Debug mode turns itself off when the phone restarts or Android closes the app.
 
-A small, low-priority notification ("Waiting for dongle" / "Logging") is always present. Android requires one for any app that runs in the background continuously.
+A small, low-priority notification ("Waiting for dongle" / "Logging") is present while the app watches for the car. Android requires one for any app that runs in the background continuously. On your home Wi-Fi (Settings → Home hub → Home Wi-Fi name) the app stops looking for the dongle, so the notification goes away; it starts again within about a minute of leaving that Wi-Fi. This needs location "Allow all the time" and battery optimisation turned off for the app, which it asks for on first start.
 
 ## Home hub (optional)
 

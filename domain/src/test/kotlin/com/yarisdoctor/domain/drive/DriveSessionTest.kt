@@ -113,10 +113,12 @@ class DriveSessionTest {
         t += 30_000
         session.idle() // a short drop: the same drive
         session.drive(link(t)) { true }
+        assertTrue(session.busy) // the ECU went quiet less than REGEN_GAP_MS ago: the drive may go on
         assertEquals(1, effects.events.count { it == "open dtc" })
         t += DriveSession.REGEN_GAP_MS + 1
         session.idle()
         assertTrue(effects.events.containsAll(listOf("ended", "clear dtc")))
+        assertFalse(session.busy) // the drive is over: the service may pause
         session.drive(link(t)) { true }
         assertEquals(2, effects.events.count { it == "open dtc" }) // a new drive notifies afresh
     }

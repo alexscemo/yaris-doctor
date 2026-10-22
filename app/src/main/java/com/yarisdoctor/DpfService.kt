@@ -112,6 +112,7 @@ class DpfService : Service() {
         // Engine-stop blips (under a minute, no distance) are not burns; every start, so one that slips past engineStopped() goes too
         container.real.dropStopBlips()
         drive.start()
+        HomeWatch.cancel(this) // back from a pause at home, or started by hand: this instance does the watching now
         Sync.watch(this)
         worker.start()
     }
@@ -145,6 +146,12 @@ class DpfService : Service() {
             // On the home Wi-Fi after a drive: push new data to the hub (no-op elsewhere, when unset, or nothing new)
             try { Sync.maybe(this) } catch (e: Exception) { Log.d(TAG, "sync check failed: $e") }
             try { thin() } catch (e: Exception) { Log.d(TAG, "thinning failed: $e") }
+            if (pauseAtHome()) {
+                // No dongle search and no notification at home; HomeWatch starts a fresh instance once the phone leaves
+                HomeWatch.schedule(this)
+                stopSelf()
+                break
+            }
             nm.notify(ID_SERVICE, status("Waiting for dongle"))
             alarms.set(AlarmManager.ELAPSED_REALTIME_WAKEUP, SystemClock.elapsedRealtime() + PROBE_MS, "yaris:probe", probe, null)
             try { idle.acquire() } catch (e: InterruptedException) { break }
@@ -176,6 +183,14 @@ class DpfService : Service() {
             }
         }
     }
+
+    /**
+     * On the home Wi-Fi with nothing left to do: no drive or regen still open (the link may come back), nothing the hub
+     * hasn't got (a paused service doesn't sync), not Debug mode. Only when the app is exempt from battery optimisation,
+     * because that is what lets HomeWatch start the service again from the background; otherwise it keeps running.
+     */
+    private fun pauseAtHome() = Sync.atHome(this) && !Prefs.debug && !drive.busy && !Sync.pending(this) &&
+        getSystemService(PowerManager::class.java).isIgnoringBatteryOptimizations(packageName)
 
     /** Frames older than FULL_MS are thinned to one per request per minute, each stretch once (tracked in Prefs). */
     private fun thin() {

@@ -94,7 +94,7 @@ from October 2026 or later (it adds `/api/export`).
 
 ## Building
 
-The project uses only the Android framework (no AndroidX or third-party libraries) and has a single module.
+The project uses the Android framework plus AndroidX Activity and Lifecycle for the screens. It has two modules: `domain` (the car logic in plain Kotlin, tested on the JVM) and `app`.
 
 - **Android Studio:** open the folder and run. It generates the Gradle wrapper on first sync.
 - **Command line:** with JDK 17, the Android SDK and Gradle 8.11.1:

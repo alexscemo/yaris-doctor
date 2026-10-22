@@ -6,13 +6,10 @@ import android.Manifest.permission.ACCESS_FINE_LOCATION
 import android.Manifest.permission.BLUETOOTH_CONNECT
 import android.Manifest.permission.POST_NOTIFICATIONS
 import android.animation.ValueAnimator
-import android.app.Activity
 import android.content.Intent
 import android.content.pm.PackageManager.PERMISSION_GRANTED
 import android.net.Uri
 import android.os.Bundle
-import android.os.Handler
-import android.os.Looper
 import android.os.PowerManager
 import android.provider.Settings
 import android.text.SpannableString
@@ -26,20 +23,23 @@ import android.widget.HorizontalScrollView
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
+import androidx.activity.ComponentActivity
+import androidx.activity.viewModels
+import androidx.lifecycle.lifecycleScope
 import com.yarisdoctor.Ui.Type
 import com.yarisdoctor.domain.health.CRIT
 import com.yarisdoctor.domain.health.WARN
 import com.yarisdoctor.domain.model.Alert
-import com.yarisdoctor.domain.model.FLOOR_AFTER_MS
 import com.yarisdoctor.domain.model.Regen
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
-class MainActivity : Activity() {
+class MainActivity : ComponentActivity() {
 
     private val ui by lazy { Ui(this) }
-    private val handler = Handler(Looper.getMainLooper())
-    private val tick = object : Runnable {
-        override fun run() { refresh(); handler.postDelayed(this, 5_000) }
-    }
+    private val vm: OverviewViewModel by viewModels()
+    private var ticker: Job? = null
 
     private lateinit var statusText: TextView
     private lateinit var statusDot: View
@@ -67,10 +67,9 @@ class MainActivity : Activity() {
     private lateinit var dpfChart: ChartView
     private lateinit var dpfTitle: TextView
     private lateinit var ashText: TextView
-    private var dpfKey = ""
-    private var dpfAt = 0L
+    private var dpfShown: Pair<DpfCard, String>? = null // the card and unit on screen, so the chart redraws only on a change
     private lateinit var history: LinearLayout
-    private var historyKey = ""
+    private var historyShown: Pair<List<Regen>, String>? = null
     private lateinit var health: LinearLayout
     private var healthKey: String? = null
     private val allData by lazy { AllData(this, ui) }
@@ -202,11 +201,16 @@ class MainActivity : Activity() {
     // Live while visible: the service writes a sample every 1-5 s when connected
     override fun onResume() {
         super.onResume()
-        handler.post(tick)
+        ticker = lifecycleScope.launch {
+            while (true) {
+                refreshNow()
+                delay(5_000)
+            }
+        }
     }
 
     override fun onPause() {
-        handler.removeCallbacks(tick)
+        ticker?.cancel()
         pulse?.cancel(); pulse = null
         super.onPause()
     }
@@ -233,12 +237,22 @@ class MainActivity : Activity() {
     }
 
     private fun refresh() {
-        if (tab == 1) return allData.refresh()
-        if (tab == 2) return // the rules don't change
-        val db = container.db()
-        val last = db.lastSample()
-        val regens = db.regens()
-        val now = System.currentTimeMillis()
+        lifecycleScope.launch { refreshNow() }
+    }
+
+    /** Reads off the main thread, then draws the visible tab. */
+    private suspend fun refreshNow() {
+        when (tab) {
+            0 -> vm.load().let { if (tab == 0) render(it) }
+            1 -> allData.refresh()
+            // 2: the rules don't change
+        }
+    }
+
+    private fun render(s: OverviewState) {
+        val last = s.last
+        val regens = s.regens
+        val now = s.now
         val live = last != null && now - last.t <= 30_000
 
         statusText.text = when {
@@ -275,7 +289,7 @@ class MainActivity : Activity() {
         temp.text = last?.temp?.let { "$it°C" } ?: "—"
         tempSub.text = if (live) "Exhaust after the DPF" else "Last reading"
         val gaps = regens.mapNotNull { it.gapM }
-        miles.text = db.metresSinceRegen()?.let { "%.0f $unit".format(it / perUnit) } ?: "—"
+        miles.text = s.metresSinceRegen?.let { "%.0f $unit".format(it / perUnit) } ?: "—"
         milesSub.text = if (gaps.isEmpty()) "Average after two regens" else "Avg %.0f $unit between".format(gaps.average() / perUnit)
         regenState.text = if (regenNow) "Burning" else "Off"
         regenState.setTextColor(ui.color(if (regenNow) R.color.primary else R.color.on_instrument))
@@ -285,7 +299,7 @@ class MainActivity : Activity() {
             else -> "None logged yet"
         }
 
-        val series = db.sootSeries(now - 14 * DAY_MS)
+        val series = s.sootSeries
         sootChart.set(
             series.map { it.first }.toLongArray(), series.map { it.second }.toFloatArray(),
             { i -> "${fmt(series[i].first)} · %.0f%% soot".format(series[i].second) }, ::fmtDay,
@@ -298,18 +312,16 @@ class MainActivity : Activity() {
             { i -> "${fmt(withGap[i].start)} · %.0f $unit · ${duration(withGap[i])}".format(withGap[i].gapM!! / perUnit) }, ::fmtDay,
         )
 
-        // Joins frames per regen, so only when a regen is added or closed, or once a minute for the latest one's rate
-        val dk = "${regens.size} ${regens.lastOrNull()?.end}"
-        if (dk != dpfKey || now - dpfAt > 60_000) {
-            dpfKey = dk
-            dpfAt = now
-            val d = db.dpfConditions().filter { it.base != null }.takeLast(20)
+        // The view model reloads the card at most once a minute; redraw only then or on a unit change
+        if (dpfShown?.let { it.first === s.dpf && it.second == unit } != true) {
+            dpfShown = s.dpf to unit
+            val d = s.dpf.conditions
             val rate = d.lastOrNull()?.perKm
             dpfTitle.text = if (rate == null) "DPF condition" else "DPF condition · fills %.2f per %s".format(rate * perUnit / 1000, unit)
             // Grouped like Techstream's Learning Values Confirmation, so the two can be compared by eye
             fun ash(hex: String) = hex.chunked(4).joinToString(" ")
-            val changes = db.ashHistory()
-            ashText.text = db.ashRecord()?.let { (t, hex) ->
+            val changes = s.dpf.ashChanges
+            ashText.text = s.dpf.ash?.let { (t, hex) ->
                 "ECU ash record (Techstream: DPF Deterioration Record): ${ash(hex)} · ${fmt(t)}" +
                     // Where it changed, newest first: a Techstream write or the ECU's own ash count moving
                     if (changes.size > 1) "\nChanges:" + changes.joinToString("") { (ct, h) -> "\n${fmt(ct)} · ${ash(h)}" } else ""
@@ -321,7 +333,7 @@ class MainActivity : Activity() {
             )
         }
 
-        val alerts = db.alerts(now) // open ones only: a recovered warning stays stored (and on the hub) but leaves the dashboard
+        val alerts = s.alerts // open ones only: a recovered warning stays stored (and on the hub) but leaves the dashboard
         val alertsKey = alerts.joinToString("|") { "${it.key}${it.text}${it.end}" }
         if (alertsKey != healthKey) {
             healthKey = alertsKey
@@ -329,10 +341,9 @@ class MainActivity : Activity() {
         }
 
         // Rebuilt only when the list or units change, or the newest regen's floor becomes readable; refresh runs every 5 s
-        val key = "$unit ${regens.size} ${regens.lastOrNull()?.end} ${regens.lastOrNull()?.end?.let { now - it > 2 * FLOOR_AFTER_MS }}"
-        if (key != historyKey) {
-            historyKey = key
-            renderHistory(regens, perUnit, unit)
+        if (historyShown?.let { it.first === s.history && it.second == unit } != true) {
+            historyShown = s.history to unit
+            renderHistory(s.history, perUnit, unit)
         }
     }
 
@@ -400,14 +411,14 @@ class MainActivity : Activity() {
         ), LinearLayout.LayoutParams(0, -2, 1f))
     }
 
-    /** Newest first, capped at 50 rows. */
+    /** [regens] with their signs, newest first, capped at 50 rows. */
     private fun renderHistory(regens: List<Regen>, perUnit: Double, unit: String) {
         history.removeAllViews()
         if (regens.isEmpty()) {
             history.addView(ui.text(Type.BODY_MD, R.color.muted, "None logged yet. Regens appear here after a drive.").apply { gravity = Gravity.CENTER_HORIZONTAL })
             return
         }
-        container.db().withSigns(regens.takeLast(50)).reversed().forEachIndexed { i, r ->
+        regens.forEachIndexed { i, r ->
             if (i > 0) history.addView(ui.divider())
             val badge = when {
                 r.end == null -> ui.pill(ui.text(Type.CAPTION_UPPER, R.color.on_primary, "Ongoing"), R.color.primary)
@@ -452,7 +463,6 @@ class MainActivity : Activity() {
     private fun granted(perm: String) = checkSelfPermission(perm) == PERMISSION_GRANTED
 
     companion object {
-        private const val DAY_MS = 86_400_000L
         private val TABS = listOf("Overview", "All data", "Rules")
     }
 }

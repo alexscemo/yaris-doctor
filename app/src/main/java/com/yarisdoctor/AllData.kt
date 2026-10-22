@@ -1,7 +1,6 @@
 package com.yarisdoctor
 
 import android.animation.ValueAnimator
-import android.app.Activity
 import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
 import android.text.Editable
@@ -12,13 +11,18 @@ import android.widget.EditText
 import android.widget.HorizontalScrollView
 import android.widget.LinearLayout
 import android.widget.TextView
+import androidx.activity.ComponentActivity
+import androidx.lifecycle.lifecycleScope
 import com.yarisdoctor.Ui.Type
 import com.yarisdoctor.domain.car.PIDS
 import com.yarisdoctor.domain.car.Pid
 import com.yarisdoctor.domain.car.toyotaNormal
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /** The "All data" tab: every value in [PIDS], filtered by category or name; tap one for its chart over the last trip. */
-class AllData(private val a: Activity, private val ui: Ui) {
+class AllData(private val a: ComponentActivity, private val ui: Ui) {
 
     private var category: String? = null
     private var query = ""
@@ -110,22 +114,40 @@ class AllData(private val a: Activity, private val ui: Ui) {
                 addView(chart, LinearLayout.LayoutParams(-1, ui.px(160)))
             }, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = ui.px(8) })
         }
-        refresh()
+        a.lifecycleScope.launch { refresh() }
     }
 
-    /** Called every few seconds while the tab is visible. */
-    fun refresh() {
-        val db = a.container.db()
-        val latest = db.latestFrames()
+    /** What [refresh] reads for the rows on screen and the open chart. */
+    private class Snapshot(
+        val latest: Map<String, Pair<Long, String>>, val linkAverage: Long?, val every: Map<String, Long?>,
+        val series: List<Pair<Long, Double>>?, val regens: List<Pair<Long, Long>>,
+    )
+
+    /** Called every few seconds while the tab is visible: reads off the main thread, then fills the rows in. */
+    suspend fun refresh() {
+        val lids = rates.keys.mapNotNull { id -> PIDS.firstOrNull { it.id == id }?.lid }.distinct()
+        val shown = open
+        val s = withContext(Dispatchers.IO) {
+            val db = a.container.db()
+            val trip = db.tripStart() ?: 0L
+            val now = System.currentTimeMillis()
+            Snapshot(
+                db.latestFrames(), db.linkAverage(),
+                // How often each request comes back, measured from its own frames: it follows whatever pace the dongle manages
+                lids.associateWith { db.readEvery(it, trip) },
+                // Whole last trip, however short; a lid read only once a trip still shows its point(s)
+                shown?.let { p -> db.frameSeries(p.lid, trip).mapNotNull { (t, hex) -> p.decode(hex)?.let { t to it } } },
+                if (shown == null) emptyList() else db.regens().filter { (it.end ?: now) >= trip }.map { it.start to (it.end ?: now) },
+            )
+        }
+        val latest = s.latest
         val newest = latest.values.maxOfOrNull { it.first }
         header.text = when {
             newest == null -> "No live data yet. Values appear here after a drive with the dongle connected."
             System.currentTimeMillis() - newest <= 30_000 -> "Live from the engine ECU · ${PIDS.size} values · tap a row for the last trip"
             else -> "From the last drive, ${fmt(newest)}"
-        } + (db.linkAverage()?.let { " · requests took $it ms on average last drive" } ?: "")
-        // How often each request comes back, measured from its own frames: it follows whatever pace the dongle manages
-        val trip = db.tripStart() ?: 0L
-        val every = rates.keys.mapNotNull { id -> PIDS.firstOrNull { it.id == id }?.lid }.distinct().associateWith { db.readEvery(it, trip) }
+        } + (s.linkAverage?.let { " · requests took $it ms on average last drive" } ?: "")
+        val every = s.every
         for (p in PIDS) {
             rates[p.id]?.text = every[p.lid]?.let { "Updates every " + interval(it) } ?: ""
             val v = latest[p.lid]?.let { p.decode(it.second) }
@@ -135,17 +157,14 @@ class AllData(private val a: Activity, private val ui: Ui) {
             val before = last.put(p.id, v)
             if (view != null && before != null && v != before) flash(view, v > before)
         }
-        open?.let { p ->
-            // Whole last trip, however short; a lid read only once a trip still shows its point(s)
-            val series = db.frameSeries(p.lid, trip).mapNotNull { (t, hex) -> p.decode(hex)?.let { t to it } }
-            val now = System.currentTimeMillis()
-            chart.set(
-                series.map { it.first }.toLongArray(), series.map { it.second.toFloat() }.toFloatArray(),
-                { i -> "${fmtTime(series[i].first)} · ${p.format(series[i].second)}" },
-                ::fmtTime,
-                db.regens().filter { (it.end ?: now) >= trip }.map { it.start to (it.end ?: now) },
-            )
-        }
+        val series = s.series
+        // Skipped when another row was opened while this read ran: its own refresh draws it
+        if (shown != null && series != null && shown === open) chart.set(
+            series.map { it.first }.toLongArray(), series.map { it.second.toFloat() }.toFloatArray(),
+            { i -> "${fmtTime(series[i].first)} · ${shown.format(series[i].second)}" },
+            ::fmtTime,
+            s.regens,
+        )
     }
 
     /** Green-tinted for a value that went up, red-tinted for down, fading out over a second. */

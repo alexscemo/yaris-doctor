@@ -52,7 +52,7 @@ From then on it starts at boot. There is nothing to open before a drive.
 - **Regen history:** for every regen it records the start time, how long it took, soot before and after, and the miles driven since the previous regen ended.
 - **Full log:** soot, temperature and regen state every 5 s while driving (1 s during a regen), stored in a SQLite database on the phone.
 - **App screen:** current soot and miles since the last regen, a 14-day soot chart, a miles-between-regens chart (tap or drag to read values), and the regen history.
-- **Settings** (icon, top right): dongle, background logging on/off, regen notification on/off, miles or kilometres.
+- **Settings** (icon, top right): dongle, background logging on/off, regen notification on/off, Live Updates (Android 16), edge light, miles or kilometres, model year (2011-2014 or 2015+, which sets the soot and temperature limits the checks use), and the date of the last oil change. Also the home hub and **Export database**, which saves a copy of the whole log to Downloads.
 - **Debug mode** (Settings → Developer): a simulated dongle feeds random but plausible data, with 14 days of fake history and a regen every few minutes, so you can try the screen and the notification without the car. Nothing is saved to your real log. Debug mode turns itself off when the phone restarts or Android closes the app.
 
 A small, low-priority notification ("Waiting for dongle" / "Logging") is always present. Android requires one for any app that runs in the background continuously.
@@ -82,7 +82,7 @@ from October 2026 or later (it adds `/api/export`).
 
   These were found by trial and error on one car (see DPFViewer) and confirmed with Techstream. Other Yaris engines or model years may differ. Results are rounded down.
 - **Distance.** The car's odometer PID isn't known, so distance comes from the phone's GPS, counted only while the dongle is connected. Fixes that are inaccurate or stationary are ignored to avoid GPS drift.
-- **Engine off mid-regen.** The regen is closed at the moment the connection drops, and the notification is cleared.
+- **Engine off mid-regen.** The notification is cleared when the connection drops, but the regen stays open for 2 minutes: if the dongle reconnects in that time, it carries on as the same regen. Otherwise it is closed at the last reading.
 
 ## Limitations
 
@@ -90,7 +90,7 @@ from October 2026 or later (it adds `/api/export`).
 - A regen that is interrupted by switching off and then finished on the next drive is stored as two regens, the second with a tiny "miles since last".
 - GPS distance is an estimate and misses any driving done without the phone.
 - Some ELM327 clones refuse Android's standard Bluetooth serial connection. If the app never connects, the dongle may be the cause.
-- There is no data export yet. The database is included in Android's normal app backup.
+- The database is included in Android's normal app backup. To copy it off the phone, use Settings → Your data → **Export database**.
 
 ## Building
 
@@ -102,7 +102,7 @@ The project uses only the Android framework (no AndroidX or third-party librarie
   gradle test assembleDebug   # APK in app/build/outputs/apk/debug/
   ```
 
-The unit tests cover the ELM327 reply parser and the PID decoders, and need no device.
+The unit tests cover the ELM327 reply parser, the PID decoders, the poller, the health checks, the regen recorder, sync and the Debug-mode simulator, and need no device.
 
 ## Releases
 

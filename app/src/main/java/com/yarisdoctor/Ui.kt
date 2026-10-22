@@ -25,6 +25,17 @@ import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.Switch
 import android.widget.TextView
+import java.text.SimpleDateFormat
+import java.util.Locale
+
+// Made once rather than per call: the screens format every chart point and row each refresh. Main thread only (not thread-safe).
+private val DATE_TIME = SimpleDateFormat("EEE d MMM, HH:mm", Locale.getDefault())
+private val DAY = SimpleDateFormat("d MMM", Locale.getDefault())
+private val CLOCK = SimpleDateFormat("HH:mm:ss", Locale.getDefault())
+
+fun fmt(t: Long): String = DATE_TIME.format(t)
+fun fmtDay(t: Long): String = DAY.format(t)
+fun fmtTime(t: Long): String = CLOCK.format(t)
 
 /**
  * The design system applied to framework views: type scale, radii, and the few components the app uses.

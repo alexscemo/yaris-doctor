@@ -27,8 +27,6 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import com.yarisdoctor.Ui.Type
-import java.text.SimpleDateFormat
-import java.util.Locale
 
 class MainActivity : Activity() {
 
@@ -262,9 +260,7 @@ class MainActivity : Activity() {
         callout.visibility = if (regenNow) View.VISIBLE else View.GONE
         if (regenNow) calloutText.text = "DPF ${last!!.temp ?: "?"}°C · soot ${last.soot ?: "?"}% · $mins min so far"
 
-        val km = Prefs.km(this)
-        val perUnit = if (km) 1000.0 else Db.METRES_PER_MILE
-        val unit = if (km) "km" else "mi"
+        val (perUnit, unit) = Prefs.unit(this)
 
         showSoot(last?.soot)
         sootFill.setSoot(last?.soot)
@@ -290,7 +286,7 @@ class MainActivity : Activity() {
             { i -> "${fmt(series[i].first)} · %.0f%% soot".format(series[i].second) }, ::fmtDay,
             regens.map { it.start to (it.end ?: now) },
         )
-        regenTitle.text = if (km) "Kilometres between regens" else "Miles between regens"
+        regenTitle.text = if (unit == "km") "Kilometres between regens" else "Miles between regens"
         val withGap = regens.filter { it.gapM != null }.takeLast(20)
         regenChart.set(
             withGap.map { it.start }.toLongArray(), withGap.map { (it.gapM!! / perUnit).toFloat() }.toFloatArray(),
@@ -448,8 +444,6 @@ class MainActivity : Activity() {
     ).apply { addView(chart, LinearLayout.LayoutParams(-1, ui.px(190))) }
 
     private fun duration(r: Db.Regen) = r.end?.let { "${(it - r.start) / 60_000} min" } ?: "ongoing"
-    private fun fmt(t: Long) = SimpleDateFormat("EEE d MMM, HH:mm", Locale.getDefault()).format(t)
-    private fun fmtDay(t: Long) = SimpleDateFormat("d MMM", Locale.getDefault()).format(t)
     private fun granted(perm: String) = checkSelfPermission(perm) == PERMISSION_GRANTED
 
     companion object {

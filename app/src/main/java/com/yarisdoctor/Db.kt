@@ -5,6 +5,7 @@ import android.content.Context
 import android.database.Cursor
 import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
+import java.io.File
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -50,18 +51,22 @@ class Db private constructor(ctx: Context, name: String?) : SQLiteOpenHelper(ctx
     private fun createLink(db: SQLiteDatabase) =
         db.execSQL("CREATE TABLE link(t INTEGER, cmd TEXT, n INTEGER, ok INTEGER, first_ms INTEGER, tail_ms INTEGER, total_ms INTEGER)")
 
-    fun linkStats(t: Long, timings: Map<String, Elm.Timing>) {
+    /** Runs [block] in one transaction, committed only if it returns normally. */
+    private inline fun <T> tx(block: (SQLiteDatabase) -> T): T {
         val db = writableDatabase
         db.beginTransaction()
         try {
-            for ((cmd, x) in timings) if (x.n > 0) db.insert("link", null, ContentValues().apply {
-                put("t", t); put("cmd", cmd); put("n", x.n); put("ok", x.ok)
-                put("first_ms", x.firstMs / x.n); put("tail_ms", x.tailMs / x.n); put("total_ms", x.totalMs / x.n)
-            })
-            db.setTransactionSuccessful()
+            return block(db).also { db.setTransactionSuccessful() }
         } finally {
             db.endTransaction()
         }
+    }
+
+    fun linkStats(t: Long, timings: Map<String, Elm.Timing>) = tx { db ->
+        for ((cmd, x) in timings) if (x.n > 0) db.insert("link", null, ContentValues().apply {
+            put("t", t); put("cmd", cmd); put("n", x.n); put("ok", x.ok)
+            put("first_ms", x.firstMs / x.n); put("tail_ms", x.tailMs / x.n); put("total_ms", x.totalMs / x.n)
+        })
     }
 
     /** Average ms per request over the newest logged session, or null before the first one. */
@@ -76,26 +81,19 @@ class Db private constructor(ctx: Context, name: String?) : SQLiteOpenHelper(ctx
      * Makes the open alert rows match [active]: new keys open a row, keys no longer active get [t] as their end, open
      * ones take the latest text (the numbers in it change). Returns the newly opened findings, to notify.
      */
-    fun syncAlerts(t: Long, active: List<Finding>): List<Finding> {
-        val db = writableDatabase
-        db.beginTransaction()
-        try {
-            val ids = HashMap<String, Long>()
-            val texts = HashMap<String, String>()
-            db.rawQuery("SELECT id, key, text FROM alert WHERE end_t IS NULL", null).use {
-                while (it.moveToNext()) { ids[it.getString(1)] = it.getLong(0); texts[it.getString(1)] = it.getString(2) }
-            }
-            val d = diffAlerts(texts, active)
-            for (key in d.close) db.execSQL("UPDATE alert SET end_t = ? WHERE id = ?", arrayOf(t, ids.getValue(key)))
-            for (f in d.update) db.execSQL("UPDATE alert SET text = ?, level = ? WHERE id = ?", arrayOf(f.text, f.level, ids.getValue(f.key)))
-            for (f in d.open) db.insert("alert", null, ContentValues().apply {
-                put("key", f.key); put("level", f.level); put("text", f.text); put("start_t", t)
-            })
-            db.setTransactionSuccessful()
-            return d.open
-        } finally {
-            db.endTransaction()
+    fun syncAlerts(t: Long, active: List<Finding>): List<Finding> = tx { db ->
+        val ids = HashMap<String, Long>()
+        val texts = HashMap<String, String>()
+        db.rawQuery("SELECT id, key, text FROM alert WHERE end_t IS NULL", null).use {
+            while (it.moveToNext()) { ids[it.getString(1)] = it.getLong(0); texts[it.getString(1)] = it.getString(2) }
         }
+        val d = diffAlerts(texts, active)
+        for (key in d.close) db.execSQL("UPDATE alert SET end_t = ? WHERE id = ?", arrayOf(t, ids.getValue(key)))
+        for (f in d.update) db.execSQL("UPDATE alert SET text = ?, level = ? WHERE id = ?", arrayOf(f.text, f.level, ids.getValue(f.key)))
+        for (f in d.open) db.insert("alert", null, ContentValues().apply {
+            put("key", f.key); put("level", f.level); put("text", f.text); put("start_t", t)
+        })
+        d.open
     }
 
     /** Open alerts, then those that ended after [since], newest first, one row per key. */
@@ -120,21 +118,14 @@ class Db private constructor(ctx: Context, name: String?) : SQLiteOpenHelper(ctx
      * [replies]: request code → cleaned reply, as Poller.cycle returns them; codes outside the table aren't stored, except the
      * ash record, kept under its whole code ("A918") so it can't clash with a `21` lid.
      */
-    fun frames(t: Long, replies: Map<String, String>) {
-        val db = writableDatabase
-        db.beginTransaction()
-        try {
-            for ((code, reply) in replies) {
-                val lid = when (code) {
-                    in PID_LENGTHS -> code.substring(2)
-                    Poller.ASH_RECORD -> code
-                    else -> continue
-                }
-                db.insert("frame", null, ContentValues().apply { put("t", t); put("lid", lid); put("hex", reply.substring(4)) })
+    fun frames(t: Long, replies: Map<String, String>) = tx { db ->
+        for ((code, reply) in replies) {
+            val lid = when (code) {
+                in PID_LENGTHS -> code.substring(2)
+                Poller.ASH_RECORD -> code
+                else -> continue
             }
-            db.setTransactionSuccessful()
-        } finally {
-            db.endTransaction()
+            db.insert("frame", null, ContentValues().apply { put("t", t); put("lid", lid); put("hex", reply.substring(4)) })
         }
     }
 
@@ -281,7 +272,7 @@ class Db private constructor(ctx: Context, name: String?) : SQLiteOpenHelper(ctx
     )
 
     /** A consistent copy of the whole database in [file] (replaced), taken while the service may still be writing. */
-    fun exportTo(file: java.io.File) {
+    fun exportTo(file: File) {
         file.delete() // VACUUM INTO refuses an existing file
         writableDatabase.execSQL("VACUUM INTO ?", arrayOf(file.path))
     }
@@ -400,29 +391,27 @@ class Db private constructor(ctx: Context, name: String?) : SQLiteOpenHelper(ctx
     fun putPeers(samples: JSONArray, regens: JSONArray) {
         // A future-dated row would win lastSample() forever (a "live" regen that never ends): bad peer clock or forged hub data
         val latest = System.currentTimeMillis() + PEER_CLOCK_SLACK_MS
-        val db = writableDatabase
-        db.beginTransaction()
         try {
-            for (i in 0 until samples.length()) {
-                val r = samples.getJSONArray(i) // device, phone_rowid, t, soot, temp, regen, odo_m
-                if (r.getLong(2) > latest) continue
-                db.insertWithOnConflict("peer_sample", null, ContentValues().apply {
-                    put("device", r.getString(0)); put("phone_rowid", r.getLong(1)); put("t", r.getLong(2))
-                    put("soot", r.intOrNull(3)); put("temp", r.intOrNull(4)); put("regen", r.getInt(5) == 1); put("odo_m", r.optDouble(6, 0.0))
-                }, SQLiteDatabase.CONFLICT_IGNORE)
+            tx { db ->
+                for (i in 0 until samples.length()) {
+                    val r = samples.getJSONArray(i) // device, phone_rowid, t, soot, temp, regen, odo_m
+                    if (r.getLong(2) > latest) continue
+                    db.insertWithOnConflict("peer_sample", null, ContentValues().apply {
+                        put("device", r.getString(0)); put("phone_rowid", r.getLong(1)); put("t", r.getLong(2))
+                        put("soot", r.intOrNull(3)); put("temp", r.intOrNull(4)); put("regen", r.getInt(5) == 1); put("odo_m", r.optDouble(6, 0.0))
+                    }, SQLiteDatabase.CONFLICT_IGNORE)
+                }
+                db.delete("peer_regen", null, null)
+                for (i in 0 until regens.length()) {
+                    val r = regens.getJSONArray(i) // device, id, start_t, end_t, soot_start, soot_end
+                    if (r.getLong(2) > latest || (!r.isNull(3) && r.getLong(3) > latest)) continue
+                    db.insert("peer_regen", null, ContentValues().apply {
+                        put("device", r.getString(0)); put("id", r.getLong(1)); put("start_t", r.getLong(2))
+                        put("end_t", if (r.isNull(3)) null else r.getLong(3)); put("soot_start", r.intOrNull(4)); put("soot_end", r.intOrNull(5))
+                    })
+                }
             }
-            db.delete("peer_regen", null, null)
-            for (i in 0 until regens.length()) {
-                val r = regens.getJSONArray(i) // device, id, start_t, end_t, soot_start, soot_end
-                if (r.getLong(2) > latest || (!r.isNull(3) && r.getLong(3) > latest)) continue
-                db.insert("peer_regen", null, ContentValues().apply {
-                    put("device", r.getString(0)); put("id", r.getLong(1)); put("start_t", r.getLong(2))
-                    put("end_t", if (r.isNull(3)) null else r.getLong(3)); put("soot_start", r.intOrNull(4)); put("soot_end", r.intOrNull(5))
-                })
-            }
-            db.setTransactionSuccessful()
         } finally {
-            db.endTransaction()
             phones = null
         }
     }
@@ -488,7 +477,7 @@ class Db private constructor(ctx: Context, name: String?) : SQLiteOpenHelper(ctx
     companion object {
         /** Regens from two phones (dongle hand-over mid-burn) closer than this are the same burn; matches the hub. */
         const val MERGE_SLACK_MS = 2 * 60_000L
-        /** ECU silent longer than this ends a trip; the service's REGEN_GAP_MS ends a drive at the same point. */
+        /** ECU silent longer than this ends a trip; the service's REGEN_GAP_MS is this value, so a drive ends at the same point. */
         const val TRIP_GAP_MS = 2 * 60_000L
         private const val PEER_CLOCK_SLACK_MS = 5 * 60_000L
         const val METRES_PER_MILE = 1609.344

@@ -1,4 +1,4 @@
-package com.yarisdoctor
+package com.yarisdoctor.domain.car
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull

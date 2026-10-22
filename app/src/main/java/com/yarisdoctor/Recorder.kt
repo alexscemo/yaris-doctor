@@ -32,8 +32,3 @@ class Recorder(private val db: Db) {
         regenId = -1
     }
 }
-
-/** How much of the soot present when the regen began has burned off (0-100), or null when unknown. */
-fun burnPercent(sootStart: Int?, sootNow: Int?): Int? =
-    if (sootStart == null || sootNow == null || sootStart <= 0) null
-    else ((sootStart - sootNow) * 100 / sootStart).coerceIn(0, 100)

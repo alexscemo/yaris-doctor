@@ -2,6 +2,7 @@ package com.yarisdoctor
 
 import android.Manifest.permission.ACCESS_FINE_LOCATION
 import android.Manifest.permission.BLUETOOTH_CONNECT
+import android.annotation.TargetApi
 import android.app.AlarmManager
 import android.app.Notification
 import android.app.NotificationChannel
@@ -24,7 +25,24 @@ import android.os.Looper
 import android.os.PowerManager
 import android.os.SystemClock
 import android.util.Log
-import android.annotation.TargetApi
+import com.yarisdoctor.domain.car.PID_REGEN
+import com.yarisdoctor.domain.car.PID_SOOT
+import com.yarisdoctor.domain.car.PID_TEMP
+import com.yarisdoctor.domain.car.engineStopped
+import com.yarisdoctor.domain.car.regenOf
+import com.yarisdoctor.domain.car.sootOf
+import com.yarisdoctor.domain.car.tempOf
+import com.yarisdoctor.domain.drive.Poller
+import com.yarisdoctor.domain.drive.Sim
+import com.yarisdoctor.domain.drive.burnPercent
+import com.yarisdoctor.domain.health.CRIT
+import com.yarisdoctor.domain.health.Checker
+import com.yarisdoctor.domain.health.Finding
+import com.yarisdoctor.domain.health.oilDue
+import com.yarisdoctor.domain.health.sensorZero
+import com.yarisdoctor.domain.health.trends
+import com.yarisdoctor.domain.health.tripSummary
+import com.yarisdoctor.domain.model.TRIP_GAP_MS
 import java.util.UUID
 import java.util.concurrent.Semaphore
 
@@ -351,7 +369,7 @@ class DpfService : Service() {
     companion object {
         private val SPP: UUID = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB")
         private const val PROBE_MS = 60_000L
-        private const val REGEN_GAP_MS = Db.TRIP_GAP_MS // a drive and a trip end at the same silence
+        private const val REGEN_GAP_MS = TRIP_GAP_MS // a drive and a trip end at the same silence
         private const val FULL_MS = 30 * 24 * 3_600_000L
         private const val CH_SERVICE = "service"
         private const val CH_REGEN = "regen"

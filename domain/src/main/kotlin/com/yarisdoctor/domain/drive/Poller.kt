@@ -1,4 +1,9 @@
-package com.yarisdoctor
+package com.yarisdoctor.domain.drive
+
+import com.yarisdoctor.domain.car.PID_LENGTHS
+import com.yarisdoctor.domain.car.PID_REGEN
+import com.yarisdoctor.domain.car.PID_SOOT
+import com.yarisdoctor.domain.car.PID_TEMP
 
 /**
  * Picks what to ask the ECU each cycle, so the full table (35 requests) doesn't stall the readings that matter, and keeps

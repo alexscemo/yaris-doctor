@@ -5,23 +5,29 @@ import android.content.Context
 import android.database.Cursor
 import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
+import com.yarisdoctor.domain.car.PIDS
+import com.yarisdoctor.domain.car.PID_IDLE
+import com.yarisdoctor.domain.car.PID_LENGTHS
+import com.yarisdoctor.domain.drive.Poller
+import com.yarisdoctor.domain.drive.Sim
+import com.yarisdoctor.domain.drive.mergeRegens
+import com.yarisdoctor.domain.health.DpfCondition
+import com.yarisdoctor.domain.health.Finding
+import com.yarisdoctor.domain.health.diffAlerts
+import com.yarisdoctor.domain.health.dpfCondition
+import com.yarisdoctor.domain.health.restriction
+import com.yarisdoctor.domain.model.Alert
+import com.yarisdoctor.domain.model.FLOOR_AFTER_MS
+import com.yarisdoctor.domain.model.Regen
+import com.yarisdoctor.domain.model.Sample
+import com.yarisdoctor.domain.model.TRIP_GAP_MS
+import com.yarisdoctor.domain.model.TripStats
 import java.io.File
 import org.json.JSONArray
 import org.json.JSONObject
 
 /** [name] null = in-memory database (Debug mode), gone when closed. */
 class Db private constructor(ctx: Context, name: String?) : SQLiteOpenHelper(ctx, name, null, 6) {
-
-    /** A [Finding] while it lasted; [end] null = still active. */
-    data class Alert(val key: String, val level: Int, val text: String, val start: Long, val end: Long?)
-
-    data class Sample(val t: Long, val soot: Int?, val temp: Int?, val regen: Boolean)
-
-    /**
-     * [gapM]: metres driven between the previous regen's end and this one's start; null for the first logged regen.
-     * [floor] and [peakTemp] are only filled by [withSigns].
-     */
-    data class Regen(val start: Long, val end: Long?, val gapM: Double?, val sootStart: Int?, val sootEnd: Int?, val floor: Int? = null, val peakTemp: Int? = null)
 
     override fun onCreate(db: SQLiteDatabase) {
         // odo_m: GPS distance accumulated by this app (metres), our stand-in for the odometer
@@ -264,8 +270,6 @@ class Db private constructor(ctx: Context, name: String?) : SQLiteOpenHelper(ctx
         return TripStats(m, s0, s1, count("SELECT COUNT(*) FROM regen WHERE start_t >= ?"), count("SELECT COUNT(DISTINCT key) FROM alert WHERE start_t >= ?"))
     }
 
-    class TripStats(val metres: Double, val sootStart: Int?, val sootEnd: Int?, val regens: Int, val warnings: Int)
-
     /** Deletes closed regens shorter than a minute that covered no distance: the engine-stop blip of the 21DF bit, not a burn. */
     fun dropStopBlips() = writableDatabase.execSQL(
         "DELETE FROM regen WHERE end_t IS NOT NULL AND end_t - start_t < 60000 AND COALESCE(odo_end, odo_start, 0) - COALESCE(odo_start, 0) < 50",
@@ -475,14 +479,7 @@ class Db private constructor(ctx: Context, name: String?) : SQLiteOpenHelper(ctx
     private fun Cursor.intOrNull(i: Int): Int? = if (isNull(i)) null else getInt(i)
 
     companion object {
-        /** Regens from two phones (dongle hand-over mid-burn) closer than this are the same burn; matches the hub. */
-        const val MERGE_SLACK_MS = 2 * 60_000L
-        /** ECU silent longer than this ends a trip; the service's REGEN_GAP_MS is this value, so a drive ends at the same point. */
-        const val TRIP_GAP_MS = 2 * 60_000L
         private const val PEER_CLOCK_SLACK_MS = 5 * 60_000L
-        const val METRES_PER_MILE = 1609.344
-        /** A regen's soot floor is read this long after it ends (see [withSigns]). */
-        const val FLOOR_AFTER_MS = 5 * 60_000L
         private const val SAMPLE_T_INDEX = "CREATE INDEX IF NOT EXISTS sample_t ON sample(t)"
         private var real: Db? = null
         private var debug: Db? = null
@@ -502,21 +499,4 @@ class Db private constructor(ctx: Context, name: String?) : SQLiteOpenHelper(ctx
             debug = null
         }
     }
-}
-
-/**
- * [rows] sorted by start. A finished regen that starts within [Db.MERGE_SLACK_MS] of the previous finished one's end
- * is the same burn seen by another phone. Open regens are never merged, so a phone killed mid-burn can't swallow later ones.
- */
-fun mergeRegens(rows: List<Db.Regen>): List<Db.Regen> {
-    val out = mutableListOf<Db.Regen>()
-    for (r in rows) {
-        val last = out.lastOrNull()
-        if (last?.end != null && r.end != null && r.start <= last.end + Db.MERGE_SLACK_MS) {
-            if (r.end > last.end) out[out.lastIndex] = last.copy(end = r.end, sootEnd = r.sootEnd)
-        } else {
-            out += r
-        }
-    }
-    return out
 }

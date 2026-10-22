@@ -13,6 +13,9 @@ import android.widget.HorizontalScrollView
 import android.widget.LinearLayout
 import android.widget.TextView
 import com.yarisdoctor.Ui.Type
+import com.yarisdoctor.domain.car.PIDS
+import com.yarisdoctor.domain.car.Pid
+import com.yarisdoctor.domain.car.toyotaNormal
 
 /** The "All data" tab: every value in [PIDS], filtered by category or name; tap one for its chart over the last trip. */
 class AllData(private val a: Activity, private val ui: Ui) {
@@ -139,7 +142,7 @@ class AllData(private val a: Activity, private val ui: Ui) {
             chart.set(
                 series.map { it.first }.toLongArray(), series.map { it.second.toFloat() }.toFloatArray(),
                 { i -> "${fmtTime(series[i].first)} · ${p.format(series[i].second)}" },
-                ::time,
+                ::fmtTime,
                 db.regens().filter { (it.end ?: now) >= trip }.map { it.start to (it.end ?: now) },
             )
         }

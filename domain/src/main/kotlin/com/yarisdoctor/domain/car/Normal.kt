@@ -1,4 +1,4 @@
-package com.yarisdoctor
+package com.yarisdoctor.domain.car
 
 /**
  * Toyota's normal values from the 1ND-TV repair manual (Yaris RM, ECD SYSTEM w/ DPF > Data List, 2011-2014 pages, which fit

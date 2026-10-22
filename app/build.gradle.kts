@@ -32,5 +32,6 @@ android {
 }
 
 dependencies {
+    implementation(project(":domain"))
     testImplementation("junit:junit:4.13.2")
 }

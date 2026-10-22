@@ -1,5 +1,6 @@
-package com.yarisdoctor
+package com.yarisdoctor.domain.drive
 
+import com.yarisdoctor.domain.car.PID_LENGTHS
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue

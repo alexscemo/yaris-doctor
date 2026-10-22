@@ -185,6 +185,21 @@ class ChecksTest {
         assertEquals(null, dpfCondition(0, after, later, Double.NaN).perKm)  // odometer missing
     }
 
+    @Test fun dpfConditionsReadUpToTheNextRegenOrTheNewestFrame() {
+        val m = 60_000L
+        val regens = listOf(FinishedRegen(0, 10 * m, 0.0, 1_000.0), FinishedRegen(100 * m, 110 * m, 41_000.0, 42_000.0))
+        val asked = mutableListOf<Pair<Long, Long>>()
+        // Restriction 5.5 just after a regen, 13.5 by the time the next one is due
+        val d = dpfConditions(regens, newestFrame = 200 * m, odometer = 62_000.0) { from, to ->
+            asked += from to to
+            List(8) { if (from == 10 * m || from == 110 * m) 5.5 else 13.5 }
+        }
+        assertEquals(listOf(10 * m to 15 * m, 90 * m to 100 * m, 110 * m to 115 * m, 190 * m to 200 * m), asked)
+        assertEquals(0.2, d[0].perKm!!, 1e-9) // 8 kPa over the 40 km to the next regen's start
+        assertEquals(0.4, d[1].perKm!!, 1e-9) // 8 kPa over the 20 km driven since, by the odometer now
+        assertEquals(listOf(0L, 100 * m), d.map { it.regenStart })
+    }
+
     @Test fun tripSummaryReadsInOneLine() {
         assertEquals("25 mi · soot 40 → 70 % · 1 regen · no warnings", tripSummary(40_000.0, 40, 70, 1, 0, METRES_PER_MILE, "mi"))
         assertEquals("3 km · no regen · 2 warnings", tripSummary(3_000.0, null, null, 0, 2, 1000.0, "km"))

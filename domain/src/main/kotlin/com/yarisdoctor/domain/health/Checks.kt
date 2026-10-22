@@ -243,6 +243,22 @@ fun dpfCondition(regenStart: Long, after: List<Double>, later: List<Double>, km:
     return DpfCondition(regenStart, base, if (base != null && end != null && km != null && km >= 5) (end - base) / km else null)
 }
 
+/** A finished regen as dpfConditions reads it; a missing odometer reading is NaN, which fails the km check instead of faking a distance. */
+class FinishedRegen(val start: Long, val end: Long, val odoStart: Double, val odoEnd: Double)
+
+/**
+ * [DpfCondition] for each of [regens] (oldest first): restriction in the 5 min after each (a fast-loading filter has
+ * already risen a lot by 15), and its rise per km over the last 10 min of driving before the next regen, or before
+ * [newestFrame] for the latest one. [restrictions] reads the readings between two instants; [odometer] is the GPS odometer now.
+ */
+fun dpfConditions(regens: List<FinishedRegen>, newestFrame: Long, odometer: Double, restrictions: (Long, Long) -> List<Double>): List<DpfCondition> =
+    regens.mapIndexed { i, r ->
+        val next = regens.getOrNull(i + 1)
+        val until = next?.start ?: newestFrame
+        val km = ((next?.odoStart ?: odometer) - r.odoEnd) / 1000
+        dpfCondition(r.start, restrictions(r.end, r.end + 5 * 60_000L), restrictions(until - 10 * 60_000L, until), km)
+    }
+
 /** One line for the end-of-drive notification. [perUnit]: metres per mile or km. */
 fun tripSummary(metres: Double, sootStart: Int?, sootEnd: Int?, regens: Int, warnings: Int, perUnit: Double, unit: String): String =
     listOf(

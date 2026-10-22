@@ -33,6 +33,7 @@ import com.yarisdoctor.domain.car.regenOf
 import com.yarisdoctor.domain.car.sootOf
 import com.yarisdoctor.domain.car.tempOf
 import com.yarisdoctor.domain.drive.Poller
+import com.yarisdoctor.domain.drive.Recorder
 import com.yarisdoctor.domain.drive.Sim
 import com.yarisdoctor.domain.drive.burnPercent
 import com.yarisdoctor.domain.health.CRIT

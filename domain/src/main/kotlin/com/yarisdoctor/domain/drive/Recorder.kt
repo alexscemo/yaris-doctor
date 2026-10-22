@@ -1,7 +1,9 @@
-package com.yarisdoctor
+package com.yarisdoctor.domain.drive
+
+import com.yarisdoctor.domain.repo.RegenLog
 
 /** Turns ECU readings into sample and regen rows. Shared by the real dongle session, Debug mode and its fake history. */
-class Recorder(private val db: Db) {
+class Recorder(private val db: RegenLog) {
     private var regenId = -1L
     var regenStart = 0L
         private set

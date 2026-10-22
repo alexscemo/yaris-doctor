@@ -13,8 +13,9 @@ import com.yarisdoctor.domain.drive.Sim
 import com.yarisdoctor.domain.drive.mergeRegens
 import com.yarisdoctor.domain.health.DpfCondition
 import com.yarisdoctor.domain.health.Finding
+import com.yarisdoctor.domain.health.FinishedRegen
 import com.yarisdoctor.domain.health.diffAlerts
-import com.yarisdoctor.domain.health.dpfCondition
+import com.yarisdoctor.domain.health.dpfConditions
 import com.yarisdoctor.domain.health.restriction
 import com.yarisdoctor.domain.model.Alert
 import com.yarisdoctor.domain.model.FLOOR_AFTER_MS
@@ -22,12 +23,13 @@ import com.yarisdoctor.domain.model.Regen
 import com.yarisdoctor.domain.model.Sample
 import com.yarisdoctor.domain.model.TRIP_GAP_MS
 import com.yarisdoctor.domain.model.TripStats
+import com.yarisdoctor.domain.repo.RegenLog
 import java.io.File
 import org.json.JSONArray
 import org.json.JSONObject
 
 /** [name] null = in-memory database (Debug mode), gone when closed. */
-class Db private constructor(ctx: Context, name: String?) : SQLiteOpenHelper(ctx, name, null, 6) {
+class Db private constructor(ctx: Context, name: String?) : SQLiteOpenHelper(ctx, name, null, 6), RegenLog {
 
     override fun onCreate(db: SQLiteDatabase) {
         // odo_m: GPS distance accumulated by this app (metres), our stand-in for the odometer
@@ -232,26 +234,16 @@ class Db private constructor(ctx: Context, name: String?) : SQLiteOpenHelper(ctx
         out
     }
 
-    /**
-     * [DpfCondition] for this phone's finished regens, oldest first: restriction in the 5 min after each (a fast-loading filter has already risen a lot by 15), and its rise
-     * per km over the last 10 min of driving before the next regen (or before the newest frame, for the latest one).
-     */
+    /** [DpfCondition] for this phone's finished regens, oldest first (see [dpfConditions] in the domain). */
     fun dpfConditions(): List<DpfCondition> {
-        val rows = readableDatabase.rawQuery("SELECT start_t, end_t, odo_end, odo_start FROM regen WHERE end_t IS NOT NULL ORDER BY start_t", null).use {
-            val out = ArrayList<DoubleArray>()
-            // A missing odometer reading is NaN, which fails dpfCondition's km check instead of faking a distance
+        val rows = readableDatabase.rawQuery("SELECT start_t, end_t, odo_start, odo_end FROM regen WHERE end_t IS NOT NULL ORDER BY start_t", null).use {
             fun odo(i: Int) = if (it.isNull(i)) Double.NaN else it.getDouble(i)
-            while (it.moveToNext()) out += doubleArrayOf(it.getLong(0).toDouble(), it.getLong(1).toDouble(), odo(2), odo(3))
+            val out = ArrayList<FinishedRegen>()
+            while (it.moveToNext()) out += FinishedRegen(it.getLong(0), it.getLong(1), odo(2), odo(3))
             out
         }
         val newest = readableDatabase.rawQuery("SELECT COALESCE(MAX(t), 0) FROM frame", null).use { it.moveToFirst(); it.getLong(0) }
-        return rows.mapIndexed { i, r ->
-            val end = r[1].toLong()
-            val next = rows.getOrNull(i + 1)
-            val until = next?.get(0)?.toLong() ?: newest
-            val km = ((next?.get(3) ?: odometer()) - r[2]) / 1000
-            dpfCondition(r[0].toLong(), restrictions(end, end + 5 * 60_000L), restrictions(until - 10 * 60_000L, until), km)
-        }
+        return dpfConditions(rows, newest, odometer(), ::restrictions)
     }
 
     /** [DpfCondition] rows for the hub: [regen start, base, per km]; nulls where there wasn't enough driving to tell. */
@@ -295,18 +287,18 @@ class Db private constructor(ctx: Context, name: String?) : SQLiteOpenHelper(ctx
         db.execSQL("CREATE TABLE peer_regen(device TEXT, id INTEGER, start_t INTEGER, end_t INTEGER, soot_start INTEGER, soot_end INTEGER)")
     }
 
-    fun sample(t: Long, soot: Int?, temp: Int?, regen: Boolean, odoM: Double) {
+    override fun sample(t: Long, soot: Int?, temp: Int?, regen: Boolean, odoM: Double) {
         writableDatabase.insert("sample", null, ContentValues().apply {
             put("t", t); put("soot", soot); put("temp", temp); put("regen", regen); put("odo_m", odoM)
         })
     }
 
-    fun regenStart(t: Long, odoM: Double, soot: Int?): Long =
+    override fun regenStart(t: Long, odoM: Double, soot: Int?): Long =
         writableDatabase.insert("regen", null, ContentValues().apply {
             put("start_t", t); put("odo_start", odoM); put("soot_start", soot)
         })
 
-    fun regenEnd(id: Long, t: Long, odoM: Double, soot: Int?) {
+    override fun regenEnd(id: Long, t: Long, odoM: Double, soot: Int?) {
         writableDatabase.update("regen", ContentValues().apply {
             put("end_t", t); put("odo_end", odoM); put("soot_end", soot)
         }, "id = ?", arrayOf(id.toString()))

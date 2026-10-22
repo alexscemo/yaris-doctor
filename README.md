@@ -7,9 +7,9 @@ When the car starts and the dongle powers up, the app connects by itself and log
 It replaces DPFViewer, an earlier ESP32 + TFT dashboard that read the same values.
 
 <p align="center">
-  <img src="docs/screenshots/main-regen.png" width="200" alt="Main screen during a regen: Keep driving callout, soot load, miles since last regen, soot chart, with the coral edge light">
-  <img src="docs/screenshots/history.png" width="200" alt="Miles-between-regens chart and regen history">
-  <img src="docs/screenshots/settings.png" width="200" alt="Settings: dongle, logging, notifications, edge light and units">
+  <img src="docs/screenshots/main-regen.png" width="200" alt="Overview during a regen: health warnings, the Keep driving callout and the soot load card, with the coral edge light">
+  <img src="docs/screenshots/history.png" width="200" alt="Regen history: each regen with its duration, soot before and after, soot 5 min later, peak DPF temperature and distance since the previous one">
+  <img src="docs/screenshots/settings.png" width="200" alt="Settings: dongle, logging, regen notification, Live Updates, edge light, units and model year">
 </p>
 <p align="center">
   <img src="docs/screenshots/notification.png" width="400" alt="Regen notification with temperature, soot and burn-off progress">

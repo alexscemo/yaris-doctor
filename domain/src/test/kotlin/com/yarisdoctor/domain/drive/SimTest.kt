@@ -1,9 +1,15 @@
-package com.yarisdoctor
+package com.yarisdoctor.domain.drive
 
+import com.yarisdoctor.domain.car.PIDS
+import com.yarisdoctor.domain.car.PID_IDLE
+import com.yarisdoctor.domain.car.PID_LENGTHS
+import com.yarisdoctor.domain.car.regenOf
+import com.yarisdoctor.domain.car.sootOf
+import com.yarisdoctor.domain.car.tempOf
+import kotlin.random.Random
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import kotlin.random.Random
 
 class SimTest {
     @Test fun liveSimCyclesThroughRegensWithPlausibleValues() {

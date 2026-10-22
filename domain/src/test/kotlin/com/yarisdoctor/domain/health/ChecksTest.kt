@@ -1,5 +1,13 @@
-package com.yarisdoctor
+package com.yarisdoctor.domain.health
 
+import com.yarisdoctor.domain.car.PIDS
+import com.yarisdoctor.domain.car.PID_IDLE
+import com.yarisdoctor.domain.car.TOYOTA_NORMAL
+import com.yarisdoctor.domain.car.TOYOTA_NORMAL_2015
+import com.yarisdoctor.domain.car.toyotaNormal
+import com.yarisdoctor.domain.drive.Poller
+import com.yarisdoctor.domain.model.METRES_PER_MILE
+import com.yarisdoctor.domain.model.Regen
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -178,7 +186,7 @@ class ChecksTest {
     }
 
     @Test fun tripSummaryReadsInOneLine() {
-        assertEquals("25 mi · soot 40 → 70 % · 1 regen · no warnings", tripSummary(40_000.0, 40, 70, 1, 0, Db.METRES_PER_MILE, "mi"))
+        assertEquals("25 mi · soot 40 → 70 % · 1 regen · no warnings", tripSummary(40_000.0, 40, 70, 1, 0, METRES_PER_MILE, "mi"))
         assertEquals("3 km · no regen · 2 warnings", tripSummary(3_000.0, null, null, 0, 2, 1000.0, "km"))
     }
 
@@ -191,16 +199,16 @@ class ChecksTest {
     }
 
     @Test fun regenHistoryTrends() {
-        fun r(startMin: Long, mins: Long, gapKm: Double?) = Db.Regen(startMin * 60_000, (startMin + mins) * 60_000, gapKm?.times(1000), 60, 20)
+        fun r(startMin: Long, mins: Long, gapKm: Double?) = Regen(startMin * 60_000, (startMin + mins) * 60_000, gapKm?.times(1000), 60, 20)
         assertEquals(emptyList<Finding>(), trends(listOf(r(0, 20, null), r(1000, 20, 300.0))))
         assertEquals(setOf("regen_frequent"), keys(trends(listOf(r(0, 20, null), r(1000, 20, 90.0)))))
         assertEquals(setOf("regen_interrupted"), keys(trends(listOf(r(0, 5, null), r(1000, 6, 200.0), r(2000, 4, 200.0)))))
         // An ongoing regen isn't judged yet
-        assertEquals(emptyList<Finding>(), trends(listOf(r(0, 20, null), Db.Regen(1000 * 60_000, null, 50_000.0, 60, null))))
+        assertEquals(emptyList<Finding>(), trends(listOf(r(0, 20, null), Regen(1000 * 60_000, null, 50_000.0, 60, null))))
     }
 
     @Test fun regenFloorAndPeakTemperature() {
-        fun r(startMin: Long, floor: Int?, peak: Int?) = Db.Regen(startMin * 60_000, (startMin + 20) * 60_000, 300_000.0, 88, 10, floor, peak)
+        fun r(startMin: Long, floor: Int?, peak: Int?) = Regen(startMin * 60_000, (startMin + 20) * 60_000, 300_000.0, 88, 10, floor, peak)
         // The owner's car before the ash record was restored: 40 % five minutes after a regen, peak 627 °C
         assertEquals(setOf("soot_floor"), keys(trends(listOf(r(0, 40, 627)))))
         assertEquals(emptyList<Finding>(), trends(listOf(r(0, 40, 627), r(1000, 12, 640))))

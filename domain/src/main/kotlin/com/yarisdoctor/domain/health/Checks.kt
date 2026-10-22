@@ -1,5 +1,7 @@
-package com.yarisdoctor
+package com.yarisdoctor.domain.health
 
+import com.yarisdoctor.domain.car.PIDS
+import com.yarisdoctor.domain.model.Regen
 import kotlin.math.abs
 
 /** One problem the checks found. [level]: [WARN] or [CRIT]. [key] is stable, so the same issue is one alert row. */
@@ -210,12 +212,6 @@ val TREND_RULES = listOf(
     Triple("dpf_sensor_zero", "DPF pressure sensor off zero", "The DPF pressure sensor reads over 1 kPa, or under -0.5 kPa, with the engine stopped and the ignition on, when no exhaust flows. Toyota 1ND-TV manual: the displayed value leaves out the ECU's zero-point correction, so it may read about ±0.3 kPa at zero; the owner's car reads 0.3-0.4. A drifting sensor or a split or blocked hose makes the ECU's soot figure wrong."),
 )
 
-/** Every rule for the hub, which shows them with the alerts: [key, title, level, about, uses]. Trend rules read no live values. */
-fun ruleDefs(): org.json.JSONArray = org.json.JSONArray().apply {
-    for (r in Checker.RULES) put(org.json.JSONArray().put(r.key).put(r.title).put(r.level).put(r.about).put(org.json.JSONArray(r.uses)))
-    for ((key, title, about) in TREND_RULES) put(org.json.JSONArray().put(key).put(title).put(WARN).put(about).put(org.json.JSONArray()))
-}
-
 /** [engineOffDp]: the newest DPF pressure readings (kPa) taken with the engine stopped and the ignition on, newest first. */
 fun sensorZero(engineOffDp: List<Double>): Finding? {
     if (engineOffDp.size < 3) return null
@@ -274,7 +270,7 @@ fun oilDue(metres: Double?): Finding? = metres?.takeIf { it >= OIL_CHANGE_KM * 1
  * Checks on the regen history (oldest first): how often they come, whether they finish, and the newest finished one's
  * soot floor and peak temperature (the newest that has one: [Db.withSigns] leaves them null while the car was off).
  */
-fun trends(regens: List<Db.Regen>, model2015: Boolean = false): List<Finding> {
+fun trends(regens: List<Regen>, model2015: Boolean = false): List<Finding> {
     val out = mutableListOf<Finding>()
     val done = regens.filter { it.end != null }
     done.lastOrNull { it.floor != null }?.floor?.takeIf { it >= SOOT_FLOOR_HIGH }?.let {

@@ -2,6 +2,7 @@ package com.yarisdoctor
 
 import android.Manifest.permission.ACCESS_FINE_LOCATION
 import android.Manifest.permission.BLUETOOTH_CONNECT
+import android.annotation.TargetApi
 import android.app.AlarmManager
 import android.app.Notification
 import android.app.NotificationChannel
@@ -24,7 +25,24 @@ import android.os.Looper
 import android.os.PowerManager
 import android.os.SystemClock
 import android.util.Log
-import android.annotation.TargetApi
+import com.yarisdoctor.domain.car.PID_REGEN
+import com.yarisdoctor.domain.car.PID_SOOT
+import com.yarisdoctor.domain.car.PID_TEMP
+import com.yarisdoctor.domain.car.engineStopped
+import com.yarisdoctor.domain.car.regenOf
+import com.yarisdoctor.domain.car.sootOf
+import com.yarisdoctor.domain.car.tempOf
+import com.yarisdoctor.domain.drive.Poller
+import com.yarisdoctor.domain.drive.Sim
+import com.yarisdoctor.domain.drive.burnPercent
+import com.yarisdoctor.domain.health.CRIT
+import com.yarisdoctor.domain.health.Checker
+import com.yarisdoctor.domain.health.Finding
+import com.yarisdoctor.domain.health.oilDue
+import com.yarisdoctor.domain.health.sensorZero
+import com.yarisdoctor.domain.health.trends
+import com.yarisdoctor.domain.health.tripSummary
+import com.yarisdoctor.domain.model.TRIP_GAP_MS
 import java.util.UUID
 import java.util.concurrent.Semaphore
 
@@ -262,13 +280,10 @@ class DpfService : Service() {
         for (f in db.syncAlerts(t, active)) {
             if (!notified.add(f.key)) continue
             showing += f.key
-            nm.notify(alertId(f.key), Notification.Builder(this, CH_HEALTH)
-                .setSmallIcon(R.drawable.ic_stat_gauge)
-                .setColor(getColor(R.color.primary))
+            nm.notify(alertId(f.key), notification(CH_HEALTH)
                 .setContentTitle(if (f.level == CRIT) "Check the car now" else "Car warning")
                 .setContentText(f.text)
                 .setStyle(Notification.BigTextStyle().bigText(f.text))
-                .setContentIntent(openApp())
                 .setAutoCancel(true)
                 .build())
         }
@@ -285,14 +300,11 @@ class DpfService : Service() {
     private fun tripDone() {
         val from = db.tripStart() ?: return
         val s = db.tripStats(from)
-        val km = Prefs.km(this)
-        nm.notify(ID_TRIP, Notification.Builder(this, CH_HEALTH)
-            .setSmallIcon(R.drawable.ic_stat_gauge)
-            .setColor(getColor(R.color.primary))
+        val (perUnit, unit) = Prefs.unit(this)
+        nm.notify(ID_TRIP, notification(CH_HEALTH)
             .setContentTitle("Drive finished")
-            .setContentText(tripSummary(s.metres, s.sootStart, s.sootEnd, s.regens, s.warnings, if (km) 1000.0 else Db.METRES_PER_MILE, if (km) "km" else "mi"))
+            .setContentText(tripSummary(s.metres, s.sootStart, s.sootEnd, s.regens, s.warnings, perUnit, unit))
             .setWhen(from)
-            .setContentIntent(openApp())
             .setAutoCancel(true)
             .build())
     }
@@ -310,23 +322,21 @@ class DpfService : Service() {
         lastFix = null
     }
 
-    private fun openApp() =
-        PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE)
+    /** The icon, colour and tap-to-open every notification here shares. */
+    private fun notification(channel: String) = Notification.Builder(this, channel)
+        .setSmallIcon(R.drawable.ic_stat_gauge)
+        .setColor(getColor(R.color.primary))
+        .setContentIntent(PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE))
 
     private fun status(text: String): Notification =
-        Notification.Builder(this, CH_SERVICE)
-            .setSmallIcon(R.drawable.ic_stat_gauge)
-            .setColor(getColor(R.color.primary))
+        notification(CH_SERVICE)
             .setContentTitle("Yaris Doctor")
             .setContentText(text)
-            .setContentIntent(openApp())
             .setOngoing(true)
             .build()
 
     private fun regenNotification(start: Long, sootStart: Int?, soot: Int?, temp: Int?): Notification =
-        Notification.Builder(this, CH_REGEN)
-            .setSmallIcon(R.drawable.ic_stat_gauge)
-            .setColor(getColor(R.color.primary))
+        notification(CH_REGEN)
             .setContentTitle("DPF regenerating · keep driving")
             .setContentText("DPF ${temp ?: "?"}°C · soot ${soot ?: "?"}%")
             .setWhen(start)
@@ -336,7 +346,6 @@ class DpfService : Service() {
             .setOnlyAlertOnce(true)
             .setCategory(Notification.CATEGORY_STATUS)
             .setVisibility(Notification.VISIBILITY_PUBLIC)
-            .setContentIntent(openApp())
             .apply { if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.BAKLAVA) liveUpdate(this, sootStart, soot) }
             .build()
 
@@ -360,7 +369,7 @@ class DpfService : Service() {
     companion object {
         private val SPP: UUID = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB")
         private const val PROBE_MS = 60_000L
-        private const val REGEN_GAP_MS = 2 * 60_000L
+        private const val REGEN_GAP_MS = TRIP_GAP_MS // a drive and a trip end at the same silence
         private const val FULL_MS = 30 * 24 * 3_600_000L
         private const val CH_SERVICE = "service"
         private const val CH_REGEN = "regen"

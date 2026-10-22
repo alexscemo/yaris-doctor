@@ -1,6 +1,9 @@
 package com.yarisdoctor
 
 import android.content.Context
+import android.os.Build
+import com.yarisdoctor.domain.model.METRES_PER_MILE
+import java.util.UUID
 
 object Prefs {
     const val DONGLE = "dongle"
@@ -41,7 +44,9 @@ object Prefs {
     fun logging(c: Context) = sp(c).getBoolean(LOGGING, true)
     fun alerts(c: Context) = sp(c).getBoolean(ALERTS, true)
     fun edge(c: Context) = sp(c).getBoolean(EDGE, false) // off by default: it needs "Display over other apps"
-    fun km(c: Context) =sp(c).getBoolean(KM, false)
+    fun km(c: Context) = sp(c).getBoolean(KM, false)
+    /** Metres per shown distance unit, and its label, per the KM setting. */
+    fun unit(c: Context) = if (km(c)) 1000.0 to "km" else METRES_PER_MILE to "mi"
     /** 2015-or-later Yaris: Toyota's 2015+ soot scale and regen temperature range. Off = 2011-2014, the owner's car. */
     fun model2015(c: Context) = sp(c).getBoolean(MODEL_2015, false)
     /** Metres on the real log's GPS odometer since the oil change recorded in Settings (OIL_AT, OIL_ODO), null if none. */
@@ -49,14 +54,14 @@ object Prefs {
     // Both empty by default: nothing is uploaded until the user points the app at their own hub and Wi-Fi
     fun server(c: Context) = sp(c).getString(SERVER, "")!!
     fun wifi(c: Context) = sp(c).getString(WIFI, "")!!
-    fun driver(c: Context) = sp(c).getString(DRIVER, null) ?: android.os.Build.MODEL
+    fun driver(c: Context) = sp(c).getString(DRIVER, null) ?: Build.MODEL
     fun long(c: Context, key: String) = sp(c).getLong(key, 0L)
     fun bool(c: Context, key: String, default: Boolean) = sp(c).getBoolean(key, default)
     fun str(c: Context, key: String) = sp(c).getString(key, null)
 
     /** Random per-install id: how the home hub tells phones apart without accounts. */
     @Synchronized fun deviceId(c: Context): String =
-        sp(c).getString(DEVICE_ID, null) ?: java.util.UUID.randomUUID().toString().also { put(c, DEVICE_ID, it) }
+        sp(c).getString(DEVICE_ID, null) ?: UUID.randomUUID().toString().also { put(c, DEVICE_ID, it) }
 
     fun put(c: Context, key: String, value: Boolean) = sp(c).edit().putBoolean(key, value).apply()
     fun put(c: Context, key: String, value: String?) = sp(c).edit().putString(key, value).apply()

@@ -13,8 +13,9 @@ import android.widget.HorizontalScrollView
 import android.widget.LinearLayout
 import android.widget.TextView
 import com.yarisdoctor.Ui.Type
-import java.text.SimpleDateFormat
-import java.util.Locale
+import com.yarisdoctor.domain.car.PIDS
+import com.yarisdoctor.domain.car.Pid
+import com.yarisdoctor.domain.car.toyotaNormal
 
 /** The "All data" tab: every value in [PIDS], filtered by category or name; tap one for its chart over the last trip. */
 class AllData(private val a: Activity, private val ui: Ui) {
@@ -140,8 +141,8 @@ class AllData(private val a: Activity, private val ui: Ui) {
             val now = System.currentTimeMillis()
             chart.set(
                 series.map { it.first }.toLongArray(), series.map { it.second.toFloat() }.toFloatArray(),
-                { i -> "${time(series[i].first)} · ${p.format(series[i].second)}" },
-                ::time,
+                { i -> "${fmtTime(series[i].first)} · ${p.format(series[i].second)}" },
+                ::fmtTime,
                 db.regens().filter { (it.end ?: now) >= trip }.map { it.start to (it.end ?: now) },
             )
         }
@@ -164,6 +165,4 @@ class AllData(private val a: Activity, private val ui: Ui) {
         else -> "${(ms + 30_000) / 60_000} min"
     }
 
-    private fun fmt(t: Long) = SimpleDateFormat("EEE d MMM, HH:mm", Locale.getDefault()).format(t)
-    private fun time(t: Long) = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(t)
 }

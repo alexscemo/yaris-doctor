@@ -27,8 +27,11 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import com.yarisdoctor.Ui.Type
-import java.text.SimpleDateFormat
-import java.util.Locale
+import com.yarisdoctor.domain.health.CRIT
+import com.yarisdoctor.domain.health.WARN
+import com.yarisdoctor.domain.model.Alert
+import com.yarisdoctor.domain.model.FLOOR_AFTER_MS
+import com.yarisdoctor.domain.model.Regen
 
 class MainActivity : Activity() {
 
@@ -262,9 +265,7 @@ class MainActivity : Activity() {
         callout.visibility = if (regenNow) View.VISIBLE else View.GONE
         if (regenNow) calloutText.text = "DPF ${last!!.temp ?: "?"}°C · soot ${last.soot ?: "?"}% · $mins min so far"
 
-        val km = Prefs.km(this)
-        val perUnit = if (km) 1000.0 else Db.METRES_PER_MILE
-        val unit = if (km) "km" else "mi"
+        val (perUnit, unit) = Prefs.unit(this)
 
         showSoot(last?.soot)
         sootFill.setSoot(last?.soot)
@@ -290,7 +291,7 @@ class MainActivity : Activity() {
             { i -> "${fmt(series[i].first)} · %.0f%% soot".format(series[i].second) }, ::fmtDay,
             regens.map { it.start to (it.end ?: now) },
         )
-        regenTitle.text = if (km) "Kilometres between regens" else "Miles between regens"
+        regenTitle.text = if (unit == "km") "Kilometres between regens" else "Miles between regens"
         val withGap = regens.filter { it.gapM != null }.takeLast(20)
         regenChart.set(
             withGap.map { it.start }.toLongArray(), withGap.map { (it.gapM!! / perUnit).toFloat() }.toFloatArray(),
@@ -328,7 +329,7 @@ class MainActivity : Activity() {
         }
 
         // Rebuilt only when the list or units change, or the newest regen's floor becomes readable; refresh runs every 5 s
-        val key = "$unit ${regens.size} ${regens.lastOrNull()?.end} ${regens.lastOrNull()?.end?.let { now - it > 2 * Db.FLOOR_AFTER_MS }}"
+        val key = "$unit ${regens.size} ${regens.lastOrNull()?.end} ${regens.lastOrNull()?.end?.let { now - it > 2 * FLOOR_AFTER_MS }}"
         if (key != historyKey) {
             historyKey = key
             renderHistory(regens, perUnit, unit)
@@ -364,7 +365,7 @@ class MainActivity : Activity() {
     }
 
     /** The verdict set huge and ended by a square in the status colour, then what the checks found. */
-    private fun renderHealth(alerts: List<Db.Alert>) {
+    private fun renderHealth(alerts: List<Alert>) {
         health.removeAllViews()
         val open = alerts.filter { it.end == null }
         val level = open.maxOfOrNull { it.level } ?: 0
@@ -389,7 +390,7 @@ class MainActivity : Activity() {
         health.addView(ui.divider(R.color.hairline), LinearLayout.LayoutParams(-1, ui.px(1).coerceAtLeast(1)).apply { topMargin = ui.px(8) })
     }
 
-    private fun alertRow(a: Db.Alert, dot: Int, ink: Int) = LinearLayout(this).apply {
+    private fun alertRow(a: Alert, dot: Int, ink: Int) = LinearLayout(this).apply {
         gravity = Gravity.CENTER_VERTICAL
         setPadding(0, ui.px(12), 0, 0)
         addView(ui.dot(dot), LinearLayout.LayoutParams(ui.px(10), ui.px(10)).apply { marginEnd = ui.px(12) })
@@ -400,7 +401,7 @@ class MainActivity : Activity() {
     }
 
     /** Newest first, capped at 50 rows. */
-    private fun renderHistory(regens: List<Db.Regen>, perUnit: Double, unit: String) {
+    private fun renderHistory(regens: List<Regen>, perUnit: Double, unit: String) {
         history.removeAllViews()
         if (regens.isEmpty()) {
             history.addView(ui.text(Type.BODY_MD, R.color.muted, "None logged yet. Regens appear here after a drive.").apply { gravity = Gravity.CENTER_HORIZONTAL })
@@ -410,7 +411,7 @@ class MainActivity : Activity() {
             if (i > 0) history.addView(ui.divider())
             val badge = when {
                 r.end == null -> ui.pill(ui.text(Type.CAPTION_UPPER, R.color.on_primary, "Ongoing"), R.color.primary)
-                r.gapM != null -> ui.pill(ui.text(Type.CAPTION, R.color.ink, "%.0f $unit".format(r.gapM / perUnit)))
+                r.gapM != null -> ui.pill(ui.text(Type.CAPTION, R.color.ink, "%.0f $unit".format(r.gapM!! / perUnit)))
                 else -> ui.pill(ui.text(Type.CAPTION, R.color.muted, "First logged"))
             }
             history.addView(LinearLayout(this).apply {
@@ -447,9 +448,7 @@ class MainActivity : Activity() {
         ui.text(Type.BODY_SM, R.color.muted, "Tap or drag the chart to read values").apply { setPadding(0, 0, 0, ui.px(12)) },
     ).apply { addView(chart, LinearLayout.LayoutParams(-1, ui.px(190))) }
 
-    private fun duration(r: Db.Regen) = r.end?.let { "${(it - r.start) / 60_000} min" } ?: "ongoing"
-    private fun fmt(t: Long) = SimpleDateFormat("EEE d MMM, HH:mm", Locale.getDefault()).format(t)
-    private fun fmtDay(t: Long) = SimpleDateFormat("d MMM", Locale.getDefault()).format(t)
+    private fun duration(r: Regen) = r.end?.let { "${(it - r.start) / 60_000} min" } ?: "ongoing"
     private fun granted(perm: String) = checkSelfPermission(perm) == PERMISSION_GRANTED
 
     companion object {

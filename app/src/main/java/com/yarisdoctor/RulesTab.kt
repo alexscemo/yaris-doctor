@@ -5,6 +5,12 @@ import android.view.Gravity
 import android.view.View
 import android.widget.LinearLayout
 import com.yarisdoctor.Ui.Type
+import com.yarisdoctor.domain.car.PIDS
+import com.yarisdoctor.domain.drive.Poller
+import com.yarisdoctor.domain.health.CRIT
+import com.yarisdoctor.domain.health.Checker
+import com.yarisdoctor.domain.health.TREND_RULES
+import com.yarisdoctor.domain.health.WARN
 
 /** The "Rules" tab: every health check, what it looks for, and how often the values it reads are polled. Static. */
 class RulesTab(private val a: Activity, private val ui: Ui) {

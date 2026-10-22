@@ -3,14 +3,17 @@ package com.yarisdoctor
 import android.Manifest.permission.BLUETOOTH_CONNECT
 import android.app.Activity
 import android.app.AlertDialog
-import android.bluetooth.BluetoothManager
 import android.app.NotificationManager
+import android.bluetooth.BluetoothManager
 import android.content.ActivityNotFoundException
+import android.content.ContentValues
 import android.content.Intent
 import android.content.pm.PackageManager.PERMISSION_GRANTED
+import android.net.Uri
 import android.os.Build
-import android.os.Bundle
+import android.provider.MediaStore
 import android.provider.Settings
+import android.text.format.DateUtils
 import android.view.Gravity
 import android.view.View
 import android.widget.EditText
@@ -19,14 +22,15 @@ import android.widget.ScrollView
 import android.widget.Switch
 import android.widget.Toast
 import com.yarisdoctor.Ui.Type
+import com.yarisdoctor.domain.health.OIL_CHANGE_KM
+import java.io.File
+import java.text.DateFormat
+import java.text.SimpleDateFormat
+import java.util.Locale
 
 class SettingsActivity : Activity() {
 
     private val ui by lazy { Ui(this) }
-
-    override fun onCreate(savedInstanceState: Bundle?) {
-        super.onCreate(savedInstanceState)
-    }
 
     /** Rebuilt after every change so subtitles always show the current value. */
     private fun render() {
@@ -148,7 +152,7 @@ class SettingsActivity : Activity() {
         return toggle("Edge light", sub, Prefs.edge(this) && allowed) { on ->
             Prefs.put(this, Prefs.EDGE, on)
             if (on && !Settings.canDrawOverlays(this)) {
-                startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, android.net.Uri.parse("package:$packageName")))
+                startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName")))
             }
         }
     }
@@ -161,7 +165,7 @@ class SettingsActivity : Activity() {
     private fun syncSummary(): String {
         val ok = Prefs.long(this, Prefs.SYNC_OK_AT)
         val last = if (ok == 0L) "Never synced" else "Last synced " +
-            android.text.format.DateUtils.getRelativeTimeSpanString(ok, System.currentTimeMillis(), 60_000L)
+            DateUtils.getRelativeTimeSpanString(ok, System.currentTimeMillis(), 60_000L)
         return Prefs.str(this, Prefs.SYNC_STATUS)?.let { "$last · $it" } ?: last
     }
 
@@ -210,11 +214,11 @@ class SettingsActivity : Activity() {
     /** Records an oil change at today's date and the GPS odometer; the oil_change_due check counts from it. */
     private fun oilRow(): View {
         val at = Prefs.long(this, Prefs.OIL_AT)
-        val km = Prefs.km(this)
+        val (perUnit, unit) = Prefs.unit(this)
         val sub = if (at == 0L) "Never recorded · tap when the oil is changed" else {
-            val since = (Prefs.oilMetres(this) ?: 0.0) / (if (km) 1000.0 else Db.METRES_PER_MILE)
+            val since = (Prefs.oilMetres(this) ?: 0.0) / perUnit
             val regens = Db.real(this).regens().count { it.start >= at }
-            java.text.DateFormat.getDateInstance().format(at) + " · %.0f ${if (km) "km" else "mi"}, $regens regen${if (regens == 1) "" else "s"} since".format(since)
+            DateFormat.getDateInstance().format(at) + " · %.0f $unit, $regens regen${if (regens == 1) "" else "s"} since".format(since)
         }
         return row("Oil changed", sub) {
             AlertDialog.Builder(this)
@@ -314,14 +318,14 @@ class SettingsActivity : Activity() {
         toast("Exporting…")
         Thread {
             val result = try {
-                val tmp = java.io.File(cacheDir, "export.db")
+                val tmp = File(cacheDir, "export.db")
                 Db.real(this).exportTo(tmp)
-                val name = "yaris-doctor-" + java.text.SimpleDateFormat("yyyyMMdd-HHmm", java.util.Locale.ROOT).format(System.currentTimeMillis()) + ".db"
-                val values = android.content.ContentValues().apply {
-                    put(android.provider.MediaStore.Downloads.DISPLAY_NAME, name)
-                    put(android.provider.MediaStore.Downloads.MIME_TYPE, "application/vnd.sqlite3")
+                val name = "yaris-doctor-" + SimpleDateFormat("yyyyMMdd-HHmm", Locale.ROOT).format(System.currentTimeMillis()) + ".db"
+                val values = ContentValues().apply {
+                    put(MediaStore.Downloads.DISPLAY_NAME, name)
+                    put(MediaStore.Downloads.MIME_TYPE, "application/vnd.sqlite3")
                 }
-                val uri = contentResolver.insert(android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI, values) ?: error("Downloads refused the file")
+                val uri = contentResolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values) ?: error("Downloads refused the file")
                 try {
                     contentResolver.openOutputStream(uri)!!.use { out -> tmp.inputStream().use { it.copyTo(out) } }
                 } catch (e: Exception) {

@@ -1,4 +1,4 @@
-package com.yarisdoctor
+package com.yarisdoctor.domain.car
 
 /**
  * One live-data item: bits [bitStart]..[bitEnd] (MSB-first from payload byte 0, so multi-byte fields are big-endian) of the
@@ -31,12 +31,6 @@ class Pid(
         enum?.let { return it.getOrNull(v.toInt()) ?: "? (${v.toInt()})" }
         return "%.${decimals}f".format(v) + if (unit.isEmpty()) "" else " $unit"
     }
-}
-
-/** The table for the hub, which decodes frames with it: [lid, bitStart, bitEnd, len, signed, mul, div, offset, decimals, name, unit, category, enum]. */
-fun pidDefs(): org.json.JSONArray = org.json.JSONArray().apply {
-    for (p in PIDS) put(org.json.JSONArray().put(p.lid).put(p.bitStart).put(p.bitEnd).put(p.len).put(p.signed).put(p.mul).put(p.div)
-        .put(p.offset).put(p.decimals).put(p.name).put(p.unit).put(p.category).put(p.enum?.let { org.json.JSONArray(it) } ?: org.json.JSONObject.NULL))
 }
 
 /** Payload length per request code ("21DD" → 18), for checking replies. */

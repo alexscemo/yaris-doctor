@@ -65,7 +65,7 @@ object Sync {
     fun maybe(c: Context) {
         val home = Prefs.wifi(c)
         if (Prefs.server(c).isBlank() || home.isBlank() || ssid != home) return
-        val db = Db.real(c)
+        val db = c.container.real
         val pending = db.maxSampleRowid() > Prefs.long(c, Prefs.SYNCED_ROWID) || db.regenSignature() != Prefs.str(c, Prefs.SYNCED_REGENS) ||
             // A hub from before frames and alerts can't take them: don't sync every minute for them (the 10-min pull rechecks)
             (Prefs.bool(c, Prefs.HUB_FRAMES, true) &&
@@ -87,7 +87,7 @@ object Sync {
         wake.acquire(10 * 60_000L) // first upload of months of data takes a while
         Prefs.put(c, Prefs.SYNC_TRIED_AT, System.currentTimeMillis())
         val status = try {
-            val db = Db.real(c)
+            val db = c.container.real
             val signature = db.regenSignature()
             val alertSig = alertSignature(db)
             // A hub that never got this phone's warnings (first sync, new address) gets all of them; after that the

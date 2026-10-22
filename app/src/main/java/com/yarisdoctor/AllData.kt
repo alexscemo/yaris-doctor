@@ -115,7 +115,7 @@ class AllData(private val a: Activity, private val ui: Ui) {
 
     /** Called every few seconds while the tab is visible. */
     fun refresh() {
-        val db = Db.get(a)
+        val db = a.container.db()
         val latest = db.latestFrames()
         val newest = latest.values.maxOfOrNull { it.first }
         header.text = when {

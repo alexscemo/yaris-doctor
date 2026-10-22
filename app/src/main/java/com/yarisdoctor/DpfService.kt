@@ -57,7 +57,7 @@ class DpfService : Service() {
     @Volatile private var odoM = 0.0 // written by the GPS callback (main thread), or by simulate() when GPS is off
     @Volatile private var socket: BluetoothSocket? = null
     private var lastFix: Location? = null
-    private val db by lazy { Db.get(this) }
+    private val db by lazy { container.db() }
     private val nm by lazy { getSystemService(NotificationManager::class.java) }
     private val alarms by lazy { getSystemService(AlarmManager::class.java) }
     private val wake by lazy {
@@ -103,9 +103,9 @@ class DpfService : Service() {
         odoM = db.odometer()
         checker = Checker(model2015)
         // A previous process killed mid-regen never closed its row; it would show "Ongoing" forever
-        Db.real(this).closeOrphanRegens()
+        container.real.closeOrphanRegens()
         // Engine-stop blips (under a minute, no distance) are not burns; every start, so one that slips past engineStopped() goes too
-        Db.real(this).dropStopBlips()
+        container.real.dropStopBlips()
         // Live alerts left open by a killed process end now; regen-history ones open if they apply
         trend = history()
         checks(System.currentTimeMillis(), emptyList())
@@ -269,7 +269,7 @@ class DpfService : Service() {
         val to = System.currentTimeMillis() - FULL_MS
         val from = Prefs.long(this, Prefs.THINNED_TO)
         if (to - from < 3_600_000L) return
-        Db.real(this).thinFrames(from, to)
+        container.real.thinFrames(from, to)
         Prefs.put(this, Prefs.THINNED_TO, to)
     }
 

@@ -50,7 +50,7 @@ object Prefs {
     /** 2015-or-later Yaris: Toyota's 2015+ soot scale and regen temperature range. Off = 2011-2014, the owner's car. */
     fun model2015(c: Context) = sp(c).getBoolean(MODEL_2015, false)
     /** Metres on the real log's GPS odometer since the oil change recorded in Settings (OIL_AT, OIL_ODO), null if none. */
-    fun oilMetres(c: Context): Double? = long(c, OIL_AT).takeIf { it > 0 }?.let { Db.real(c).odometer() - long(c, OIL_ODO) }
+    fun oilMetres(c: Context): Double? = long(c, OIL_AT).takeIf { it > 0 }?.let { c.container.real.odometer() - long(c, OIL_ODO) }
     // Both empty by default: nothing is uploaded until the user points the app at their own hub and Wi-Fi
     fun server(c: Context) = sp(c).getString(SERVER, "")!!
     fun wifi(c: Context) = sp(c).getString(WIFI, "")!!

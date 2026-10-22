@@ -235,7 +235,7 @@ class MainActivity : Activity() {
     private fun refresh() {
         if (tab == 1) return allData.refresh()
         if (tab == 2) return // the rules don't change
-        val db = Db.get(this)
+        val db = container.db()
         val last = db.lastSample()
         val regens = db.regens()
         val now = System.currentTimeMillis()
@@ -407,7 +407,7 @@ class MainActivity : Activity() {
             history.addView(ui.text(Type.BODY_MD, R.color.muted, "None logged yet. Regens appear here after a drive.").apply { gravity = Gravity.CENTER_HORIZONTAL })
             return
         }
-        Db.get(this).withSigns(regens.takeLast(50)).reversed().forEachIndexed { i, r ->
+        container.db().withSigns(regens.takeLast(50)).reversed().forEachIndexed { i, r ->
             if (i > 0) history.addView(ui.divider())
             val badge = when {
                 r.end == null -> ui.pill(ui.text(Type.CAPTION_UPPER, R.color.on_primary, "Ongoing"), R.color.primary)

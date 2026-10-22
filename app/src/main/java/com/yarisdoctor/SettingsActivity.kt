@@ -90,7 +90,7 @@ class SettingsActivity : Activity() {
             addView(group(
                 toggle("Debug mode", "Simulated dongle with random data, for testing without the car. Nothing is saved, and it turns off when the app is closed or the phone restarts.", Prefs.debug) {
                     Prefs.debug = it
-                    if (!it) Db.dropDebug()
+                    if (!it) container.dropDebug()
                     DpfService.restart(context)
                 },
             ))
@@ -217,7 +217,7 @@ class SettingsActivity : Activity() {
         val (perUnit, unit) = Prefs.unit(this)
         val sub = if (at == 0L) "Never recorded · tap when the oil is changed" else {
             val since = (Prefs.oilMetres(this) ?: 0.0) / perUnit
-            val regens = Db.real(this).regens().count { it.start >= at }
+            val regens = container.real.regens().count { it.start >= at }
             DateFormat.getDateInstance().format(at) + " · %.0f $unit, $regens regen${if (regens == 1) "" else "s"} since".format(since)
         }
         return row("Oil changed", sub) {
@@ -226,7 +226,7 @@ class SettingsActivity : Activity() {
                 .setMessage("Counts distance and regens from now. Toyota changes the oil every $OIL_CHANGE_KM km on this engine.")
                 .setPositiveButton("Record") { _, _ ->
                     Prefs.put(this, Prefs.OIL_AT, System.currentTimeMillis())
-                    Prefs.put(this, Prefs.OIL_ODO, Db.real(this).odometer().toLong())
+                    Prefs.put(this, Prefs.OIL_ODO, container.real.odometer().toLong())
                     DpfService.restart(this) // closes an oil-change warning now
                     render()
                 }
@@ -319,7 +319,7 @@ class SettingsActivity : Activity() {
         Thread {
             val result = try {
                 val tmp = File(cacheDir, "export.db")
-                Db.real(this).exportTo(tmp)
+                container.real.exportTo(tmp)
                 val name = "yaris-doctor-" + SimpleDateFormat("yyyyMMdd-HHmm", Locale.ROOT).format(System.currentTimeMillis()) + ".db"
                 val values = ContentValues().apply {
                     put(MediaStore.Downloads.DISPLAY_NAME, name)

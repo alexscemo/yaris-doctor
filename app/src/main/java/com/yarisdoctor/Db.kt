@@ -9,7 +9,6 @@ import com.yarisdoctor.domain.car.PIDS
 import com.yarisdoctor.domain.car.PID_IDLE
 import com.yarisdoctor.domain.car.PID_LENGTHS
 import com.yarisdoctor.domain.drive.Poller
-import com.yarisdoctor.domain.drive.Sim
 import com.yarisdoctor.domain.drive.mergeRegens
 import com.yarisdoctor.domain.health.DpfCondition
 import com.yarisdoctor.domain.health.Finding
@@ -28,8 +27,8 @@ import java.io.File
 import org.json.JSONArray
 import org.json.JSONObject
 
-/** [name] null = in-memory database (Debug mode), gone when closed. */
-class Db private constructor(ctx: Context, name: String?) : SQLiteOpenHelper(ctx, name, null, 6), RegenLog {
+/** [name] null = in-memory database (Debug mode), gone when closed. Created by [AppContainer]: one per database per process. */
+class Db internal constructor(ctx: Context, name: String?) : SQLiteOpenHelper(ctx, name, null, 6), RegenLog {
 
     override fun onCreate(db: SQLiteDatabase) {
         // odo_m: GPS distance accumulated by this app (metres), our stand-in for the odometer
@@ -473,22 +472,5 @@ class Db private constructor(ctx: Context, name: String?) : SQLiteOpenHelper(ctx
     companion object {
         private const val PEER_CLOCK_SLACK_MS = 5 * 60_000L
         private const val SAMPLE_T_INDEX = "CREATE INDEX IF NOT EXISTS sample_t ON sample(t)"
-        private var real: Db? = null
-        private var debug: Db? = null
-
-        /** In Debug mode: a fresh in-memory database seeded with fake history; yaris.db is never touched. */
-        @Synchronized fun get(ctx: Context): Db {
-            val c = ctx.applicationContext
-            if (!Prefs.debug) return real(c)
-            return debug ?: Db(c, null).also { debug = it; Sim.seed(it, System.currentTimeMillis()) }
-        }
-
-        /** The real log, even while Debug mode is on: only this is ever uploaded. */
-        @Synchronized fun real(ctx: Context): Db = real ?: Db(ctx.applicationContext, "yaris.db").also { real = it }
-
-        @Synchronized fun dropDebug() {
-            debug?.close()
-            debug = null
-        }
     }
 }

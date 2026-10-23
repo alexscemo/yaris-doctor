@@ -15,6 +15,7 @@ import android.net.wifi.WifiInfo
 import android.net.wifi.WifiManager
 import android.os.PowerManager
 import android.util.Log
+import com.yarisdoctor.domain.model.Trip
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.IOException
@@ -73,7 +74,9 @@ object Sync {
         return db.maxSampleRowid() > Prefs.long(c, Prefs.SYNCED_ROWID) || db.regenSignature() != Prefs.str(c, Prefs.SYNCED_REGENS) ||
             // A hub from before frames and alerts can't take them: don't sync every minute for them (the 10-min pull rechecks)
             (Prefs.bool(c, Prefs.HUB_FRAMES, true) &&
-                (db.maxFrameRowid() > Prefs.long(c, Prefs.SYNCED_FRAME_ROWID) || alertSignature(db) != Prefs.str(c, Prefs.SYNCED_ALERTS)))
+                (db.maxFrameRowid() > Prefs.long(c, Prefs.SYNCED_FRAME_ROWID) || alertSignature(db) != Prefs.str(c, Prefs.SYNCED_ALERTS))) ||
+            // Likewise deleted trips wait for a hub that can remove them
+            (Prefs.bool(c, Prefs.HUB_DELETES, true) && Prefs.str(c, Prefs.PENDING_DELETES) != null)
     }
 
     /** Called by the service once a minute while idle: uploads only on the home Wi-Fi, only when there is something new. */
@@ -109,6 +112,7 @@ object Sync {
             var sent = 0
             var regens: JSONArray? = db.regenRows() // with the first batch only
             var hubHasFrames = false
+            val deletes = parseRanges(Prefs.str(c, Prefs.PENDING_DELETES))
             while (true) {
                 val batch = db.samplesAfter(after, BATCH)
                 if (batch.length() == 0 && regens == null) break
@@ -119,10 +123,19 @@ object Sync {
                     .put("samples", batch)
                     .put("regens", regens ?: JSONArray())
                     // regens_all: this is every regen the phone has, so the hub drops ones the phone deleted (engine-stop blips)
-                    .apply { if (first) put("regens_all", true).put("alerts", alerts).put("defs", pidDefs()).put("rules", ruleDefs()).put("dpf", db.dpfRows()) })
+                    .apply {
+                        if (!first) return@apply
+                        put("regens_all", true).put("alerts", alerts).put("defs", pidDefs()).put("rules", ruleDefs()).put("dpf", db.dpfRows())
+                        // Trips deleted on the phone: the hub removes this phone's rows in these windows
+                        if (deletes.isNotEmpty()) put("deleted", JSONArray(deletes.map { JSONArray().put(it.first).put(it.last) }))
+                    })
                 if (first) {
                     hubHasFrames = reply.has("frames") // a hub from before frames ignores them: keep them for an updated one
                     Prefs.put(c, Prefs.HUB_FRAMES, hubHasFrames)
+                    // Same for deletes: an older hub ignores them, so they stay queued for an updated one ([queueDeletes] can't run meanwhile)
+                    val hubDeletes = reply.has("deleted")
+                    Prefs.put(c, Prefs.HUB_DELETES, hubDeletes)
+                    if (hubDeletes && deletes.isNotEmpty()) Prefs.put(c, Prefs.PENDING_DELETES, null)
                 }
                 regens = null
                 if (batch.length() > 0) {
@@ -175,6 +188,12 @@ object Sync {
         return status
     }
 
+    /** Queues deleted trips' windows for the hub to remove at the next sync; nothing to do without a hub. */
+    @Synchronized fun queueDeletes(c: Context, trips: List<Trip>) {
+        if (Prefs.server(c).isBlank() || trips.isEmpty()) return
+        Prefs.put(c, Prefs.PENDING_DELETES, formatRanges(parseRanges(Prefs.str(c, Prefs.PENDING_DELETES)) + trips.map { it.start..it.until }))
+    }
+
     /** One quiet notification after an automatic upload, replacing the previous one, so a drive ends with "all synced". */
     private fun synced(c: Context, readings: Int, frames: Int, warnings: Int) {
         val nm = c.getSystemService(NotificationManager::class.java)
@@ -219,6 +238,17 @@ object Sync {
 }
 
 const val DEFAULT_HUB_PORT = 8765
+
+/** Time windows (ms, inclusive) as "a-b,c-d", how deleted trips wait in Prefs; null when there are none. */
+fun formatRanges(ranges: List<LongRange>): String? = ranges.takeIf { it.isNotEmpty() }?.joinToString(",") { "${it.first}-${it.last}" }
+
+/** Reads [formatRanges]' text back; a malformed entry is skipped rather than blocking the rest. */
+fun parseRanges(s: String?): List<LongRange> = s.orEmpty().split(",").mapNotNull { part ->
+    val (a, b) = part.split("-").takeIf { it.size == 2 } ?: return@mapNotNull null
+    val from = a.toLongOrNull() ?: return@mapNotNull null
+    val to = b.toLongOrNull() ?: return@mapNotNull null
+    from..to
+}
 
 /** "192.168.1.50" → "http://192.168.1.50:8765"; a scheme or port the user typed is kept. Blank stays blank (= sync off). */
 fun hubUrl(raw: String): String {

@@ -1,4 +1,4 @@
-package com.yarisdoctor
+﻿package com.yarisdoctor
 
 import android.Manifest.permission.BLUETOOTH_CONNECT
 import android.app.Activity
@@ -13,9 +13,14 @@ import android.net.Uri
 import android.os.Build
 import android.provider.MediaStore
 import android.provider.Settings
+import android.text.SpannableStringBuilder
+import android.text.Spanned
 import android.text.format.DateUtils
+import android.text.style.ForegroundColorSpan
+import android.text.style.RelativeSizeSpan
 import android.view.Gravity
 import android.view.View
+import android.widget.CheckBox
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ScrollView
@@ -23,6 +28,7 @@ import android.widget.Switch
 import android.widget.Toast
 import com.yarisdoctor.Ui.Type
 import com.yarisdoctor.domain.health.OIL_CHANGE_KM
+import com.yarisdoctor.domain.model.Trip
 import java.io.File
 import java.text.DateFormat
 import java.text.SimpleDateFormat
@@ -70,6 +76,7 @@ class SettingsActivity : Activity() {
                             Prefs.put(context, Prefs.SYNCED_FRAME_ROWID, 0L)
                             Prefs.put(context, Prefs.SYNCED_ALERTS, null)
                             Prefs.put(context, Prefs.HUB_FRAMES, true)
+                            Prefs.put(context, Prefs.HUB_DELETES, true)
                             Prefs.put(context, Prefs.PULLED_ROWID, 0L)
                         }
                         Prefs.put(context, Prefs.SERVER, url)
@@ -85,7 +92,7 @@ class SettingsActivity : Activity() {
             ))
             addView(syncBlock(), LinearLayout.LayoutParams(-1, -2).apply { topMargin = ui.px(12) })
             addView(section("Your data"))
-            addView(group(row("Export database", "Saves every reading, regen, engine frame and warning to Downloads as a SQLite file") { export() }))
+            addView(group(row("Export or delete trips", "Pick drives to save to Downloads as a SQLite file, or to delete") { pickTrips() }))
             addView(section("Developer"))
             addView(group(
                 toggle("Debug mode", "Simulated dongle with random data, for testing without the car. Nothing is saved, and it turns off when the app is closed or the phone restarts.", Prefs.debug) {
@@ -313,14 +320,151 @@ class SettingsActivity : Activity() {
         return row(title, sub, sw) { sw.toggle() }
     }
 
+    /** This phone's trips (the real log, never Debug data), read off the main thread, to export or delete. */
+    private fun pickTrips() {
+        Thread {
+            val trips = container.real.trips()
+            runOnUiThread { if (!isFinishing) showTrips(trips) }
+        }.start()
+    }
+
+    /** "Thu 22 Oct, 09:12" over "34.2 km · 1 regen · 48 min" (or "In progress"), as a checkbox label. */
+    private fun tripLabel(trip: Trip, live: Boolean): CharSequence {
+        val (perUnit, unit) = Prefs.unit(this)
+        val sub = if (live) "In progress" else
+            "%.1f $unit · ${plural(trip.regens, "regen")} · ${(trip.end - trip.start) / 60_000} min".format(trip.metres / perUnit)
+        return SpannableStringBuilder(fmt(trip.start)).append("\n").apply {
+            val from = length
+            append(sub)
+            setSpan(ForegroundColorSpan(ui.color(R.color.muted)), from, length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+            setSpan(RelativeSizeSpan(Type.BODY_SM.sp / Type.TITLE_SM.sp), from, length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+        }
+    }
+
+    /** Trip list with "Select all", an orange Export and a red Delete. The trip still being logged can't be picked. */
+    private fun showTrips(trips: List<Trip>) {
+        if (trips.isEmpty()) {
+            AlertDialog.Builder(this).setTitle("Trips").setMessage("No trips logged yet.").setPositiveButton("OK", null).show()
+            return
+        }
+        val now = System.currentTimeMillis()
+        var syncing = false // set while "Select all" ticks the rows, so their listener doesn't untick it back
+        fun box(label: CharSequence) = CheckBox(this).apply {
+            text = label
+            textSize = Type.TITLE_SM.sp
+            ui.style(this, Type.TITLE_SM)
+            setTextColor(ui.color(R.color.ink))
+            minHeight = ui.px(56)
+        }
+        val all = box("Select all")
+        val boxes = trips.map { trip ->
+            val live = trip.live(now)
+            box(tripLabel(trip, live)).apply {
+                isEnabled = !live
+                alpha = if (live) 0.5f else 1f
+            }
+        }
+        val pickable = boxes.filter { it.isEnabled }
+        all.setOnCheckedChangeListener { _, on ->
+            if (syncing) return@setOnCheckedChangeListener
+            syncing = true
+            pickable.forEach { it.isChecked = on }
+            syncing = false
+        }
+        for (b in pickable) b.setOnCheckedChangeListener { _, _ ->
+            if (syncing) return@setOnCheckedChangeListener
+            syncing = true
+            all.isChecked = pickable.all { it.isChecked }
+            syncing = false
+        }
+        val list = ui.column(all, ui.divider(), *boxes.toTypedArray()).apply { setPadding(ui.px(20), ui.px(8), ui.px(20), 0) }
+        val dialog = AlertDialog.Builder(this)
+            .setTitle("Trips")
+            .setView(ScrollView(this).apply { addView(list) })
+            .setPositiveButton("Export", null)
+            .setNeutralButton("Delete", null)
+            .setNegativeButton("Cancel", null)
+            .show()
+        fun picked() = trips.filterIndexed { i, _ -> boxes[i].isEnabled && boxes[i].isChecked }
+        // Set after show(): a listener given to the builder would close the dialog even with nothing ticked
+        dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+            val p = picked()
+            if (p.isEmpty()) return@setOnClickListener toast("Tick the trips to export first")
+            dialog.dismiss()
+            export(p, whole = p.size == pickable.size) // every trip: the whole database, as before trips could be picked
+        }
+        dialog.getButton(AlertDialog.BUTTON_NEUTRAL).apply {
+            background = ui.shape(R.color.status_crit, 999)
+            setTextColor(ui.color(R.color.on_crit))
+            setPadding(ui.px(18), 0, ui.px(18), 0)
+            setOnClickListener {
+                val p = picked()
+                if (p.isEmpty()) return@setOnClickListener toast("Tick the trips to delete first")
+                confirmDelete(p) { dialog.dismiss() }
+            }
+        }
+    }
+
+    /** What deleting [trips] removes, then a button that has to be held; [onDeleted] closes the trip list. */
+    private fun confirmDelete(trips: List<Trip>, onDeleted: () -> Unit) {
+        Thread {
+            val counts = container.real.tripCounts(trips)
+            runOnUiThread { if (!isFinishing) showDelete(trips, counts, onDeleted) }
+        }.start()
+    }
+
+    private fun showDelete(trips: List<Trip>, counts: Map<String, Int>, onDeleted: () -> Unit) {
+        val (perUnit, unit) = Prefs.unit(this)
+        val shown = 8
+        val lines = trips.take(shown).map { "${fmt(it.start)} · %.1f $unit · ${plural(it.regens, "regen")}".format(it.metres / perUnit) } +
+            listOfNotNull("…and ${trips.size - shown} more".takeIf { trips.size > shown })
+        val rows = listOf(plural(counts["sample"] ?: 0, "reading"), plural(counts["frame"] ?: 0, "engine frame"),
+            plural(counts["regen"] ?: 0, "regen"), plural(counts["alert"] ?: 0, "warning"))
+        val hub = if (Prefs.server(this).isNotBlank()) " They are also removed from the hub at the next sync." else ""
+        val message = lines.joinToString("\n") + "\n\nRemoves ${rows.joinToString(", ")}.$hub This can't be undone."
+        lateinit var dialog: AlertDialog
+        val hold = HoldButton(this, "Yes, delete") {
+            dialog.dismiss()
+            onDeleted()
+            Thread {
+                container.real.deleteTrips(trips)
+                Sync.queueDeletes(applicationContext, trips)
+                runOnUiThread { toast("Deleted ${plural(trips.size, "trip")}"); render() }
+            }.start()
+        }.apply {
+            ui.style(this, Type.TITLE_SM)
+            textSize = Type.TITLE_SM.sp
+            setTextColor(ui.color(R.color.on_crit))
+            background = ui.shape(R.color.status_crit, 999)
+            minHeight = ui.px(56)
+        }
+        val box = ui.column(
+            ui.text(Type.BODY_SM, R.color.ink, message),
+            ui.eyebrow("Hold the button to delete").apply { setPadding(0, ui.px(20), 0, ui.px(8)) },
+        ).apply {
+            setPadding(ui.px(24), ui.px(8), ui.px(24), 0)
+            addView(hold, LinearLayout.LayoutParams(-1, -2))
+        }
+        dialog = AlertDialog.Builder(this)
+            .setTitle("Delete ${plural(trips.size, "trip")}?")
+            .setView(ScrollView(this).apply { addView(box) })
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    private fun plural(n: Int, what: String) = "%,d $what${if (n == 1) "" else "s"}".format(n)
+
     /** Snapshot of the real log (never Debug data) into Downloads; MediaStore needs no storage permission on Android 10+. */
-    private fun export() {
+    private fun export(trips: List<Trip>, whole: Boolean) {
         toast("Exporting…")
         Thread {
             val result = try {
                 val tmp = File(cacheDir, "export.db")
-                container.real.exportTo(tmp)
-                val name = "yaris-doctor-" + SimpleDateFormat("yyyyMMdd-HHmm", Locale.ROOT).format(System.currentTimeMillis()) + ".db"
+                val db = container.real
+                if (whole) db.exportTo(tmp) else db.exportTrips(tmp, trips)
+                val stamp = SimpleDateFormat("yyyyMMdd-HHmm", Locale.ROOT)
+                val name = "yaris-doctor-" + (if (whole) stamp.format(System.currentTimeMillis())
+                    else stamp.format(trips.maxOf { it.start }) + "-${trips.size}trip${if (trips.size == 1) "" else "s"}") + ".db"
                 val values = ContentValues().apply {
                     put(MediaStore.Downloads.DISPLAY_NAME, name)
                     put(MediaStore.Downloads.MIME_TYPE, "application/vnd.sqlite3")

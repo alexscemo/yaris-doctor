@@ -23,6 +23,8 @@
     <color name="accent_teal">#14a356</color>
     <color name="status_warn">#e89b00</color>
     <color name="status_crit">#e0203a</color>
+    <!-- Text on a status_crit fill (the hold-to-delete button): 4.7:1 on status_crit -->
+    <color name="on_crit">#ffffff</color>
     <!-- All data: a value that just went up / down flashes behind its text (ink stays readable on both) -->
     <color name="flash_up">#c9f2d8</color>
     <color name="flash_down">#ffd6c4</color>

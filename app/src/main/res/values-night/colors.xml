@@ -16,6 +16,8 @@
     <color name="accent_teal">#3ddc84</color>
     <color name="status_warn">#ffb81f</color>
     <color name="status_crit">#ff4d63</color>
+    <!-- Text on a status_crit fill (the hold-to-delete button): white fails on the brighter night red; black is 6:1 -->
+    <color name="on_crit">#000000</color>
     <color name="chart_grid">#24262c</color>
     <color name="chart_band">#2d1d19</color>
     <color name="flash_up">#173a26</color>

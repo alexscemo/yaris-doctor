@@ -21,6 +21,7 @@ import com.yarisdoctor.domain.model.FLOOR_AFTER_MS
 import com.yarisdoctor.domain.model.Regen
 import com.yarisdoctor.domain.model.Sample
 import com.yarisdoctor.domain.model.TRIP_GAP_MS
+import com.yarisdoctor.domain.model.Trip
 import com.yarisdoctor.domain.model.TripStats
 import com.yarisdoctor.domain.repo.DriveStore
 import java.io.File
@@ -274,6 +275,60 @@ class Db internal constructor(ctx: Context, name: String?) : SQLiteOpenHelper(ct
         writableDatabase.execSQL("VACUUM INTO ?", arrayOf(file.path))
     }
 
+    /** This phone's drives, newest first: runs of samples with no gap over [TRIP_GAP_MS] (see [Trip]). */
+    fun trips(): List<Trip> = readableDatabase.rawQuery(
+        "SELECT s, e, m, (SELECT COUNT(*) FROM regen WHERE start_t BETWEEN s AND e + $TRIP_GAP_MS) FROM " +
+            "(SELECT MIN(t) AS s, MAX(t) AS e, COALESCE(MAX(odo_m) - MIN(odo_m), 0) AS m FROM " +
+            "(SELECT t, odo_m, SUM(gap) OVER (ORDER BY t) AS trip FROM " +
+            "(SELECT t, odo_m, COALESCE(t - LAG(t) OVER (ORDER BY t) > $TRIP_GAP_MS, 1) AS gap FROM sample)) GROUP BY trip) ORDER BY s DESC",
+        null,
+    ).use {
+        val out = ArrayList<Trip>(it.count)
+        while (it.moveToNext()) out += Trip(it.getLong(0), it.getLong(1), it.getDouble(2), it.getInt(3))
+        out
+    }
+
+    /** Rows per table that [deleteTrips] would remove: readings, engine frames, regens and warnings. */
+    fun tripCounts(trips: List<Trip>): Map<String, Int> = tx { db ->
+        pick(db, trips)
+        TRIP_ROWS.filter { it.first != "link" }.associate { (table, cond) ->
+            table to db.rawQuery("SELECT COUNT(*) FROM $table WHERE ${inTrips(table, cond)}", null).use { it.moveToFirst(); it.getInt(0) }
+        }
+    }
+
+    /** Deletes this phone's rows in [trips]' windows (open warnings aside); other phones' copies (peer tables) are theirs and stay. */
+    fun deleteTrips(trips: List<Trip>) = tx { db ->
+        pick(db, trips)
+        for ((table, cond) in TRIP_ROWS) db.execSQL("DELETE FROM $table WHERE ${inTrips(table, cond)}")
+    }
+
+    /** Rows of [table] that [deleteTrips] removes. A warning still open stays: the service holds it and would raise it again as new. */
+    private fun inTrips(table: String, cond: String) =
+        "EXISTS (SELECT 1 FROM pick WHERE $cond)" + if (table == "alert") " AND end_t IS NOT NULL" else ""
+
+    /** Like [exportTo], keeping only the rows in [trips]' windows, other phones' included (the car during those drives). */
+    fun exportTrips(file: File, trips: List<Trip>) {
+        exportTo(file)
+        SQLiteDatabase.openDatabase(file.path, null, SQLiteDatabase.OPEN_READWRITE).use { db ->
+            db.beginTransaction()
+            try {
+                pick(db, trips)
+                for ((table, cond) in TRIP_ROWS + PEER_ROWS) db.execSQL("DELETE FROM $table WHERE NOT EXISTS (SELECT 1 FROM pick WHERE $cond)")
+                db.setTransactionSuccessful()
+            } finally {
+                db.endTransaction()
+            }
+            db.execSQL("VACUUM") // gives back the deleted pages: the file is the size of what it holds
+        }
+    }
+
+    /** [trips]' windows in temp table pick(a, b) on [db]'s connection, so any number of them fits in one statement. */
+    private fun pick(db: SQLiteDatabase, trips: List<Trip>) {
+        db.execSQL("CREATE TEMP TABLE IF NOT EXISTS pick(a INTEGER, b INTEGER)")
+        db.execSQL("DELETE FROM pick")
+        for (trip in trips) db.insert("pick", null, ContentValues().apply { put("a", trip.start); put("b", trip.until) })
+    }
+
     /** Keeps the first frame per request per minute in [[from], [to]): old drives stay chartable at a fraction of the size. */
     override fun thinFrames(from: Long, to: Long) = writableDatabase.execSQL(
         "DELETE FROM frame WHERE t >= ? AND t < ? AND rowid NOT IN (SELECT MIN(rowid) FROM frame WHERE t >= ? AND t < ? GROUP BY lid, t / 60000)",
@@ -473,6 +528,15 @@ class Db internal constructor(ctx: Context, name: String?) : SQLiteOpenHelper(ct
 
     companion object {
         private const val PEER_CLOCK_SLACK_MS = 5 * 60_000L
+        /** Each table with a trip's rows and its test against a pick(a, b) window. A link row is stamped at session start, a little before the first sample. */
+        private val TRIP_ROWS = listOf(
+            "sample" to "sample.t BETWEEN a AND b",
+            "frame" to "frame.t BETWEEN a AND b",
+            "regen" to "regen.start_t BETWEEN a AND b",
+            "alert" to "alert.start_t BETWEEN a AND b",
+            "link" to "link.t BETWEEN a - $TRIP_GAP_MS AND b - $TRIP_GAP_MS",
+        )
+        private val PEER_ROWS = listOf("peer_sample" to "peer_sample.t BETWEEN a AND b", "peer_regen" to "peer_regen.start_t BETWEEN a AND b")
         private const val SAMPLE_T_INDEX = "CREATE INDEX IF NOT EXISTS sample_t ON sample(t)"
     }
 }

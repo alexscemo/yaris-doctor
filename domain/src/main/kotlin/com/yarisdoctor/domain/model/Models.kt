@@ -14,6 +14,16 @@ data class Regen(val start: Long, val end: Long?, val gapM: Double?, val sootSta
 /** What a drive did, for the end-of-drive notification: metres, first and last soot, regens and warnings started. */
 class TripStats(val metres: Double, val sootStart: Int?, val sootEnd: Int?, val regens: Int, val warnings: Int)
 
+/**
+ * One drive of this phone's log: samples with no gap over [TRIP_GAP_MS]. [regens] started in it. Its rows (frames, warnings and
+ * link stats written just after the last sample included) lie in [start]..[until], which never reaches the next trip.
+ */
+data class Trip(val start: Long, val end: Long, val metres: Double, val regens: Int) {
+    val until get() = end + TRIP_GAP_MS
+    /** Still being logged: the service may write to it, so it can't be deleted yet. */
+    fun live(now: Long) = now - end < TRIP_GAP_MS
+}
+
 /** Regens from two phones (dongle hand-over mid-burn) closer than this are the same burn; matches the hub. */
 const val MERGE_SLACK_MS = 2 * 60_000L
 /** ECU silent longer than this ends a trip; the service's REGEN_GAP_MS is this value, so a drive ends at the same point. */

@@ -26,6 +26,8 @@ Full notes on the Techstream side (decompiled routines, J2534 logs): `../techstr
 
 ## Restore plan (not done)
 
+The laptop tool is `../techstream/ashstep/` (`AshStep.exe`, C# built with the .NET Framework `csc`; `--simulate` fakes the ECU). It backs up, writes one step, reads back and logs everything to `ashstep_<date>_<time>.txt`.
+
 1. Write back the last pre-write record: `3B 18 00 00 25 5D 02 00 C0 07 24 00 09 99 F5 FC` (C = 629,237 s = 175 h since 19 Mar), with a backup read first and a read-back after.
 2. Compare the next 2-3 regens with 21 Oct (~40 km apart, soot back to ~40 % right after): if they improve, the record feeds the ash estimate.
 3. Only then raise C towards the full-life value in steps (+500 h at a time, B = 20 × C, A ≈ 3.9 × C). Full life at ~51 km/h over 88k miles (~141,600 km) is ~2,800 h (C ≈ 10.1 M). Overshooting is the dangerous side: too much assumed ash means late regens on a heavy soot load. The measured DPF pressure is low (~60 % of Toyota's limit), so stay under the full-life value.

@@ -10,7 +10,7 @@ import com.yarisdoctor.domain.car.PID_TEMP
  * only replies that match the table. [send] is Elm.send: the cleaned reply, or null on timeout / ELM error.
  */
 class Poller(private val send: (String) -> String?) {
-    // ELM "response count" suffix per reply kind, [single frame, multi-frame]: each turned off when the dongle doesn't take it
+    // ELM "response count" suffix per reply kind, [single frame, multi-frame]: each turned off after 3 failures in a row (one glitch every few hundred cycles must not turn it off)
     private val count = booleanArrayOf(true, true)
     private val countFails = IntArray(2)
     private var seen = false
@@ -67,7 +67,7 @@ class Poller(private val send: (String) -> String?) {
         val kind = if (len + 2 <= 7) 0 else 1
         val suffix = count[kind]
         val first = send(if (suffix) "${code}1" else code)
-        if (ok(first)) return first
+        if (ok(first)) { countFails[kind] = 0; return first }
         val second = send(code)
         if (!ok(second)) return null
         if (suffix && ++countFails[kind] >= 3) count[kind] = false

@@ -70,6 +70,20 @@ class PollerTest {
         assertFalse(sent.any { it.length == 5 })
     }
 
+    @Test fun scatteredSuffixGlitchesKeepTheSuffix() {
+        val sent = mutableListOf<String>()
+        var glitch = true
+        // The rpm reply garbles once per cycle (23 Oct export: 3 glitches in ~1000 replies turned the suffix off for good)
+        val p = Poller(ecu(sent) { c ->
+            if (c == "210C1" && glitch) { glitch = false; null }
+            else PID_LENGTHS[c.take(4)]?.let { "6" + c.substring(1, 4) + "00".repeat(it) }
+        })
+        repeat(4) { glitch = true; p.cycle(it * 2000L, emptyList()) }
+        sent.clear()
+        p.cycle(10_000, emptyList())
+        assertTrue("210C1" in sent)
+    }
+
     @Test fun cloneThatCutsMultiFrameRepliesKeepsTheSuffixOnSingleFrames() {
         val sent = mutableListOf<String>()
         // With the suffix this dongle returns only the first frame of a long reply: too short, so it fails the length check

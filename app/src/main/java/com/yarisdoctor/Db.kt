@@ -150,7 +150,7 @@ class Db internal constructor(ctx: Context, name: String?) : SQLiteOpenHelper(ct
             if (it.moveToFirst()) it.getLong(0) to it.getString(1) else null
         }
 
-    /** The ash record's readings where its value changed (the first one included), newest first. Read every 5 min, so few rows. */
+    /** The ash record's readings where its value changed (the first one included), newest first. Read every minute, and its counters move while the engine runs, so this is about the last 10 minutes. */
     fun ashHistory(limit: Int = 10): List<Pair<Long, String>> = readableDatabase.rawQuery(
         "SELECT t, hex FROM (SELECT t, hex, LAG(hex) OVER (ORDER BY t) AS prev FROM frame WHERE lid = ?) WHERE prev IS NULL OR prev != hex ORDER BY t DESC LIMIT ?",
         arrayOf(Poller.ASH_RECORD, limit.toString()),

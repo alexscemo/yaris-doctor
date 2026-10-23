@@ -28,10 +28,10 @@ class Poller(private val send: (String) -> String?) {
         codes += first
         codes += FAST
         repeat(2) { codes += MEDIUM[medium++ % MEDIUM.size] }
-        // Slow items: the next one not read in the last few minutes
+        // Slow items: the next one not read in the last few minutes (the ash record: the last minute)
         for (i in SLOW.indices) {
             val c = SLOW[slow++ % SLOW.size]
-            if (now - (lastOk[c] ?: Long.MIN_VALUE / 2) > SLOW_MS) { codes += c; break }
+            if (now - (lastOk[c] ?: Long.MIN_VALUE / 2) > if (c == ASH_RECORD) ASH_MS else SLOW_MS) { codes += c; break }
         }
         val out = LinkedHashMap<String, String>()
         var dead = 0
@@ -87,7 +87,7 @@ class Poller(private val send: (String) -> String?) {
             "212C", "21EA")
         /** Two per cycle, in turn. */
         val MEDIUM = listOf("2104", "2105", "210B", "210F", "2111", "2124", "2134", "2142", "2149", "214A", "214C", "21AD", "21DA", "21DE", "21E6", "21EE")
-        /** Counters and learned values: once a session, then every [SLOW_MS]. */
+        /** Counters and learned values: once a session, then every [SLOW_MS] ([ASH_MS] for the ash record). */
         val SLOW = listOf("211F", "2121", "2130", "2131", "2133", "214D", "214E", "21E1", "A918")
 
         /**
@@ -102,6 +102,8 @@ class Poller(private val send: (String) -> String?) {
             return b.dropLast(1).fold(0) { x, v -> x xor v } == b.last()
         }
         const val SLOW_MS = 5 * 60_000L
+        /** Often enough to tie the ash record's counters to what the car did between reads (one read is ~40 ms). */
+        const val ASH_MS = 60_000L
         const val PARK_AFTER = 5
         /** Two MEDIUM requests per cycle, so each comes round every this many cycles. */
         val MEDIUM_CYCLES = (MEDIUM.size + 1) / 2

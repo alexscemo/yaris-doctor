@@ -46,6 +46,17 @@ class PollerTest {
         assertFalse(sent.any { it.take(4) in Poller.SLOW }) // all read less than SLOW_MS ago
     }
 
+    @Test fun ashRecordEveryMinuteOtherSlowCodesEveryFive() {
+        val sent = mutableListOf<String>()
+        val p = Poller(ecu(sent))
+        var t = 0L
+        while (t < 61_000) { p.cycle(t, emptyList()); t += 2000 }
+        sent.clear()
+        while (t < 80_000) { p.cycle(t, emptyList()); t += 2000 }
+        assertTrue(Poller.ASH_RECORD in sent)
+        assertFalse(sent.any { it.take(4) in Poller.SLOW && it != Poller.ASH_RECORD })
+    }
+
     @Test fun wrongLengthOrHeaderIsRetriedThenDropped() {
         val sent = mutableListOf<String>()
         var n = 0

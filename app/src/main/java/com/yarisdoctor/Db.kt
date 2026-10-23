@@ -124,18 +124,20 @@ class Db internal constructor(ctx: Context, name: String?) : SQLiteOpenHelper(ct
 
     /**
      * [replies]: request code → cleaned reply, as Poller.cycle returns them; codes outside the table aren't stored, except the
-     * ash record, kept under its whole code ("A918") so it can't clash with a `21` lid.
+     * ash record and the calibration ID, kept under their whole codes ("A918", "0904") so they can't clash with a `21` lid.
      */
     override fun frames(t: Long, replies: Map<String, String>) = tx { db ->
         for ((code, reply) in replies) {
             val lid = when (code) {
                 in PID_LENGTHS -> code.substring(2)
-                Poller.ASH_RECORD -> code
+                Poller.ASH_RECORD, Poller.CAL_ID -> code
                 else -> continue
             }
             db.insert("frame", null, ContentValues().apply { put("t", t); put("lid", lid); put("hex", reply.substring(4)) })
         }
     }
+
+    override fun hasFrame(lid: String) = readableDatabase.rawQuery("SELECT 1 FROM frame WHERE lid = ? LIMIT 1", arrayOf(lid)).use { it.moveToFirst() }
 
     /** Newest payload per lid, as lid → (t, hex). One indexed lookup per lid: a GROUP BY would scan every frame. */
     fun latestFrames(): Map<String, Pair<Long, String>> = PID_IDLE.keys.mapNotNull { lid ->

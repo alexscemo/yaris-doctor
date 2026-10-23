@@ -106,11 +106,15 @@ class DriveSession(
         var fails = 0
         var seen = false
         var lastSample = 0L
+        // Asked once a drive, in the cycle after the first live one (its misses would count toward a dead probe), until one is stored
+        var wantCalId = !store.hasFrame(Poller.CAL_ID)
         try {
             // Give up after 1 dead cycle on a probe, 3 mid-drive
             while (running() && fails < (if (seen) 3 else 1)) {
                 val t = now()
-                val replies = poller.cycle(t)
+                val askCalId = wantCalId && seen
+                if (askCalId) wantCalId = false
+                val replies = poller.cycle(t, if (askCalId) listOf(Poller.CAL_ID) else emptyList())
                 if (replies.isEmpty()) {
                     fails++
                     // A wedged clone often recovers after a reset; the dead-cycle count still ends the session if not

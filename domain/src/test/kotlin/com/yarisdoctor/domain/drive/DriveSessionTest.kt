@@ -23,17 +23,21 @@ class DriveSessionTest {
     /** Every request takes 100 ms on the fake clock; [script] says what the ECU answers at that moment (null = silent). */
     inner class ScriptLink(private val script: (Long) -> Map<String, String>?) : ObdLink {
         var inits = 0
+        val sent = mutableListOf<String>()
         override fun init() { inits++ }
         override fun send(cmd: String, timeoutMs: Long): String? {
             t += 100
+            sent += cmd
             return script(t)?.get(cmd.take(4)) // the Poller adds the response-count suffix: "21DD1"
         }
     }
 
     class FakeStore(private val log: RecorderTest.FakeLog) : DriveStore, RegenLog by log {
         var frames = 0
+        val lids = HashSet<String>()
         val open = HashSet<String>()
-        override fun frames(t: Long, replies: Map<String, String>) { frames++ }
+        override fun frames(t: Long, replies: Map<String, String>) { frames++; lids += replies.keys }
+        override fun hasFrame(lid: String) = lid in lids
         override fun syncAlerts(t: Long, active: List<Finding>): List<Finding> {
             open.retainAll(active.map { it.key }.toSet())
             return active.filter { open.add(it.key) }
@@ -54,6 +58,25 @@ class DriveSessionTest {
     }
 
     private fun car(soot: Int = 60, temp: Int = 300, regen: Boolean = false) = sim.frames(Sim.Reading(soot, temp, regen))
+
+    @Test fun calibrationIdIsReadOnceADriveUntilStored() {
+        val cal = "490401" + "3839363631304430".repeat(2)
+        val none = ScriptLink { if (it < t0 + 20_000) car() else null }
+        t0 = t
+        session.drive(none) { true }
+        assertEquals(2, none.sent.count { it == Poller.CAL_ID }) // unanswered: one try and its retry, not every cycle
+        val answers = ScriptLink { if (it < t0 + 20_000) car() + (Poller.CAL_ID to cal) else null }
+        t0 = t
+        session.drive(answers) { true }
+        assertEquals(1, answers.sent.count { it == Poller.CAL_ID })
+        assertTrue(Poller.CAL_ID in store.lids)
+        val later = ScriptLink { if (it < t0 + 20_000) car() + (Poller.CAL_ID to cal) else null }
+        t0 = t
+        session.drive(later) { true }
+        assertFalse(Poller.CAL_ID in later.sent) // stored: never asked again
+    }
+    /** Start of the current drive in [calibrationIdIsReadOnceADriveUntilStored]. */
+    private var t0 = 0L
 
     @Test fun aQuickProbeOfASilentEcuEndsAfterOneDeadCycle() {
         val link = ScriptLink { null }

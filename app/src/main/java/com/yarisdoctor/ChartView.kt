@@ -19,7 +19,8 @@ import kotlin.math.min
 import kotlin.math.pow
 
 /**
- * Single-series chart: a 2dp line on a time axis, or columns by index. The top row reads out the
+ * Single-series chart: a 2dp line on a time axis, or columns by index. A line chart given a gap limit
+ * collapses pauses longer than it (the car parked), so the line runs on driving time and stays continuous. The top row reads out the
  * latest point, or the touched one (tap/drag horizontally to inspect). Pinch zooms the x axis, two fingers pan,
  * double-tap resets. A line chart can shade time ranges (regens) behind the data.
  */
@@ -30,6 +31,7 @@ class ChartView(ctx: Context, private val columns: Boolean, private val p: Color
 
     private var xs = LongArray(0)
     private var ys = FloatArray(0)
+    private var pos = DoubleArray(0) // each point's place on the x axis: its time, less the collapsed gaps before it
     private var bands: List<Pair<Long, Long>> = emptyList()
     private var readoutOf: (Int) -> String = { "" }
     private var axisLabel: (Long) -> String = { "" }
@@ -93,9 +95,18 @@ class ChartView(ctx: Context, private val columns: Boolean, private val p: Color
     private var top = 0f
     private var bottom = 0f
 
-    /** [bands]: time ranges (start, end) shaded behind a line chart; columns ignore them. */
-    fun set(xs: LongArray, ys: FloatArray, readoutOf: (Int) -> String, axisLabel: (Long) -> String, bands: List<Pair<Long, Long>> = emptyList()) {
+    /**
+     * [bands]: time ranges (start, end) shaded behind a line chart; columns ignore them.
+     * [gapMs]: on a line chart, a pause between two points longer than this takes no width, so the
+     * line stays continuous across it (0 = a plain time axis).
+     */
+    fun set(xs: LongArray, ys: FloatArray, readoutOf: (Int) -> String, axisLabel: (Long) -> String, bands: List<Pair<Long, Long>> = emptyList(), gapMs: Long = 0) {
         this.xs = xs; this.ys = ys; this.readoutOf = readoutOf; this.axisLabel = axisLabel; this.bands = bands
+        pos = DoubleArray(xs.size)
+        for (i in 1 until xs.size) {
+            val dt = xs[i] - xs[i - 1]
+            pos[i] = pos[i - 1] + if (gapMs > 0 && dt > gapMs) 0.0 else dt.toDouble()
+        }
         sel = selX?.let { xs.indexOf(it) } ?: -1
         yMax = niceMax(ys.maxOrNull() ?: 0f)
         // First data: the series draws in left to right (600 ms) so the time direction reads at once
@@ -118,7 +129,7 @@ class ChartView(ctx: Context, private val columns: Boolean, private val p: Color
             return
         }
         // At least 3dp wide, or an 11-minute regen vanishes on a 14-day axis
-        if (!columns && xs.size > 1 && xs.last() > xs.first()) for ((a, b) in bands) {
+        if (!columns && xs.size > 1 && pos.last() > 0.0) for ((a, b) in bands) {
             val x0 = xAt(a).coerceAtLeast(left)
             val x1 = maxOf(xAt(b), xAt(a) + 3 * d).coerceAtMost(right)
             if (x1 > x0) c.drawRect(x0, top, x1, bottom, band)
@@ -175,14 +186,25 @@ class ChartView(ctx: Context, private val columns: Boolean, private val p: Color
     /** Where point [i] sits along the whole x range, 0..1. */
     private fun frac(i: Int): Float = when {
         columns -> (i + 0.5f) / ys.size
-        xs.size == 1 || xs.last() == xs.first() -> 0.5f
-        else -> (xs[i] - xs.first()) / (xs.last() - xs.first()).toFloat()
+        pos.size == 1 || pos.last() <= 0.0 -> 0.5f
+        else -> (pos[i] / pos.last()).toFloat()
+    }
+
+    /** Time [t] as a place on the x axis: interpolated between the points around it; inside a collapsed gap, the gap's single place. */
+    private fun posAt(t: Long): Double {
+        if (t <= xs.first()) return 0.0
+        if (t >= xs.last()) return pos.last()
+        var i = xs.binarySearch(t)
+        if (i >= 0) return pos[i]
+        i = -i - 1 // xs[i - 1] < t < xs[i]
+        val span = pos[i] - pos[i - 1]
+        return pos[i - 1] + span * (t - xs[i - 1]) / (xs[i] - xs[i - 1])
     }
 
     private fun xOf(i: Int): Float = left + (right - left) * (frac(i) - vLo) / (vHi - vLo)
 
     /** Where time [t] sits on a line chart, in pixels (off the plot when outside the zoom window). */
-    private fun xAt(t: Long): Float = left + (right - left) * ((t - xs.first()).toFloat() / (xs.last() - xs.first()) - vLo) / (vHi - vLo)
+    private fun xAt(t: Long): Float = left + (right - left) * ((posAt(t) / pos.last()).toFloat() - vLo) / (vHi - vLo)
 
     /** Indices inside the zoom window (empty only when there is no data). */
     private fun visible(): IntRange {

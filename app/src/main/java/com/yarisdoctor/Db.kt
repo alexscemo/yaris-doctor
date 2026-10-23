@@ -296,10 +296,16 @@ class Db internal constructor(ctx: Context, name: String?) : SQLiteOpenHelper(ct
         }
     }
 
-    /** Deletes this phone's rows in [trips]' windows (open warnings aside); other phones' copies (peer tables) are theirs and stay. */
-    fun deleteTrips(trips: List<Trip>) = tx { db ->
+    /**
+     * Deletes this phone's rows in [trips]' windows (open warnings aside); other phones' copies (peer tables) are theirs and stay.
+     * Returns the highest sample and frame rowids left: SQLite numbers the next rows from there, so deleting the newest trip
+     * makes it reuse rowids the upload cursors have already passed (Sync.queueDeletes winds them back).
+     */
+    fun deleteTrips(trips: List<Trip>): Pair<Long, Long> = tx { db ->
         pick(db, trips)
         for ((table, cond) in TRIP_ROWS) db.execSQL("DELETE FROM $table WHERE ${inTrips(table, cond)}")
+        db.rawQuery("SELECT (SELECT COALESCE(MAX(rowid), 0) FROM sample), (SELECT COALESCE(MAX(rowid), 0) FROM frame)", null)
+            .use { it.moveToFirst(); it.getLong(0) to it.getLong(1) }
     }
 
     /** Rows of [table] that [deleteTrips] removes. A warning still open stays: the service holds it and would raise it again as new. */

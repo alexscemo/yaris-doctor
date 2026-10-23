@@ -1,4 +1,4 @@
-﻿package com.yarisdoctor
+package com.yarisdoctor
 
 import android.Manifest.permission.BLUETOOTH_CONNECT
 import android.app.Activity
@@ -427,8 +427,8 @@ class SettingsActivity : Activity() {
             dialog.dismiss()
             onDeleted()
             Thread {
-                container.real.deleteTrips(trips)
-                Sync.queueDeletes(applicationContext, trips)
+                val tops = container.real.deleteTrips(trips)
+                Sync.queueDeletes(applicationContext, trips, tops)
                 runOnUiThread { toast("Deleted ${plural(trips.size, "trip")}"); render() }
             }.start()
         }.apply {

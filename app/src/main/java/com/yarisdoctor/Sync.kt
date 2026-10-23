@@ -188,10 +188,16 @@ object Sync {
         return status
     }
 
-    /** Queues deleted trips' windows for the hub to remove at the next sync; nothing to do without a hub. */
-    @Synchronized fun queueDeletes(c: Context, trips: List<Trip>) {
+    /**
+     * Queues deleted trips' windows for the hub to remove at the next sync; nothing to do without a hub (a new address resends
+     * everything). [tops] = Db.deleteTrips' highest sample and frame rowids left: new rows will reuse the numbers above them, so
+     * the upload cursors go back there. The hub drops the old copies first, in the request that carries the deletes.
+     */
+    @Synchronized fun queueDeletes(c: Context, trips: List<Trip>, tops: Pair<Long, Long>) {
         if (Prefs.server(c).isBlank() || trips.isEmpty()) return
         Prefs.put(c, Prefs.PENDING_DELETES, formatRanges(parseRanges(Prefs.str(c, Prefs.PENDING_DELETES)) + trips.map { it.start..it.until }))
+        Prefs.put(c, Prefs.SYNCED_ROWID, minOf(Prefs.long(c, Prefs.SYNCED_ROWID), tops.first))
+        Prefs.put(c, Prefs.SYNCED_FRAME_ROWID, minOf(Prefs.long(c, Prefs.SYNCED_FRAME_ROWID), tops.second))
     }
 
     /** One quiet notification after an automatic upload, replacing the previous one, so a drive ends with "all synced". */

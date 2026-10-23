@@ -31,7 +31,6 @@ import com.yarisdoctor.domain.health.CRIT
 import com.yarisdoctor.domain.health.WARN
 import com.yarisdoctor.domain.model.Alert
 import com.yarisdoctor.domain.model.Regen
-import com.yarisdoctor.domain.model.TRIP_GAP_MS
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -305,7 +304,8 @@ class MainActivity : ComponentActivity() {
             series.map { it.first }.toLongArray(), series.map { it.second }.toFloatArray(),
             { i -> "${fmt(series[i].first)} · %.0f%% soot".format(series[i].second) }, ::fmtDay,
             regens.map { it.start to (it.end ?: now) },
-            gapMs = TRIP_GAP_MS, // parked time takes no width: the line runs on driving time
+            // Parked time takes no width. Points are 10-min buckets, so only a skipped bucket counts as parked
+            gapMs = Db.SOOT_BUCKET_MS,
         )
         regenTitle.text = if (unit == "km") "Kilometres between regens" else "Miles between regens"
         val withGap = regens.filter { it.gapM != null }.takeLast(20)

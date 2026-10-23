@@ -410,7 +410,7 @@ class Db internal constructor(ctx: Context, name: String?) : SQLiteOpenHelper(ct
     /** Soot averaged per 10-minute bucket since [since] (epoch ms), oldest first, from every phone. */
     fun sootSeries(since: Long): List<Pair<Long, Float>> =
         readableDatabase.rawQuery(
-            "SELECT (t / 600000) * 600000 AS b, AVG(soot) FROM (SELECT t, soot FROM sample WHERE t >= ?1 UNION ALL SELECT t, soot FROM peer_sample WHERE t >= ?1) " +
+            "SELECT (t / $SOOT_BUCKET_MS) * $SOOT_BUCKET_MS AS b, AVG(soot) FROM (SELECT t, soot FROM sample WHERE t >= ?1 UNION ALL SELECT t, soot FROM peer_sample WHERE t >= ?1) " +
                 "WHERE soot IS NOT NULL GROUP BY b ORDER BY b",
             arrayOf(since.toString()),
         ).use {
@@ -536,6 +536,8 @@ class Db internal constructor(ctx: Context, name: String?) : SQLiteOpenHelper(ct
 
     companion object {
         private const val PEER_CLOCK_SLACK_MS = 5 * 60_000L
+        /** [sootSeries]' bucket. */
+        const val SOOT_BUCKET_MS = 10 * 60_000L
         /** Each table with a trip's rows and its test against a pick(a, b) window. A link row is stamped at session start, a little before the first sample. */
         private val TRIP_ROWS = listOf(
             "sample" to "sample.t BETWEEN a AND b",

@@ -24,7 +24,6 @@ import com.yarisdoctor.domain.model.TRIP_GAP_MS
 import com.yarisdoctor.domain.model.Trip
 import com.yarisdoctor.domain.model.TripStats
 import com.yarisdoctor.domain.repo.DriveStore
-import java.io.File
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -271,12 +270,6 @@ class Db internal constructor(ctx: Context, name: String?) : SQLiteOpenHelper(ct
         "DELETE FROM regen WHERE end_t IS NOT NULL AND end_t - start_t < 60000 AND COALESCE(odo_end, odo_start, 0) - COALESCE(odo_start, 0) < 50",
     )
 
-    /** A consistent copy of the whole database in [file] (replaced), taken while the service may still be writing. */
-    fun exportTo(file: File) {
-        file.delete() // VACUUM INTO refuses an existing file
-        writableDatabase.execSQL("VACUUM INTO ?", arrayOf(file.path))
-    }
-
     /** This phone's drives, newest first: runs of samples with no gap over [TRIP_GAP_MS] (see [Trip]). */
     fun trips(): List<Trip> = readableDatabase.rawQuery(
         "SELECT s, e, m, (SELECT COUNT(*) FROM regen WHERE start_t BETWEEN s AND e + $TRIP_GAP_MS) FROM " +
@@ -313,22 +306,6 @@ class Db internal constructor(ctx: Context, name: String?) : SQLiteOpenHelper(ct
     /** Rows of [table] that [deleteTrips] removes. A warning still open stays: the service holds it and would raise it again as new. */
     private fun inTrips(table: String, cond: String) =
         "EXISTS (SELECT 1 FROM pick WHERE $cond)" + if (table == "alert") " AND end_t IS NOT NULL" else ""
-
-    /** Like [exportTo], keeping only the rows in [trips]' windows, other phones' included (the car during those drives). */
-    fun exportTrips(file: File, trips: List<Trip>) {
-        exportTo(file)
-        SQLiteDatabase.openDatabase(file.path, null, SQLiteDatabase.OPEN_READWRITE).use { db ->
-            db.beginTransaction()
-            try {
-                pick(db, trips)
-                for ((table, cond) in TRIP_ROWS + PEER_ROWS) db.execSQL("DELETE FROM $table WHERE NOT EXISTS (SELECT 1 FROM pick WHERE $cond)")
-                db.setTransactionSuccessful()
-            } finally {
-                db.endTransaction()
-            }
-            db.execSQL("VACUUM") // gives back the deleted pages: the file is the size of what it holds
-        }
-    }
 
     /** [trips]' windows in temp table pick(a, b) on [db]'s connection, so any number of them fits in one statement. */
     private fun pick(db: SQLiteDatabase, trips: List<Trip>) {
@@ -546,7 +523,6 @@ class Db internal constructor(ctx: Context, name: String?) : SQLiteOpenHelper(ct
             "alert" to "alert.start_t BETWEEN a AND b",
             "link" to "link.t BETWEEN a - $TRIP_GAP_MS AND b - $TRIP_GAP_MS",
         )
-        private val PEER_ROWS = listOf("peer_sample" to "peer_sample.t BETWEEN a AND b", "peer_regen" to "peer_regen.start_t BETWEEN a AND b")
         private const val SAMPLE_T_INDEX = "CREATE INDEX IF NOT EXISTS sample_t ON sample(t)"
     }
 }

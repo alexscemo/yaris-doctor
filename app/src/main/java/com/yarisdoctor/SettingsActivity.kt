@@ -92,7 +92,10 @@ class SettingsActivity : Activity() {
             ))
             addView(syncBlock(), LinearLayout.LayoutParams(-1, -2).apply { topMargin = ui.px(12) })
             addView(section("Your data"))
-            addView(group(row("Export or delete trips", "Pick drives to save to Downloads as a SQLite file, or to delete") { pickTrips() }))
+            addView(group(
+                row("Export database", "Saves the whole log to Downloads as one Markdown file an AI can read") { exportAll() },
+                row("Delete trips", "Pick drives to remove from this phone and the hub") { pickTrips() },
+            ))
             addView(section("Developer"))
             addView(group(
                 toggle("Debug mode", "Simulated dongle with random data, for testing without the car. Nothing is saved, and it turns off when the app is closed or the phone restarts.", Prefs.debug) {
@@ -320,7 +323,7 @@ class SettingsActivity : Activity() {
         return row(title, sub, sw) { sw.toggle() }
     }
 
-    /** This phone's trips (the real log, never Debug data), read off the main thread, to export or delete. */
+    /** This phone's trips (the real log, never Debug data), read off the main thread, to delete. */
     private fun pickTrips() {
         Thread {
             val trips = container.real.trips()
@@ -341,10 +344,10 @@ class SettingsActivity : Activity() {
         }
     }
 
-    /** Trip list with "Select all", an orange Export and a red Delete. The trip still being logged can't be picked. */
+    /** Trip list with "Select all" and a red Delete. The trip still being logged can't be picked. */
     private fun showTrips(trips: List<Trip>) {
         if (trips.isEmpty()) {
-            AlertDialog.Builder(this).setTitle("Trips").setMessage("No trips logged yet.").setPositiveButton("OK", null).show()
+            AlertDialog.Builder(this).setTitle("Delete trips").setMessage("No trips logged yet.").setPositiveButton("OK", null).show()
             return
         }
         val now = System.currentTimeMillis()
@@ -379,20 +382,13 @@ class SettingsActivity : Activity() {
         }
         val list = ui.column(all, ui.divider(), *boxes.toTypedArray()).apply { setPadding(ui.px(20), ui.px(8), ui.px(20), 0) }
         val dialog = AlertDialog.Builder(this)
-            .setTitle("Trips")
+            .setTitle("Delete trips")
             .setView(ScrollView(this).apply { addView(list) })
-            .setPositiveButton("Export", null)
             .setNeutralButton("Delete", null)
             .setNegativeButton("Cancel", null)
             .show()
         fun picked() = trips.filterIndexed { i, _ -> boxes[i].isEnabled && boxes[i].isChecked }
         // Set after show(): a listener given to the builder would close the dialog even with nothing ticked
-        dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
-            val p = picked()
-            if (p.isEmpty()) return@setOnClickListener toast("Tick the trips to export first")
-            dialog.dismiss()
-            export(p, whole = p.size == pickable.size) // every trip: the whole database, as before trips could be picked
-        }
         dialog.getButton(AlertDialog.BUTTON_NEUTRAL).apply {
             background = ui.shape(R.color.status_crit, 999)
             setTextColor(ui.color(R.color.on_crit))
@@ -454,20 +450,19 @@ class SettingsActivity : Activity() {
 
     private fun plural(n: Int, what: String) = "%,d $what${if (n == 1) "" else "s"}".format(n)
 
-    /** Snapshot of the real log (never Debug data) into Downloads; MediaStore needs no storage permission on Android 10+. */
-    private fun export(trips: List<Trip>, whole: Boolean) {
-        toast("Exporting…")
+    /** The whole real log (never Debug data) as one AI-readable Markdown file in Downloads; MediaStore needs no storage permission. */
+    private fun exportAll() {
+        val version = packageManager.getPackageInfo(packageName, 0).versionName ?: "?"
+        toast("Building AI export…")
         Thread {
             val result = try {
-                val tmp = File(cacheDir, "export.db")
-                val db = container.real
-                if (whole) db.exportTo(tmp) else db.exportTrips(tmp, trips)
-                val stamp = SimpleDateFormat("yyyyMMdd-HHmm", Locale.ROOT)
-                val name = "yaris-doctor-" + (if (whole) stamp.format(System.currentTimeMillis())
-                    else stamp.format(trips.maxOf { it.start }) + "-${trips.size}trip${if (trips.size == 1) "" else "s"}") + ".db"
+                val tmp = File(cacheDir, "export.md")
+                container.real.exportAi(tmp, version, Prefs.model2015(this))
+                val stamp = SimpleDateFormat("yyyyMMdd-HHmm", Locale.ROOT).format(System.currentTimeMillis())
+                val name = "yaris-doctor-ai-$stamp.md"
                 val values = ContentValues().apply {
                     put(MediaStore.Downloads.DISPLAY_NAME, name)
-                    put(MediaStore.Downloads.MIME_TYPE, "application/vnd.sqlite3")
+                    put(MediaStore.Downloads.MIME_TYPE, "text/markdown")
                 }
                 val uri = contentResolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values) ?: error("Downloads refused the file")
                 try {

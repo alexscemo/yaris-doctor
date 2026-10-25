@@ -7,8 +7,8 @@ tools: Read, Grep, Glob
 Compare both sides of the yaris-doctor ↔ hub contract and report every mismatch. Read only; change nothing.
 
 App side (this repo, `app/src/main/java/com/yarisdoctor/`):
-- `Sync.kt`: `run()` builds the `/api/sync` POST body (`device_id`, `name`, `samples`, `regens`) and reads `/api/export` pages (`samples`, `regens`, `next`, `more`).
-- `Db.kt`: `samplesAfter()` and `regenRows()` (row layout sent), `putPeers()` (row layout received).
+- `Sync.kt`: `run()` builds the `/api/sync` POST body. Every batch: `device_id`, `name`, `samples` (plus `regens`, first batch only). First batch only: `regens_all`, `alerts`, `defs`, `rules`, `dpf`, plus `deleted` when trips were deleted. Separate call: `device_id`, `name`, `frames`. It reads `/api/export` pages (`samples`, `regens`, `next`, `more`) and uses the reply's `frames` / `deleted` presence to know what the hub understands.
+- `Db.kt`: `samplesAfter()`, `regenRows()`, `framesAfter()`, `alertRows()`, `dpfRows()` (row layout sent), `putPeers()` (row layout received).
 
 Hub side (`../yaris-doctor-hub/app/app.py`): `ingest()` and `_rows()` (widths and types accepted), `export()` and the `/api/export` route (`DEVICE_RE`, `after`), `close_if_stale()`.
 

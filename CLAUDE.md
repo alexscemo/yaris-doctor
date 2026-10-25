@@ -79,7 +79,7 @@ CI (`.github/workflows/build.yml`) runs `gradle test assembleDebug` on every pus
 
   Soot and temp are DPFViewer's char offsets 38 and 16; the temp is Exhaust Temperature B1S2. The Techstream capture (`../techstream/NLP130_RUNTIME_RESULTS.md`) confirmed both.
 
-  The Techstream sheet names that bit "VN Turbo Operation Prohibit", and byte 11 is "DPNR/DPF Status Reju(PM)". A build that switched the regen flag to byte 11 on that label never fired on the road: the capture had no regen in it, so it could not show which bit moves. Never change a car fact from a sheet label alone; it needs a frame log of the event itself.
+  The Techstream sheet names a bit of that byte "VN Turbo Operation Prohibit", and byte 11 is "DPNR/DPF Status Reju(PM)". A build that switched the regen flag to byte 11 on that label never fired on the road: the capture had no regen in it, so it could not show which bit moves. Never change a car fact from a sheet label alone; it needs a frame log of the event itself.
 
   `DecodersTest.decodersUseDpfViewerOffsets` (`:domain`) pins the defaults.
 - Dongle MAC `66:1E:32:7A:2E:72`, PIN `1234`. It must be paired in Android settings first.

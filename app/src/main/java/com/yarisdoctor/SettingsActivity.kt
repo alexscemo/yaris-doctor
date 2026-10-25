@@ -253,7 +253,8 @@ class SettingsActivity : Activity() {
     /** Home hub sync: the one orange field in the app. A dot and mono label, the word set huge, a hard black button. */
     private fun syncBlock(): View {
         val set = Prefs.server(this).isNotBlank()
-        val button = ui.text(Type.CAPTION_UPPER, R.color.canvas, "Sync now  ↗").apply {
+        // Light text in both themes: the button stays black (on_primary), so canvas (near-black at night) would vanish
+        val button = ui.text(Type.CAPTION_UPPER, R.color.on_instrument, "Sync now  ↗").apply {
             textSize = 13f
             gravity = Gravity.CENTER_VERTICAL
             setBackgroundColor(ui.color(R.color.on_primary))

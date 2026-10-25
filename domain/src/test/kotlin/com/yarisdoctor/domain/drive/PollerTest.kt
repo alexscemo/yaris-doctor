@@ -12,7 +12,7 @@ class PollerTest {
         if (c == Poller.ASH_RECORD) ASH else PID_LENGTHS[c.take(4)]?.let { "6" + c.substring(1, 4) + "00".repeat(it) }
     }) = { c: String -> sent += c; reply(c) }
 
-    /** The owner's car after Vehicle Mileage Write (Techstream J2534 log, 21 Oct). */
+    /** The owner's car after the mileage write on 21 Oct. */
     private val ASH = "E9180000028800000000000000008A"
 
     @Test fun everyTableCodeIsPolled() {

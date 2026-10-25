@@ -2,9 +2,9 @@ package com.yarisdoctor.domain.car
 
 /**
  * One live-data item: bits [bitStart]..[bitEnd] (MSB-first from payload byte 0, so multi-byte fields are big-endian) of the
- * reply to `21 <lid>`, whose payload (after `61 <lid>`) is [len] bytes. Decoded like Techstream's ValueConvert:
+ * reply to `21 <lid>`, whose payload (after `61 <lid>`) is [len] bytes. Decoded as the sheet's value conversion says:
  * (trunc(raw × mul / div) + offset) / 10^decimals in integer maths, raw sign-extended first when [signed].
- * [min]/[max] are Techstream's display range, not a validity check: some signed items have min 0 yet go negative.
+ * [min]/[max] are display ranges, not a validity check: some signed items have min 0 yet go negative.
  */
 class Pid(
     val name: String, val unit: String, val lid: String, val len: Int, val bitStart: Int, val bitEnd: Int, val signed: Boolean,
@@ -22,11 +22,11 @@ class Pid(
         val bits = bitEnd - bitStart + 1
         raw = raw shr (7 - bitEnd % 8) and (1L shl bits) - 1
         if (signed && raw shr (bits - 1) and 1L == 1L) raw -= 1L shl bits
-        // Long division truncates toward zero, like Techstream
+        // Long division truncates toward zero, as the sheet's conversion does
         return (raw * mul / div + offset) / Math.pow(10.0, decimals.toDouble())
     }
 
-    /** What the user sees: the enum label, or the number with Techstream's decimals and the unit. */
+    /** What the user sees: the enum label, or the number with the sheet's decimals and the unit. */
     fun format(v: Double): String {
         enum?.let { return it.getOrNull(v.toInt()) ?: "? (${v.toInt()})" }
         return "%.${decimals}f".format(v) + if (unit.isEmpty()) "" else " $unit"

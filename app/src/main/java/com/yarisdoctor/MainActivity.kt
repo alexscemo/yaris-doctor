@@ -320,12 +320,12 @@ class MainActivity : ComponentActivity() {
             val d = s.dpf.conditions
             val rate = d.lastOrNull()?.perKm
             dpfTitle.text = if (rate == null) "DPF condition" else "DPF condition · fills %.2f per %s".format(rate * perUnit / 1000, unit)
-            // Grouped like Techstream's Learning Values Confirmation, so the two can be compared by eye
+            // Grouped as three counters, the way the ECU's record is laid out
             fun ash(hex: String) = hex.chunked(4).joinToString(" ")
             val changes = s.dpf.ashChanges
             ashText.text = s.dpf.ash?.let { (t, hex) ->
-                "ECU ash record (Techstream: DPF Deterioration Record): ${ash(hex)} · ${fmt(t)}" +
-                    // Where it changed, newest first: a Techstream write or the ECU's own ash count moving
+                "ECU ash record (DPF Deterioration Record): ${ash(hex)} · ${fmt(t)}" +
+                    // Where it changed, newest first: a local write or the ECU's own ash count moving
                     if (changes.size > 1) "\nChanges:" + changes.joinToString("") { (ct, h) -> "\n${fmt(ct)} · ${ash(h)}" } else ""
             } ?: "ECU ash record: not read yet"
             dpfChart.set(

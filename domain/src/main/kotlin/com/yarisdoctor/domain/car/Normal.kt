@@ -2,7 +2,7 @@ package com.yarisdoctor.domain.car
 
 /**
  * Toyota's normal values from the 1ND-TV repair manual (Yaris RM, ECD SYSTEM w/ DPF > Data List, 2011-2014 pages, which fit
- * the owner's Nov 2013 car), by [PIDS] name, for the All data tab. Notes in ../techstream/RM_NOTES.md. The manual calls
+ * the owner's Nov 2013 car), by [PIDS] name, for the All data tab. The manual calls
  * them reference values: a reading outside one is a hint, not a verdict.
  */
 val TOYOTA_NORMAL: Map<String, String> = mapOf(

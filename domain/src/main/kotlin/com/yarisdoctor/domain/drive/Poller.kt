@@ -92,8 +92,8 @@ class Poller(private val send: (String) -> String?) {
         val SLOW = listOf("211F", "2121", "2130", "2131", "2133", "214D", "214E", "21E1", "A918")
 
         /**
-         * The DPF ash ("deterioration") record, the same read as Techstream's Learning Values Confirmation (J2534 log,
-         * 21 Oct): `A9 18` → `E9 18` + 13 bytes, the last the XOR of the other 12. Format undocumented, so it is stored raw.
+         * The DPF ash ("deterioration") record, read once a cycle at [ASH_MS]: `A9 18` → `E9 18` + 13 bytes, the last the
+         * XOR of the other 12. Format undocumented, so it is stored raw.
          */
         const val ASH_RECORD = "A918"
 

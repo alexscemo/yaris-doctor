@@ -8,7 +8,7 @@ const val PID_REGEN = "21DF"
 /** Byte [i] of a reply, counting the echoed `61 <lid>` as bytes 0-1 (2 hex chars per byte); null past the end. */
 private fun byteAt(p: String, i: Int) = if (p.length >= i * 2 + 2) p.substring(i * 2, i * 2 + 2).toIntOrNull(16) else null
 
-// Soot and temperature are DPFViewer's char offsets 38 and 16, confirmed by the Techstream capture (temp is Exhaust
+// Soot and temperature are DPFViewer's char offsets 38 and 16, confirmed on the car (temp is Exhaust
 // Temperature B1S2). Results are truncated like DPFViewer's int casts.
 /** Soot load, %: byte 19 × 2. */
 fun sootOf(p: String): Int? = byteAt(p, 19)?.let { it * 2 }

@@ -80,7 +80,7 @@ from October 2026 or later (it adds `/api/export`).
   | `21 F1` | DPF temperature (°C) | 8 | `(A*256+B)*0.625` |
   | `21 DF` | Regen active | 16 | `A&15` (regen when it gives 1) |
 
-  These were found by trial and error on one car (see DPFViewer) and confirmed with Techstream. Other Yaris engines or model years may differ. Results are rounded down.
+  These were found by trial and error on one car (see DPFViewer) and confirmed against live data. Other Yaris engines or model years may differ. Results are rounded down.
 - **Distance.** The car's odometer PID isn't known, so distance comes from the phone's GPS, counted only while the dongle is connected. Fixes that are inaccurate or stationary are ignored to avoid GPS drift.
 - **Engine off mid-regen.** The notification is cleared when the connection drops, but the regen stays open for 2 minutes: if the dongle reconnects in that time, it carries on as the same regen. Otherwise it is closed at the last reading.
 

@@ -5,7 +5,7 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/** Idle payloads from the Techstream capture (NLP130_engine_PIDs.xlsx, LIDs sheet) and the values Techstream showed. */
+/** Idle payloads from a vehicle capture (NLP130_engine_PIDs.xlsx, LIDs sheet) and the values it reported. */
 class PidTest {
     private fun pid(name: String, lid: String) = PIDS.single { it.name == name && it.lid == lid }
     private fun Pid.shown(payload: String) = decode(payload)?.let(::format) // what All data shows

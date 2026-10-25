@@ -5,3 +5,6 @@ local.properties
 *.iml
 graphify-out/
 DESIGN.md
+.kotlin/
+.taste/
+.token-optimizer-audit-*/

@@ -87,6 +87,45 @@ class ChecksTest {
         assertTrue("egr_tracking" !in keys(c.check(16_000, replies(Triple("EA", 2, 230)), false)))
     }
 
+    /** One cycle's replies for a boost scenario: [target] kPa asked for, [dev] kPa off, [accel] %, [load] %. */
+    private fun boost(rpm: Int, target: Int, dev: Int, accel: Int, load: Int): Map<String, String> {
+        val rpmRaw = rpm * 4
+        val tgt = target * 100 * 64 / 125 // Target Booster Pressure (first in the table: DD), ×125/64/100
+        val d = dev * 100 * 64 / 125      // Boost Pressure Deviation (DF), signed
+        return replies(
+            Triple("0C", 0, rpmRaw shr 8), Triple("0C", 1, rpmRaw and 0xFF),
+            Triple("04", 0, load * 51 / 20),           // Calculate Load, ×200/51/10
+            Triple("DD", 1, accel * 256 / 100),        // Accel Position, ×625/16/100
+            Triple("DD", 7, tgt shr 8), Triple("DD", 8, tgt and 0xFF),
+            Triple("DF", 12, (d shr 8) and 0xFF), Triple("DF", 13, d and 0xFF),
+        )
+    }
+
+    @Test fun boostDeviationIgnoresOverrun() {
+        // 10-24 17:57:47 in the 20-25 Oct export: +61 kPa at 1500 rpm with the accelerator released and 101 kPa asked for.
+        // Overrun shuts the intake throttle, so MAP falls to 40 kPa and the raw deviation reads 60 kPa with nothing wrong.
+        val coasting = boost(rpm = 1500, target = 101, dev = 61, accel = 0, load = 21)
+        val c = Checker()
+        assertTrue("boost_deviation" !in keys(c.check(0, coasting, false)))
+        assertTrue("boost_deviation" !in keys(c.check(30_000, coasting, false)))
+    }
+
+    @Test fun boostDeviationFiresWhenBoostIsAskedFor() {
+        // The same 61 kPa with the pedal down, 60 % load and 160 kPa asked for is a real fault
+        assertTrue(firesAfter("boost_deviation", 5_000, boost(rpm = 1500, target = 160, dev = 61, accel = 45, load = 60)))
+        assertTrue(!firesAfter("boost_deviation", 5_000, boost(rpm = 1500, target = 160, dev = 27, accel = 45, load = 60)))
+    }
+
+    @Test fun boostDeviationIgnoresARegen() {
+        // 10-25 12:54 inside a regen: the target drops to 86 kPa with the vanes open, so the deviation goes to -41 kPa.
+        // Held at a target that would otherwise qualify, the regen alone must keep the rule quiet.
+        val regen = boost(rpm = 2200, target = 160, dev = -41, accel = 45, load = 60)
+        val c = Checker()
+        c.check(0, regen, true)
+        assertTrue("boost_deviation" !in keys(c.check(30_000, regen, true)))
+        assertTrue(firesAfter("boost_deviation", 5_000, regen)) // outside a regen the same readings are a fault
+    }
+
     @Test fun egrCoolerStillBypassedWhenWarmAndDriving() {
         val driving = replies(warm, Triple("0D", 0, 80)) // the captured bypass byte is 3 = Bypass
         assertTrue(firesAfter("egr_bypass_warm", 180_000, driving))

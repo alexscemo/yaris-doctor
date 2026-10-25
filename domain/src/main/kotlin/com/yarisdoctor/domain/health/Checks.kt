@@ -113,7 +113,11 @@ class Checker(private val model2015: Boolean = false) {
                 val egr = v("Actual EGR Valve Pos.") ?: return@Rule null
                 if ((v("Engine Speed") ?: 0.0) > 1000 && egr < 15 && ratio < 0.8) "Air flow sensor reads ${f0(ratio * 100)} % of what the ECU expects with the EGR closed: it may be dirty or failing." else null
             },
-            Rule("boost_deviation", "Boost off target", WARN, 5_000, "Boost off target by 28 kPa or more with the engine running (generic P0299 logic: 27.6 kPa for 5 s).", listOf("Boost Pressure Deviation", "Engine Speed")) { v("Boost Pressure Deviation")?.takeIf { running && abs(it) >= 28 }?.let { "Boost is ${f0(abs(it))} kPa off target: check for leaks in the turbo hoses or a sticking turbo vane." } },
+            Rule("boost_deviation", "Boost off target", WARN, 5_000, "Boost off target by 28 kPa or more while the ECU is actually asking for boost: accelerator down, load 20 % or more, target above 115 kPa and not during a regen (generic P0299 logic: 27.6 kPa for 5 s). Overrun shuts the intake throttle, so MAP falls to 40 kPa against a 101 kPa target and the raw deviation reads 60 kPa with nothing wrong: in the 20-25 Oct export all 8 alerts were overrun, tip-in lag or a regen, while steady high-load deviation stayed within ±5 kPa.", listOf("Boost Pressure Deviation", "Engine Speed", "Accel Position", "Calculate Load", "Target Booster Pressure")) {
+                val dev = v("Boost Pressure Deviation") ?: return@Rule null
+                val asked = (v("Accel Position") ?: 0.0) > 0 && (v("Calculate Load") ?: 0.0) >= 20 && (v("Target Booster Pressure") ?: 0.0) > 115
+                if (running && !inRegen && asked && abs(dev) >= 28) "Boost is ${f0(abs(dev))} kPa off target: check for leaks in the turbo hoses or a sticking turbo vane." else null
+            },
             Rule("injector", "Injector correction high", WARN, 30_000, "An injector correction beyond ±2.0 mm³/stroke at warm idle. Toyota 1ND-TV manual: -2.0 to 2.0 at idle; more means an injector delivering the wrong amount or low compression on that cylinder. The owner's car reads 0.6 at most.", listOf("Injection Feedback Val #1", "Injection Feedback Val #2", "Injection Feedback Val #3", "Injection Feedback Val #4", "Coolant Temp", "Engine Speed", "Vehicle Speed")) {
                 if (!(warm && idle)) return@Rule null
                 val bad = (1..4).filter { abs(v("Injection Feedback Val #$it") ?: 0.0) > 2.0 }

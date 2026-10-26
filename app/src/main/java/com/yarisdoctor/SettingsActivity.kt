@@ -12,6 +12,7 @@ import android.content.pm.PackageManager.PERMISSION_GRANTED
 import android.net.Uri
 import android.os.Build
 import android.provider.MediaStore
+import android.provider.OpenableColumns
 import android.provider.Settings
 import android.text.SpannableStringBuilder
 import android.text.Spanned
@@ -93,6 +94,8 @@ class SettingsActivity : Activity() {
             addView(syncBlock(), LinearLayout.LayoutParams(-1, -2).apply { topMargin = ui.px(12) })
             addView(section("Your data"))
             addView(group(
+                row("Back up database", "Saves the whole log to Downloads as one file you can restore here") { backUp() },
+                row("Restore database", "Replaces every reading, regen and warning on this phone with a backup") { pickBackup() },
                 row("Export database", "Saves the whole log to Downloads as one Markdown file an AI can read") { exportAll() },
                 row("Delete trips", "Pick drives to remove from this phone and the hub") { pickTrips() },
             ))
@@ -169,6 +172,7 @@ class SettingsActivity : Activity() {
 
     override fun onResume() {
         super.onResume()
+        oil = null // the odometer and regen count move while the screen is away: read them again
         render() // the Live Updates row reflects a change made in system settings
     }
 
@@ -221,28 +225,55 @@ class SettingsActivity : Activity() {
             .show()
     }
 
-    /** Records an oil change at today's date and the GPS odometer; the oil_change_due check counts from it. */
+    /** The oil row's numbers: the GPS odometer and the regens started since the change, both database reads. */
+    private class Oil(val at: Long, val metres: Double, val regens: Int)
+
+    /** Filled by [oilRow]'s background read; null until it returns, and cleared by [onResume] for fresh numbers. */
+    private var oil: Oil? = null
+
+    /**
+     * Records an oil change at today's date and the GPS odometer; the oil_change_due check counts from it. Unlike the
+     * other rows this one has to read the log, so its numbers arrive from a background thread.
+     */
     private fun oilRow(): View {
         val at = Prefs.long(this, Prefs.OIL_AT)
-        val (perUnit, unit) = Prefs.unit(this)
-        val sub = if (at == 0L) "Never recorded · tap when the oil is changed" else {
-            val since = (Prefs.oilMetres(this) ?: 0.0) / perUnit
-            val regens = container.real.regens().count { it.start >= at }
-            DateFormat.getDateInstance().format(at) + " · %.0f $unit, $regens regen${if (regens == 1) "" else "s"} since".format(since)
-        }
+        val cached = oil?.takeIf { it.at == at }
+        val sub = ui.text(Type.BODY_SM, R.color.muted, oilLabel(at, cached)).apply { setPadding(0, ui.px(2), 0, 0) }
+        if (at != 0L && cached == null) Thread {
+            val fresh = Oil(at, container.real.odometer(), container.real.regens().count { it.start >= at })
+            runOnUiThread {
+                oil = fresh
+                if (!isFinishing) sub.text = oilLabel(at, fresh)
+            }
+        }.start()
         return row("Oil changed", sub) {
             AlertDialog.Builder(this)
                 .setTitle("Oil changed today?")
                 .setMessage("Counts distance and regens from now. Toyota changes the oil every $OIL_CHANGE_KM km on this engine.")
                 .setPositiveButton("Record") { _, _ ->
-                    Prefs.put(this, Prefs.OIL_AT, System.currentTimeMillis())
-                    Prefs.put(this, Prefs.OIL_ODO, container.real.odometer().toLong())
-                    DpfService.restart(this) // closes an oil-change warning now
-                    render()
+                    val now = System.currentTimeMillis()
+                    Thread {
+                        val odo = container.real.odometer().toLong() // off the main thread, like the row's numbers
+                        runOnUiThread {
+                            Prefs.put(this, Prefs.OIL_AT, now)
+                            Prefs.put(this, Prefs.OIL_ODO, odo)
+                            DpfService.restart(this) // closes an oil-change warning now
+                            render()
+                        }
+                    }.start()
                 }
                 .setNegativeButton("Cancel", null)
                 .show()
         }
+    }
+
+    /** "26 Oct 2026 · 1,204 mi, 3 regens since", or just the date while the background read is still running. */
+    private fun oilLabel(at: Long, oil: Oil?): String {
+        if (at == 0L) return "Never recorded · tap when the oil is changed"
+        val date = DateFormat.getDateInstance().format(at)
+        if (oil == null) return "$date · reading the log…"
+        val (perUnit, unit) = Prefs.unit(this)
+        return "%s · %.0f %s, %s since".format(date, oil.metres / perUnit, unit, plural(oil.regens, "regen"))
     }
 
     /** caption-uppercase label above a group. */
@@ -298,13 +329,17 @@ class SettingsActivity : Activity() {
     }
 
     /** 64dp-min row; [onClick] null makes it display-only. */
-    private fun row(title: String, sub: String, end: View? = null, onClick: (() -> Unit)? = null) = LinearLayout(this).apply {
+    private fun row(title: String, sub: String, end: View? = null, onClick: (() -> Unit)? = null) =
+        row(title, ui.text(Type.BODY_SM, R.color.muted, sub).apply { setPadding(0, ui.px(2), 0, 0) }, end, onClick)
+
+    /** [row] with a subtitle the caller keeps, to fill once a background read returns (see [oilRow]). */
+    private fun row(title: String, sub: View, end: View? = null, onClick: (() -> Unit)? = null) = LinearLayout(this).apply {
         gravity = Gravity.CENTER_VERTICAL
         minimumHeight = ui.px(64)
         setPadding(ui.px(20), ui.px(14), ui.px(20), ui.px(14))
         addView(ui.column(
             ui.text(Type.TITLE_SM, R.color.ink, title),
-            ui.text(Type.BODY_SM, R.color.muted, sub).apply { setPadding(0, ui.px(2), 0, 0) },
+            sub,
         ), LinearLayout.LayoutParams(0, -2, 1f))
         if (end != null) addView(end)
         if (onClick != null) {
@@ -482,5 +517,140 @@ class SettingsActivity : Activity() {
         }.start()
     }
 
+    /**
+     * The whole real log (never Debug data) as one SQLite file in Downloads, restorable with "Restore database";
+     * MediaStore needs no storage permission, like the AI export above.
+     */
+    private fun backUp() {
+        toast("Copying the database…")
+        Thread {
+            val result = try {
+                val tmp = File(cacheDir, "backup.db")
+                DatabaseBackup.export(container.real, tmp)
+                val stamp = SimpleDateFormat("yyyyMMdd-HHmm", Locale.ROOT).format(System.currentTimeMillis())
+                val name = "yaris-doctor-backup-$stamp.db"
+                val values = ContentValues().apply {
+                    put(MediaStore.Downloads.DISPLAY_NAME, name)
+                    put(MediaStore.Downloads.MIME_TYPE, "application/x-sqlite3")
+                }
+                val uri = contentResolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values) ?: error("Downloads refused the file")
+                try {
+                    contentResolver.openOutputStream(uri)!!.use { out -> tmp.inputStream().use { it.copyTo(out) } }
+                } catch (e: Exception) {
+                    contentResolver.delete(uri, null, null) // no half-written file left in Downloads
+                    throw e
+                } finally {
+                    tmp.delete()
+                }
+                "Saved to Downloads as $name"
+            } catch (e: Exception) {
+                "Backup failed: ${e.message ?: e.javaClass.simpleName}"
+            }
+            runOnUiThread { toast(result) }
+        }.start()
+    }
+
+    /** Picks a .db snapshot to restore; ACTION_OPEN_DOCUMENT needs no storage permission either. */
+    private fun pickBackup() {
+        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("*/*")
+        try {
+            startActivityForResult(intent, REQUEST_RESTORE)
+        } catch (e: ActivityNotFoundException) {
+            toast("No file picker on this phone")
+        }
+    }
+
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode != REQUEST_RESTORE || resultCode != RESULT_OK) return
+        val uri = data?.data ?: return
+        toast("Checking the backup…")
+        Thread {
+            val tmp = File(cacheDir, "restore.db")
+            var name = "this backup"
+            val error = try {
+                name = displayName(uri) ?: name
+                tmp.delete()
+                contentResolver.openInputStream(uri)?.use { input -> tmp.outputStream().use { input.copyTo(it) } }
+                    ?: error("Could not read the picked file")
+                DatabaseBackup.validate(container.real, tmp) // before the question, so a wrong file never asks
+                null
+            } catch (e: Exception) {
+                e.message ?: e.javaClass.simpleName
+            }
+            if (error != null) {
+                tmp.delete() // not a backup: no reason to keep the copy
+                runOnUiThread { toast("Not a usable backup: $error") }
+            } else {
+                runOnUiThread { if (!isFinishing) confirmRestore(tmp, name) }
+            }
+        }.start()
+    }
+
+    /** "yaris-doctor-backup-20261026-1014.db": the file's own name is what the user recognises. */
+    private fun displayName(uri: Uri): String? = contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use {
+        if (it.moveToFirst()) it.getString(0) else null
+    }
+
+    /** Destructive, so the file and what it replaces are spelled out; the hub keeps its own copy. */
+    private fun confirmRestore(file: File, name: String) {
+        val dialog = AlertDialog.Builder(this)
+            .setTitle("Restore $name?")
+            .setMessage("This replaces every reading, regen and warning on this phone. The hub is not changed.")
+            .setPositiveButton("Restore") { _, _ -> restore(file) }
+            .setNegativeButton("Cancel") { _, _ -> file.delete() }
+            .show()
+        dialog.getButton(AlertDialog.BUTTON_POSITIVE).setTextColor(ui.color(R.color.status_crit))
+    }
+
+    /**
+     * Stops the service, then copies [file]'s rows in (one transaction: a failure leaves the log exactly as it was) and
+     * makes the next sync upload everything again.
+     */
+    private fun restore(file: File) {
+        stopService(Intent(this, DpfService::class.java))
+        toast("Restoring…")
+        Thread {
+            val result = try {
+                val counts = DatabaseBackup.restore(container.real, file)
+                resetSyncForRestore()
+                "Restored ${plural(counts.readings, "reading")}, ${plural(counts.regens, "regen")}, " +
+                    "${plural(counts.frames, "frame")}, ${plural(counts.warnings, "warning")}"
+            } catch (e: Exception) {
+                "Restore failed: ${e.message ?: e.javaClass.simpleName}. Nothing was changed."
+            } finally {
+                file.delete()
+            }
+            runOnUiThread {
+                oil = null
+                DpfService.start(this) // stopped above, and a failed restore still needs logging back on
+                toast(result)
+                render()
+            }
+        }.start()
+    }
+
+    /**
+     * A restored log's rowids are the hub's idea of this phone's rows, but its cursors say everything is already sent:
+     * send it all again from the start, and download the hub's rows again too. Both sides ignore what they have.
+     */
+    private fun resetSyncForRestore() {
+        Prefs.put(this, Prefs.SYNCED_ROWID, 0L)
+        Prefs.put(this, Prefs.SYNCED_FRAME_ROWID, 0L)
+        Prefs.put(this, Prefs.SYNCED_REGENS, null)
+        Prefs.put(this, Prefs.SYNCED_ALERTS, null)
+        Prefs.put(this, Prefs.HUB_FRAMES, true)
+        Prefs.put(this, Prefs.HUB_DELETES, true)
+        Prefs.put(this, Prefs.PULLED_ROWID, 0L)
+        Prefs.put(this, Prefs.PENDING_DELETES, null)
+        Prefs.put(this, Prefs.THINNED_TO, 0L)
+        Prefs.put(this, "thinned_hourly_to", 0L) // the hourly thinning cursor, which Prefs has no constant for yet
+    }
+
     private fun toast(s: String) = Toast.makeText(this, s, Toast.LENGTH_LONG).show()
+
+    private companion object {
+        /** [onActivityResult]'s request code for the Restore database file picker. */
+        private const val REQUEST_RESTORE = 1
+    }
 }

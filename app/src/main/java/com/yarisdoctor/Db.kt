@@ -10,6 +10,7 @@ import com.yarisdoctor.domain.car.PID_IDLE
 import com.yarisdoctor.domain.car.PID_LENGTHS
 import com.yarisdoctor.domain.drive.Poller
 import com.yarisdoctor.domain.drive.mergeRegens
+import com.yarisdoctor.domain.drive.mergeSameBurn
 import com.yarisdoctor.domain.health.DpfCondition
 import com.yarisdoctor.domain.health.Finding
 import com.yarisdoctor.domain.health.FinishedRegen
@@ -28,7 +29,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 /** [name] null = in-memory database (Debug mode), gone when closed. Created by [AppContainer]: one per database per process. */
-class Db internal constructor(ctx: Context, name: String?) : SQLiteOpenHelper(ctx, name, null, 6), DriveStore {
+class Db internal constructor(private val ctx: Context, name: String?) : SQLiteOpenHelper(ctx, name, null, 6), DriveStore {
 
     override fun onCreate(db: SQLiteDatabase) {
         // odo_m: GPS distance accumulated by this app (metres), our stand-in for the odometer
@@ -314,9 +315,37 @@ class Db internal constructor(ctx: Context, name: String?) : SQLiteOpenHelper(ct
         for (trip in trips) db.insert("pick", null, ContentValues().apply { put("a", trip.start); put("b", trip.until) })
     }
 
-    /** Keeps the first frame per request per minute in [[from], [to]): old drives stay chartable at a fraction of the size. */
-    override fun thinFrames(from: Long, to: Long) = writableDatabase.execSQL(
-        "DELETE FROM frame WHERE t >= ? AND t < ? AND rowid NOT IN (SELECT MIN(rowid) FROM frame WHERE t >= ? AND t < ? GROUP BY lid, t / 60000)",
+    /**
+     * Keeps the first frame per request per minute in [[from], [to]): old drives stay chartable at a fraction of the size.
+     * The ash record (A918) and calibration ID (0904) are lids too, so they thin like any other request.
+     */
+    override fun thinFrames(from: Long, to: Long) = thin(from, to, BUCKET_MINUTE_MS)
+
+    /**
+     * Tiered frame retention for the real log: the last [RECENT_MS] is untouched, 7-90 days keep one frame per [lid] per
+     * minute, and anything older one per hour. Each pass starts where the previous one stopped (Prefs.THINNED_TO and
+     * Prefs.THINNED_HOURLY_TO), so only new rows are looked at and a second run deletes nothing.
+     */
+    fun thinFrames(now: Long) {
+        // 7-90 days: one per lid per minute. From at most 90 days back, so older rows go straight to the hourly pass
+        val minuteTo = now - RECENT_MS
+        val minuteFrom = maxOf(Prefs.long(ctx, Prefs.THINNED_TO), now - HOURLY_AFTER_MS)
+        if (minuteTo - minuteFrom >= TRIM_STEP_MS) {
+            thin(minuteFrom, minuteTo, BUCKET_MINUTE_MS)
+            Prefs.put(ctx, Prefs.THINNED_TO, minuteTo)
+        }
+        // Older than 90 days: one per lid per hour
+        val hourTo = now - HOURLY_AFTER_MS
+        val hourFrom = Prefs.long(ctx, Prefs.THINNED_HOURLY_TO)
+        if (hourTo - hourFrom >= TRIM_STEP_MS) {
+            thin(hourFrom, hourTo, BUCKET_HOUR_MS)
+            Prefs.put(ctx, Prefs.THINNED_HOURLY_TO, hourTo)
+        }
+    }
+
+    /** Deletes every frame in [[from], [to]) but the lowest rowid of each [lid] per [bucketMs]. */
+    private fun thin(from: Long, to: Long, bucketMs: Long) = writableDatabase.execSQL(
+        "DELETE FROM frame WHERE t >= ? AND t < ? AND rowid NOT IN (SELECT MIN(rowid) FROM frame WHERE t >= ? AND t < ? GROUP BY lid, t / $bucketMs)",
         arrayOf(from, to, from, to),
     )
 
@@ -369,7 +398,7 @@ class Db internal constructor(ctx: Context, name: String?) : SQLiteOpenHelper(ct
         }
     }.maxByOrNull { it.t }
 
-    /** Every phone's regens, oldest first, the same burn seen by two phones counted once; gaps are car distance. */
+    /** Every phone's regens, oldest first, the same burn seen by two phones counted once (and one split by an ignition cycle joined); gaps are car distance. */
     fun regens(): List<Regen> {
         val rows = mutableListOf<Regen>()
         readableDatabase.rawQuery(
@@ -377,10 +406,19 @@ class Db internal constructor(ctx: Context, name: String?) : SQLiteOpenHelper(ct
         ).use {
             while (it.moveToNext()) rows += Regen(it.getLong(0), if (it.isNull(1)) null else it.getLong(1), null, it.intOrNull(2), it.intOrNull(3))
         }
-        val phones = phones()
+        val merged = mergeSameBurn(mergeRegens(rows))
+        // Every instant a gap needs, read in one go: each phone's odometer is otherwise two queries per regen
+        val bounds = ArrayList<Long>(merged.size * 2)
         var prevEnd: Long? = null
-        return mergeRegens(rows).map { r ->
-            r.copy(gapM = prevEnd?.let { driven(phones, it, r.start) }).also { if (r.end != null) prevEnd = r.end }
+        for (r in merged) {
+            prevEnd?.let { bounds += it }
+            bounds += r.start
+            if (r.end != null) prevEnd = r.end
+        }
+        val odo = Odometers(bounds)
+        prevEnd = null
+        return merged.map { r ->
+            r.copy(gapM = prevEnd?.let { odo.between(it, r.start) }).also { if (r.end != null) prevEnd = r.end }
         }
     }
 
@@ -399,7 +437,10 @@ class Db internal constructor(ctx: Context, name: String?) : SQLiteOpenHelper(ct
     /** Car distance since the last finished regen, by any phone. */
     fun metresSinceRegen(): Double? =
         readableDatabase.rawQuery("SELECT MAX(t) FROM (SELECT MAX(end_t) AS t FROM regen UNION ALL SELECT MAX(end_t) FROM peer_regen)", null).use {
-            if (it.moveToFirst() && !it.isNull(0)) driven(phones(), it.getLong(0), Long.MAX_VALUE) else null
+            if (it.moveToFirst() && !it.isNull(0)) {
+                val end = it.getLong(0)
+                Odometers(listOf(end, Long.MAX_VALUE)).between(end, Long.MAX_VALUE)
+            } else null
         }
 
     /** null = this phone, then the other phones' ids. Cached: the DISTINCT scans every peer row, and only putPeers changes it. */
@@ -412,16 +453,53 @@ class Db internal constructor(ctx: Context, name: String?) : SQLiteOpenHelper(ct
         readableDatabase.rawQuery("SELECT DISTINCT device FROM peer_sample", null).use { c -> List(c.count) { c.moveToNext(); c.getString(0) } })
         .also { phones = it }
 
-    /** Metres the car drove between two instants: each phone's own GPS odometer only grows, so add up their progress. */
-    private fun driven(phones: List<String?>, t0: Long, t1: Long): Double =
-        phones.sumOf { maxOf(0.0, (odoAt(it, t1) ?: 0.0) - (odoAt(it, t0) ?: 0.0)) }
+    /**
+     * The phones' odometers at a set of instants, read once: one indexed statement per phone over a temp table of the
+     * instants. [between] is the car's distance across any two of them. Replaced two queries per phone per regen, which
+     * made the Overview's 5 s refresh run hundreds of them.
+     */
+    private inner class Odometers(instants: List<Long>) {
+        private val at = instants.distinct().sorted()
+        private val index = at.withIndex().associate { (i, t) -> t to i }
+        private val devices = phones()
+        private val values: Map<String?, List<Double?>> = if (at.isEmpty()) devices.associateWith { emptyList<Double?>() } else read()
 
-    /** A phone's odometer at [t]: its last reading by then, else its first reading (it hadn't driven yet). */
-    private fun odoAt(phone: String?, t: Long): Double? {
-        val (from, args) = if (phone == null) "sample WHERE" to emptyArray<String>() else "peer_sample WHERE device = ? AND" to arrayOf(phone)
-        fun one(sql: String, vararg a: String) = readableDatabase.rawQuery(sql, a).use { if (it.moveToFirst() && !it.isNull(0)) it.getDouble(0) else null }
-        return one("SELECT odo_m FROM $from t <= ? ORDER BY t DESC LIMIT 1", *args, t.toString())
-            ?: one("SELECT odo_m FROM $from 1 ORDER BY t LIMIT 1", *args)
+        /** Metres the car drove between two instants: each phone's own GPS odometer only grows, so add up their progress. */
+        fun between(t0: Long, t1: Long): Double = devices.sumOf { phone ->
+            val odo = values.getValue(phone)
+            maxOf(0.0, (odo[index.getValue(t1)] ?: 0.0) - (odo[index.getValue(t0)] ?: 0.0))
+        }
+
+        /** A phone's odometer at each instant: its last reading by then, else its first reading (it hadn't driven yet). */
+        private fun read(): Map<String?, List<Double?>> {
+            val db = writableDatabase
+            // One transaction: another thread's regens() must not clear the temp table between the inserts and the reads
+            db.beginTransaction()
+            try {
+                db.execSQL("CREATE TEMP TABLE IF NOT EXISTS odo_at(i INTEGER PRIMARY KEY, t INTEGER)")
+                db.execSQL("DELETE FROM odo_at")
+                at.forEachIndexed { i, t -> db.insert("odo_at", null, ContentValues().apply { put("i", i); put("t", t) }) }
+                val out = devices.associateWith { phone ->
+                    val (from, arg) = if (phone == null) "sample WHERE" to null else "peer_sample WHERE device = ? AND" to phone
+                    db.rawQuery(
+                        "SELECT (SELECT odo_m FROM $from t <= odo_at.t ORDER BY t DESC LIMIT 1), (SELECT odo_m FROM $from 1 ORDER BY t LIMIT 1) FROM odo_at ORDER BY i",
+                        if (arg == null) null else arrayOf(arg, arg),
+                    ).use { c ->
+                        val list = ArrayList<Double?>(at.size)
+                        while (c.moveToNext()) list += when {
+                            !c.isNull(0) -> c.getDouble(0)
+                            !c.isNull(1) -> c.getDouble(1)
+                            else -> null
+                        }
+                        list
+                    }
+                }
+                db.setTransactionSuccessful()
+                return out
+            } finally {
+                db.endTransaction()
+            }
+        }
     }
 
     /**
@@ -518,6 +596,12 @@ class Db internal constructor(ctx: Context, name: String?) : SQLiteOpenHelper(ct
         private const val PEER_CLOCK_SLACK_MS = 5 * 60_000L
         /** [sootSeries]' bucket. */
         const val SOOT_BUCKET_MS = 10 * 60_000L
+        /** [thinFrames] tiers: full resolution for a week, a frame per minute to 90 days, then one per hour. */
+        private const val RECENT_MS = 7 * 24 * 3_600_000L
+        private const val HOURLY_AFTER_MS = 90 * 24 * 3_600_000L
+        private const val TRIM_STEP_MS = 3_600_000L
+        private const val BUCKET_MINUTE_MS = 60_000L
+        private const val BUCKET_HOUR_MS = 3_600_000L
         /** Each table with a trip's rows and its test against a pick(a, b) window. A link row is stamped at session start, a little before the first sample. */
         private val TRIP_ROWS = listOf(
             "sample" to "sample.t BETWEEN a AND b",

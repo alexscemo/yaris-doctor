@@ -27,4 +27,70 @@ class RegensTest {
         assertEquals(22 * m, merged[0].end)
         assertEquals(10, merged[0].sootEnd)
     }
+
+    @Test fun mergeSameBurnJoinsABurnSplitByAnIgnitionCycle() {
+        val m = 60_000L
+        val merged = mergeSameBurn(listOf(
+            Regen(10 * m, 20 * m, null, 80, 30, floor = 14, peakTemp = 600),
+            Regen(25 * m, 35 * m, null, 32, 10, floor = 12, peakTemp = 620),
+        ))
+        assertEquals(1, merged.size)
+        assertEquals(10 * m, merged[0].start)   // first start
+        assertEquals(35 * m, merged[0].end)     // second end
+        assertEquals(80, merged[0].sootStart)   // first soot start
+        assertEquals(10, merged[0].sootEnd)     // second soot end
+        assertEquals(12, merged[0].floor)       // the lower floor and higher peak carry over
+        assertEquals(620, merged[0].peakTemp)
+    }
+
+    @Test fun mergeSameBurnAcceptsASmallSootDifference() {
+        val m = 60_000L
+        val merged = mergeSameBurn(listOf(
+            Regen(0, 10 * m, null, 80, 30),
+            Regen(11 * m, 20 * m, null, 25, 10), // 5 points lower: still the same burn
+        ))
+        assertEquals(1, merged.size)
+    }
+
+    @Test fun mergeSameBurnKeepsASecondBurnWhenTheSootDropped() {
+        val m = 60_000L
+        val merged = mergeSameBurn(listOf(
+            Regen(0, 10 * m, null, 80, 30),
+            Regen(11 * m, 20 * m, null, 20, 8), // 10 points lower: a real second burn
+        ))
+        assertEquals(listOf(0L, 11 * m), merged.map { it.start })
+    }
+
+    @Test fun mergeSameBurnKeepsBurnsOverHalfAnHourApart() {
+        val m = 60_000L
+        val merged = mergeSameBurn(listOf(
+            Regen(0, 10 * m, null, 80, 30),
+            Regen(130 * m, 140 * m, null, 32, 10), // 2 h later: continuous soot but not the same burn
+        ))
+        assertEquals(listOf(0L, 130 * m), merged.map { it.start })
+    }
+
+    @Test fun mergeSameBurnNeverMergesAnOpenRegen() {
+        val m = 60_000L
+        val merged = mergeSameBurn(listOf(
+            Regen(0, null, null, 80, null),
+            Regen(5 * m, 15 * m, null, 30, 10),
+        ))
+        assertEquals(2, merged.size)
+        assertNull(merged[0].end)
+    }
+
+    @Test fun mergeSameBurnCollapsesThreePartialBurns() {
+        val m = 60_000L
+        val merged = mergeSameBurn(listOf(
+            Regen(0, 5 * m, null, 90, 70),
+            Regen(10 * m, 15 * m, null, 72, 45),
+            Regen(20 * m, 30 * m, null, 47, 10),
+        ))
+        assertEquals(1, merged.size)
+        assertEquals(0L, merged[0].start)
+        assertEquals(30 * m, merged[0].end)
+        assertEquals(90, merged[0].sootStart)
+        assertEquals(10, merged[0].sootEnd)
+    }
 }

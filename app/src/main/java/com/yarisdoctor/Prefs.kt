@@ -23,6 +23,8 @@ object Prefs {
     const val PULLED_ROWID = "pulled_rowid"
     const val PULLED_AT = "pulled_at"
     const val THINNED_TO = "thinned_to"
+    /** Where the hourly thinning pass stopped: frames older than 90 days, one per lid per hour (see Db.thinFrames). */
+    const val THINNED_HOURLY_TO = "thinned_hourly_to"
     const val SYNCED_FRAME_ROWID = "synced_frame_rowid"
     const val SYNCED_ALERTS = "synced_alerts"
     const val HUB_FRAMES = "hub_frames"

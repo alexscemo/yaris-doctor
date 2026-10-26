@@ -30,6 +30,7 @@ class AllData(private val a: ComponentActivity, private val ui: Ui) {
     private val values = HashMap<String, TextView>() // pid id → value text of the rows on screen
     private val rates = HashMap<String, TextView>()  // pid id → "every 0.8 s" under its name
     private val last = HashMap<String, Double>()       // pid id → value at the previous refresh, to flash changes
+    private val flashOff = HashMap<TextView, Runnable>() // pending tint clear when animations are off
     private val rows = ui.column()
     private val header = ui.text(Type.BODY_SM, R.color.muted)
     private val chips = LinearLayout(a)
@@ -167,10 +168,18 @@ class AllData(private val a: ComponentActivity, private val ui: Ui) {
         )
     }
 
-    /** Green-tinted for a value that went up, red-tinted for down, fading out over a second. */
+    /** Green-tinted for a value that went up, red-tinted for down, fading out over a second (a brief tint with animations off). */
     private fun flash(view: TextView, up: Boolean) {
         val bg = view.background as GradientDrawable
+        flashOff.remove(view)?.let(view::removeCallbacks) // a reduced-motion clear must not undo this flash
         val c = ui.color(if (up) R.color.flash_up else R.color.flash_down)
+        if (!Ui.animationsOn()) {
+            bg.setColor(c)
+            val clear = Runnable { bg.setColor(Color.TRANSPARENT); flashOff.remove(view) }
+            flashOff[view] = clear
+            view.postDelayed(clear, 250)
+            return
+        }
         ValueAnimator.ofArgb(c, c and 0x00FFFFFF).apply {
             duration = 1200
             addUpdateListener { bg.setColor(it.animatedValue as Int) }

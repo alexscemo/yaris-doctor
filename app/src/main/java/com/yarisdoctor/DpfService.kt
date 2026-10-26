@@ -272,14 +272,8 @@ class DpfService : Service() {
     /** A sync is queued on this service's executor or still running (also one started by Settings' "Sync now"). */
     private fun syncing() = syncQueued.get() || Sync.isRunning()
 
-    /** Frames older than FULL_MS are thinned to one per request per minute, each stretch once (tracked in Prefs). */
-    private fun thin() {
-        val to = System.currentTimeMillis() - FULL_MS
-        val from = Prefs.long(this, Prefs.THINNED_TO)
-        if (to - from < 3_600_000L) return
-        container.real.thinFrames(from, to)
-        Prefs.put(this, Prefs.THINNED_TO, to)
-    }
+    /** Tiered frame retention (see [Db.thinFrames]): full detail for a week, one frame a minute to 90 days, one an hour after. */
+    private fun thin() = container.real.thinFrames(System.currentTimeMillis())
 
     /** One quiet notification when a drive ends: distance, soot, regens and warnings. */
     private fun tripDone() {
@@ -354,7 +348,6 @@ class DpfService : Service() {
     companion object {
         private val SPP: UUID = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB")
         private const val PROBE_MS = 60_000L
-        private const val FULL_MS = 30 * 24 * 3_600_000L
         private const val CH_SERVICE = "service"
         private const val CH_REGEN = "regen"
         private const val ID_SERVICE = 1

@@ -27,6 +27,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.viewModels
 import androidx.lifecycle.lifecycleScope
 import com.yarisdoctor.Ui.Type
+import com.yarisdoctor.domain.drive.forecast
 import com.yarisdoctor.domain.health.CRIT
 import com.yarisdoctor.domain.health.WARN
 import com.yarisdoctor.domain.model.Alert
@@ -60,6 +61,8 @@ class MainActivity : ComponentActivity() {
     private lateinit var milesSub: TextView
     private lateinit var regenState: TextView
     private lateinit var regenSub: TextView
+    private lateinit var nextRegen: TextView
+    private lateinit var nextRegenSub: TextView
     private lateinit var sootFill: SootView
     private lateinit var sootChart: ChartView
     private lateinit var regenChart: ChartView
@@ -129,13 +132,18 @@ class MainActivity : ComponentActivity() {
         temp = ui.text(Type.STAT, R.color.on_instrument); tempSub = ui.text(Type.BODY_SM, R.color.on_instrument_soft)
         miles = ui.text(Type.STAT, R.color.on_instrument); milesSub = ui.text(Type.BODY_SM, R.color.on_instrument_soft)
         regenState = ui.text(Type.STAT, R.color.on_instrument); regenSub = ui.text(Type.BODY_SM, R.color.on_instrument_soft)
+        nextRegen = ui.text(Type.STAT, R.color.on_instrument); nextRegenSub = ui.text(Type.BODY_SM, R.color.on_instrument_soft)
         val tileW = ((resources.displayMetrics.widthPixels - ui.px(40)) * 0.62f).toInt()
         val tiles = HorizontalScrollView(this).apply {
             isHorizontalScrollBarEnabled = false
             clipToPadding = false
             addView(LinearLayout(context).apply {
-                listOf(tile("DPF temp", temp, tempSub), tile("Since regen", miles, milesSub), tile("Regen", regenState, regenSub))
-                    .forEachIndexed { i, t -> addView(t, LinearLayout.LayoutParams(tileW, -2).apply { if (i > 0) marginStart = ui.px(12) }) }
+                listOf(
+                    tile("DPF temp", temp, tempSub),
+                    tile("Since regen", miles, milesSub),
+                    tile("Regen", regenState, regenSub),
+                    tile("Next regen", nextRegen, nextRegenSub),
+                ).forEachIndexed { i, t -> addView(t, LinearLayout.LayoutParams(tileW, -2).apply { if (i > 0) marginStart = ui.px(12) }) }
             })
         }
 
@@ -297,6 +305,24 @@ class MainActivity : ComponentActivity() {
             regenNow -> "$mins min so far"
             regens.lastOrNull()?.end != null -> "Last took ${duration(regens.last())}"
             else -> "None logged yet"
+        }
+
+        // Next regen: the soot rise since the last finished regen, against the level regens start at on this car
+        val finished = regens.filter { it.end != null }
+        val next = forecast(
+            last?.soot, finished.lastOrNull()?.sootEnd, s.metresSinceRegen,
+            finished.mapNotNull { it.sootStart }, Prefs.model2015(this),
+        )
+        val kmLeft = next.kmToRegen
+        nextRegen.text = when {
+            kmLeft == null -> "—"
+            kmLeft <= 0.0 -> "Now"
+            else -> "~%.0f $unit".format(kmLeft * 1000 / perUnit)
+        }
+        nextRegenSub.text = when {
+            kmLeft == null -> "drive a little more"
+            kmLeft <= 0.0 -> next.triggerSoot?.let { "due at about %.0f %%".format(it) } ?: "due now"
+            else -> next.sootPer100Km?.let { "soot +%.1f %% per 100 km".format(it) } ?: "drive a little more"
         }
 
         val series = s.sootSeries

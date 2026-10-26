@@ -63,6 +63,18 @@ class DpfService : Service() {
     private val probe = AlarmManager.OnAlarmListener { wake.acquire(30_000); idle.release() }
     private val worker = Thread(::run, "dpf")
     /**
+     * The phone was plugged into the car: probe now instead of waiting for the alarm. Registered at runtime because
+     * Android 16 sends ACTION_POWER_CONNECTED as a registered-only broadcast, so the manifest receiver (which still
+     * covers a service that isn't running yet) never sees it here.
+     */
+    private val power = object : android.content.BroadcastReceiver() {
+        override fun onReceive(c: android.content.Context, intent: Intent) {
+            if (intent.action != Intent.ACTION_POWER_CONNECTED) return
+            Log.d(TAG, "power connected: probing now")
+            idle.release()
+        }
+    }
+    /**
      * Hub syncs run here, never on [worker]: a long upload must not delay the next dongle probe, so a drive starting
      * during one is still logged at once. One thread and [syncQueued] keep it single-flight: no overlap, no pile-up.
      */
@@ -127,6 +139,12 @@ class DpfService : Service() {
         drive.start()
         HomeWatch.cancel(this) // back from a pause at home, or started by hand: this instance does the watching now
         Sync.watch(this)
+        val powerFilter = android.content.IntentFilter(Intent.ACTION_POWER_CONNECTED)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(power, powerFilter, android.content.Context.RECEIVER_NOT_EXPORTED)
+        } else {
+            registerReceiver(power, powerFilter)
+        }
         worker.start()
     }
 
@@ -140,6 +158,7 @@ class DpfService : Service() {
         running = false
         alive = false
         Sync.unwatch(this)
+        try { unregisterReceiver(power) } catch (e: IllegalArgumentException) {}
         alarms.cancel(probe)
         try { socket?.close() } catch (e: Exception) {}
         idle.release()

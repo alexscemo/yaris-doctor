@@ -32,6 +32,11 @@ class SootView(ctx: Context, fill: Int, private val ember: Int) : View(ctx) {
     private var phase = 0f
     private var animator: ValueAnimator? = null
 
+    init {
+        // Purely decorative: the soot % is the text next to it, so TalkBack skips the fill and specks
+        importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_NO
+    }
+
     /** [soot] in %, null when unknown (drawn empty). 100 % fills the card. */
     fun setSoot(soot: Int?) {
         val next = ((soot ?: 0) / 100f).coerceIn(0f, 1f)
@@ -39,8 +44,10 @@ class SootView(ctx: Context, fill: Int, private val ember: Int) : View(ctx) {
         rising = next > target
         target = next
         animator?.cancel()
-        if (!ValueAnimator.areAnimatorsEnabled()) {
+        if (!Ui.animationsOn()) {
             level = next
+            activeUntil = 0L
+            bits.clear()
             invalidate()
             return
         }
@@ -61,10 +68,18 @@ class SootView(ctx: Context, fill: Int, private val ember: Int) : View(ctx) {
     }
 
     override fun onDraw(canvas: Canvas) {
+        val motion = Ui.animationsOn()
+        // Switched off mid-slide: settle at once and drop the particles instead of freezing them
+        if (!motion) {
+            if (animator?.isRunning == true) animator?.cancel()
+            if (target >= 0f) level = target
+            activeUntil = 0L
+            bits.clear()
+        }
         val w = width.toFloat()
         val h = height.toFloat()
         val top = h * (1 - level)
-        val active = System.currentTimeMillis() < activeUntil && ValueAnimator.areAnimatorsEnabled()
+        val active = motion && System.currentTimeMillis() < activeUntil
         if (level > 0f) {
             // A gentle wave on the surface while it moves; flat once settled
             val amp = if (active) 3 * d else 0f

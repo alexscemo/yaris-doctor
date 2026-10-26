@@ -20,12 +20,10 @@ jobs:
         with:
           distribution: temurin
           java-version: 17
-      # No committed wrapper jar, so pin Gradle here (matches gradle-wrapper.properties)
+      # Caches Gradle; the wrapper (8.11.1, committed) decides the version
       - uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: 8.11.1
 
-      - run: gradle test assembleDebug
+      - run: ./gradlew test lint assembleDebug
       - uses: actions/upload-artifact@v4
         with:
           name: debug-apk
@@ -41,6 +39,6 @@ jobs:
           export KEYSTORE_PATH="$RUNNER_TEMP/release.p12"
           export VERSION_NAME="${GITHUB_REF_NAME#v}"
           echo "$KEYSTORE_BASE64" | base64 -d > "$KEYSTORE_PATH"
-          gradle assembleRelease
+          ./gradlew assembleRelease
           cp app/build/outputs/apk/release/app-release.apk "yaris-doctor-$GITHUB_REF_NAME.apk"
           gh release create "$GITHUB_REF_NAME" "yaris-doctor-$GITHUB_REF_NAME.apk" --generate-notes

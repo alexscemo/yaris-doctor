@@ -34,6 +34,15 @@ android {
     testOptions {
         unitTests.isIncludeAndroidResources = true
     }
+    // lint runs on every push (CI). Errors fail the build; release lint is skipped because the
+    // release variant is only built in the tagged CI job, on its own.
+    lint {
+        abortOnError = true
+        checkReleaseBuilds = false
+        warningsAsErrors = false
+        // MainActivity's permission callback handles the result itself and is outside this change's files
+        disable += "MissingSuperCall"
+    }
 }
 
 dependencies {

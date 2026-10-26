@@ -42,5 +42,5 @@ private fun num(v: Float): String {
 /** Units and connectives that appear in readouts but say nothing about what is measured. */
 private val UNITS = setOf(
     "per", "then", "now", "at", "in", "to", "of",
-    "km", "mi", "min", "ms", "rpm", "kpa", "bar", "l", "c",
+    "km", "mi", "min", "ms", "rpm", "kpa", "psi", "bar", "mph", "cfm", "g", "lb", "l", "c",
 )

@@ -17,6 +17,7 @@ import com.yarisdoctor.Ui.Type
 import com.yarisdoctor.domain.car.PIDS
 import com.yarisdoctor.domain.car.Pid
 import com.yarisdoctor.domain.car.toyotaNormal
+import com.yarisdoctor.domain.model.UnitSystem
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -33,6 +34,7 @@ class AllData(private val a: ComponentActivity, private val ui: Ui) {
     private val flashOff = HashMap<TextView, Runnable>() // pending tint clear when animations are off
     private val rows = ui.column()
     private val header = ui.text(Type.BODY_SM, R.color.muted)
+    private var unitsShown: UnitSystem? = null
     private val chips = LinearLayout(a)
     private val chart = ChartView(a, columns = false, ui.chartColors())
 
@@ -80,6 +82,8 @@ class AllData(private val a: ComponentActivity, private val ui: Ui) {
         rows.removeAllViews()
         values.clear()
         rates.clear()
+        val units = Prefs.units(a)
+        unitsShown = units.system
         val shown = PIDS.filter { (category == null || it.category == category) && (query.isEmpty() || it.name.contains(query, ignoreCase = true)) }
         if (shown.isEmpty()) rows.addView(ui.text(Type.BODY_MD, R.color.muted, "No value matches.").apply { setPadding(0, ui.px(16), 0, 0) })
         shown.forEachIndexed { i, p ->
@@ -104,7 +108,7 @@ class AllData(private val a: ComponentActivity, private val ui: Ui) {
                     ui.text(Type.BODY_MD, R.color.ink, p.name).apply { setPadding(0, ui.px(4), 0, 0) },
                     rate,
                 ).apply {
-                    toyotaNormal(p.name, Prefs.model2015(a))?.let { addView(ui.text(Type.CAPTION, R.color.muted, "Toyota normal: $it").apply { setPadding(0, ui.px(2), 0, 0) }) }
+                    toyotaNormal(p.name, Prefs.model2015(a))?.let { addView(ui.text(Type.CAPTION, R.color.muted, "Toyota normal: ${units.text(it)}").apply { setPadding(0, ui.px(2), 0, 0) }) }
                 }, LinearLayout.LayoutParams(0, -2, 1f))
                 addView(value, LinearLayout.LayoutParams(-2, -2).apply { marginStart = ui.px(12) })
             })
@@ -128,6 +132,12 @@ class AllData(private val a: ComponentActivity, private val ui: Ui) {
     suspend fun refresh() {
         val lids = rates.keys.mapNotNull { id -> PIDS.firstOrNull { it.id == id }?.lid }.distinct()
         val shown = open
+        val units = Prefs.units(a)
+        // The Settings screen may have changed the system: rebuild the rows so the static normal lines follow too
+        if (unitsShown != units.system) {
+            render()
+            return
+        }
         val s = withContext(Dispatchers.IO) {
             val db = a.container.db()
             val trip = db.tripStart() ?: 0L
@@ -153,7 +163,7 @@ class AllData(private val a: ComponentActivity, private val ui: Ui) {
             rates[p.id]?.text = every[p.lid]?.let { "Updates every " + interval(it) } ?: ""
             val v = latest[p.lid]?.let { p.decode(it.second) }
             val view = values[p.id]
-            view?.text = v?.let(p::format) ?: "—"
+            view?.text = v?.let { p.format(it, units) } ?: "—"
             if (v == null) continue
             val before = last.put(p.id, v)
             if (view != null && before != null && v != before) flash(view, v > before)
@@ -161,8 +171,8 @@ class AllData(private val a: ComponentActivity, private val ui: Ui) {
         val series = s.series
         // Skipped when another row was opened while this read ran: its own refresh draws it
         if (shown != null && series != null && shown === open) chart.set(
-            series.map { it.first }.toLongArray(), series.map { it.second.toFloat() }.toFloatArray(),
-            { i -> "${fmtTime(series[i].first)} · ${shown.format(series[i].second)}" },
+            series.map { it.first }.toLongArray(), series.map { shown.displayValue(it.second, units).toFloat() }.toFloatArray(),
+            { i -> "${fmtTime(series[i].first)} · ${shown.format(series[i].second, units)}" },
             ::fmtTime,
             s.regens,
         )

@@ -1,5 +1,8 @@
 package com.yarisdoctor.domain.car
 
+import com.yarisdoctor.domain.model.Units
+import java.util.Locale
+
 /**
  * One live-data item: bits [bitStart]..[bitEnd] (MSB-first from payload byte 0, so multi-byte fields are big-endian) of the
  * reply to `21 <lid>`, whose payload (after `61 <lid>`) is [len] bytes. Decoded as the sheet's value conversion says:
@@ -29,7 +32,19 @@ class Pid(
     /** What the user sees: the enum label, or the number with the sheet's decimals and the unit. */
     fun format(v: Double): String {
         enum?.let { return it.getOrNull(v.toInt()) ?: "? (${v.toInt()})" }
-        return "%.${decimals}f".format(v) + if (unit.isEmpty()) "" else " $unit"
+        return String.format(Locale.ROOT, "%.${decimals}f", v) + if (unit.isEmpty()) "" else " $unit"
+    }
+
+    /** [v] converted to the shown unit system; units that don't change with it (rpm, V, %) stay as they are. */
+    fun displayValue(v: Double, units: Units): Double = units.displayValue(v, unit) ?: v
+
+    /** Like [format], but pressure, temperature, speed and distance follow [units]. */
+    fun format(v: Double, units: Units): String {
+        enum?.let { return it.getOrNull(v.toInt()) ?: "? (${v.toInt()})" }
+        val shown = displayValue(v, units)
+        val label = units.displayUnit(unit) ?: unit
+        val decimals = units.displayDecimals(unit, shown, decimals)
+        return String.format(Locale.ROOT, "%.${decimals}f", shown) + if (label.isEmpty()) "" else " $label"
     }
 }
 

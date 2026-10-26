@@ -1,5 +1,6 @@
 package com.yarisdoctor.domain.car
 
+import com.yarisdoctor.domain.model.Units
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -30,6 +31,18 @@ class PidTest {
         assertEquals(800.0, pid("Engine Speed", "0C").decode("0C82")!!, 0.0)
         assertEquals(14.0, pid("Battery Voltage", "42").decode("36EC")!!, 0.0)
         assertEquals(0.597, pid("DPF Differential Pressure", "EF").decode("059987A6")!!, 1e-9) // (1433*125/32 - 5000) / 1000
+    }
+
+    @Test fun shownValuesFollowTheUnitSystem() {
+        val map = pid("MAP", "0B")
+        assertEquals("100 kPa", map.format(100.0, Units.METRIC))
+        assertEquals("14.5 psi", map.format(100.0, Units.IMPERIAL))
+        assertEquals("100 °C", pid("Coolant Temp", "05").format(100.0, Units.METRIC))
+        assertEquals("212 °F", pid("Coolant Temp", "05").format(100.0, Units.IMPERIAL))
+        assertEquals("62 mph", pid("Vehicle Speed", "0D").format(100.0, Units.IMPERIAL))
+        assertEquals("62 mi", pid("MIL ON Run Distance", "21").format(100.0, Units.IMPERIAL))
+        assertEquals("0.09 psi", pid("DPF Differential Pressure", "EF").format(0.597, Units.IMPERIAL))
+        assertEquals("ON", pid("Neutral Position SW Signal", "E6").format(1.0, Units.IMPERIAL))
     }
 
     @Test fun flagsEnumsAndSigns() {

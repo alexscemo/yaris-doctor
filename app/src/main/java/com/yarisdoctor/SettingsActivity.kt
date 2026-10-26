@@ -57,7 +57,7 @@ class SettingsActivity : Activity() {
                 },
                 *listOfNotNull(liveUpdatesRow()).toTypedArray(),
                 edgeLightRow(),
-                row("Distance units", if (Prefs.km(context)) "Kilometres" else "Miles") { pickUnits() },
+                row("Units", unitsLabel()) { pickUnits() },
                 row("Model year", if (Prefs.model2015(context)) "2015 or later" else "2011-2014") { pickModelYear() },
                 oilRow(),
             ))
@@ -202,10 +202,14 @@ class SettingsActivity : Activity() {
             .show()
     }
 
+    private fun unitsLabel() = Prefs.units(this).let {
+        if (it.metric) "Metric · km, °C, kPa, km/h" else "Imperial · mi, °F, psi, mph"
+    }
+
     private fun pickUnits() {
         AlertDialog.Builder(this)
-            .setTitle("Distance units")
-            .setSingleChoiceItems(arrayOf("Miles", "Kilometres"), if (Prefs.km(this)) 1 else 0) { dialog, i ->
+            .setTitle("Units")
+            .setSingleChoiceItems(arrayOf("Imperial (mi, °F, psi, mph)", "Metric (km, °C, kPa, km/h)"), if (Prefs.km(this)) 1 else 0) { dialog, i ->
                 Prefs.put(this, Prefs.KM, i == 1)
                 dialog.dismiss()
                 render()
@@ -248,9 +252,10 @@ class SettingsActivity : Activity() {
             }
         }.start()
         return row("Oil changed", sub) {
+            val interval = Prefs.units(this).distanceFromKmText(OIL_CHANGE_KM.toDouble(), grouped = true)
             AlertDialog.Builder(this)
                 .setTitle("Oil changed today?")
-                .setMessage("Counts distance and regens from now. Toyota changes the oil every $OIL_CHANGE_KM km on this engine.")
+                .setMessage("Counts distance and regens from now. Toyota changes the oil every $interval on this engine.")
                 .setPositiveButton("Record") { _, _ ->
                     val now = System.currentTimeMillis()
                     Thread {
@@ -273,8 +278,8 @@ class SettingsActivity : Activity() {
         if (at == 0L) return "Never recorded · tap when the oil is changed"
         val date = DateFormat.getDateInstance().format(at)
         if (oil == null) return "$date · reading the log…"
-        val (perUnit, unit) = Prefs.unit(this)
-        return "%s · %.0f %s, %s since".format(date, oil.metres / perUnit, unit, plural(oil.regens, "regen"))
+        val units = Prefs.units(this)
+        return "%s · %.0f %s, %s since".format(date, units.distance(oil.metres), units.distanceLabel, plural(oil.regens, "regen"))
     }
 
     /** caption-uppercase label above a group. */
@@ -370,9 +375,10 @@ class SettingsActivity : Activity() {
 
     /** "Thu 22 Oct, 09:12" over "34.2 km · 1 regen · 48 min" (or "In progress"), as a checkbox label. */
     private fun tripLabel(trip: Trip, live: Boolean): CharSequence {
-        val (perUnit, unit) = Prefs.unit(this)
+        val units = Prefs.units(this)
         val sub = if (live) "In progress" else
-            "%.1f $unit · ${plural(trip.regens, "regen")} · ${(trip.end - trip.start) / 60_000} min".format(trip.metres / perUnit)
+            "%.1f %s · ${plural(trip.regens, "regen")} · ${(trip.end - trip.start) / 60_000} min"
+                .format(units.distance(trip.metres), units.distanceLabel)
         return SpannableStringBuilder(fmt(trip.start)).append("\n").apply {
             val from = length
             append(sub)
@@ -447,9 +453,11 @@ class SettingsActivity : Activity() {
     }
 
     private fun showDelete(trips: List<Trip>, counts: Map<String, Int>, onDeleted: () -> Unit) {
-        val (perUnit, unit) = Prefs.unit(this)
+        val units = Prefs.units(this)
         val shown = 8
-        val lines = trips.take(shown).map { "${fmt(it.start)} · %.1f $unit · ${plural(it.regens, "regen")}".format(it.metres / perUnit) } +
+        val lines = trips.take(shown).map {
+            "${fmt(it.start)} · %.1f %s · ${plural(it.regens, "regen")}".format(units.distance(it.metres), units.distanceLabel)
+        } +
             listOfNotNull("…and ${trips.size - shown} more".takeIf { trips.size > shown })
         val rows = listOf(plural(counts["sample"] ?: 0, "reading"), plural(counts["frame"] ?: 0, "engine frame"),
             plural(counts["regen"] ?: 0, "regen"), plural(counts["alert"] ?: 0, "warning"))

@@ -2,7 +2,7 @@
 
 An Android app that sits silently in the background and watches the diesel particulate filter (DPF) on a Toyota Yaris diesel through a cheap ELM327 Bluetooth OBD-II dongle.
 
-When the car starts and the dongle powers up, the app connects by itself and logs soot load, DPF temperature and regeneration state. When the car starts a DPF regeneration, a live notification appears so you know to keep driving; it disappears when the regen finishes. Every regen is saved with its duration and the miles driven since the previous one.
+When the car starts and the dongle powers up, the app connects by itself and logs soot load, DPF temperature and regeneration state. When the car starts a DPF regeneration, a live notification appears so you know to keep driving; it disappears when the regen finishes. Every regen is saved with its duration and the distance driven since the previous one.
 
 It replaces DPFViewer, an earlier ESP32 + TFT dashboard that read the same values.
 
@@ -37,7 +37,7 @@ Requires **Android 12 or newer**.
 1. **Pair the dongle** in Android's Bluetooth settings with the ignition on. The PIN is usually `1234` or `0000`.
 2. **Open the app and allow everything it asks for:**
    - **Nearby devices (Bluetooth)**: needed to talk to the dongle.
-   - **Location → "Allow all the time"**: GPS is how distance between regens is measured. Without it, logging still works but miles stay at 0.
+   - **Location → "Allow all the time"**: GPS is how distance between regens is measured. Without it, logging still works but distance stays at 0.
    - **Notifications**: for the regen alert.
    - **Unrestricted battery use**: otherwise Android kills the background service.
 
@@ -49,10 +49,10 @@ From then on it starts at boot. There is nothing to open before a drive.
 
 - **Regen alert:** a high-priority, ongoing notification while the DPF regenerates. It shows a running timer, DPF temperature and soot load, updated every second. On Android 16 it is a Live Update with a burn-off progress bar: Samsung (One UI 8) shows it in the Now Bar, other phones as a status-bar chip. Older Android versions get the normal notification.
 - **Edge light (optional):** a coral glow around the screen edges during a regen, drawn over other apps such as Google Maps so it is noticed at a glance. Turn it on in Settings → Car; it asks for "Display over other apps". Touches pass straight through.
-- **Regen history:** for every regen it records the start time, how long it took, soot before and after, and the miles driven since the previous regen ended.
+- **Regen history:** for every regen it records the start time, how long it took, soot before and after, and the distance driven since the previous regen ended.
 - **Full log:** soot, temperature and regen state every 5 s while driving (1 s during a regen), stored in a SQLite database on the phone.
-- **App screen:** current soot and miles since the last regen, DPF temperature, a **Next regen** estimate (about how far until the soot reaches the level this car's regens start at, or the build-up rate), a 14-day soot chart, a miles-between-regens chart (tap or drag to read values), and the regen history.
-- **Settings** (icon, top right): dongle, background logging on/off, regen notification on/off, Live Updates (Android 16), edge light, miles or kilometres, model year (2011-2014 or 2015+, which sets the soot and temperature limits the checks use), and the date of the last oil change. Also the home hub, **Back up database** / **Restore database** (one SQLite file you can move to a new phone), **Export database**, which saves the whole log to Downloads as one Markdown file for an AI to read, and **Delete trips**, which removes drives you no longer want here and on the hub.
+- **App screen:** current soot and distance since the last regen, DPF temperature, a **Next regen** estimate (about how far until the soot reaches the level this car's regens start at, or the build-up rate), a 14-day soot chart, a distance-between-regens chart (tap or drag to read values), and the regen history.
+- **Settings** (icon, top right): dongle, background logging on/off, regen notification on/off, Live Updates (Android 16), edge light, **Units** (imperial: mi, °F, psi, mph; or metric: km, °C, kPa, km/h, applied to every screen and notification), model year (2011-2014 or 2015+, which sets the soot and temperature limits the checks use), and the date of the last oil change. Also the home hub, **Back up database** / **Restore database** (one SQLite file you can move to a new phone), **Export database**, which saves the whole log to Downloads as one Markdown file for an AI to read, and **Delete trips**, which removes drives you no longer want here and on the hub. The database, the hub payload and that Markdown export stay metric so logs from different phones and unit choices compare directly.
 - **Debug mode** (Settings → Developer): a simulated dongle feeds random but plausible data, with 14 days of fake history and a regen every few minutes, so you can try the screen and the notification without the car. Nothing is saved to your real log. Debug mode turns itself off when the phone restarts or Android closes the app.
 
 A small, low-priority notification ("Waiting for dongle" / "Logging") is present while the app watches for the car. Android requires one for any app that runs in the background continuously. On your home Wi-Fi (Settings → Home hub → Home Wi-Fi name) the app stops looking for the dongle, so the notification goes away; it starts again within about a minute of leaving that Wi-Fi. This needs location "Allow all the time" and battery optimisation turned off for the app, which it asks for on first start.

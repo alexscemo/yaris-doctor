@@ -3,6 +3,7 @@ package com.yarisdoctor
 import android.content.Context
 import android.os.Build
 import com.yarisdoctor.domain.model.METRES_PER_MILE
+import com.yarisdoctor.domain.model.Units
 import java.util.UUID
 
 object Prefs {
@@ -49,9 +50,12 @@ object Prefs {
     fun logging(c: Context) = sp(c).getBoolean(LOGGING, true)
     fun alerts(c: Context) = sp(c).getBoolean(ALERTS, true)
     fun edge(c: Context) = sp(c).getBoolean(EDGE, false) // off by default: it needs "Display over other apps"
+    /** True = metric, false = imperial. The key stays KM so existing installs keep their choice. */
     fun km(c: Context) = sp(c).getBoolean(KM, false)
+    /** The one unit system every screen and notification follows. */
+    fun units(c: Context): Units = Units.of(km(c))
     /** Metres per shown distance unit, and its label, per the KM setting. */
-    fun unit(c: Context) = if (km(c)) 1000.0 to "km" else METRES_PER_MILE to "mi"
+    fun unit(c: Context) = units(c).let { it.distancePerUnit to it.distanceLabel }
     /** 2015-or-later Yaris: Toyota's 2015+ soot scale and regen temperature range. Off = 2011-2014, the owner's car. */
     fun model2015(c: Context) = sp(c).getBoolean(MODEL_2015, false)
     /**

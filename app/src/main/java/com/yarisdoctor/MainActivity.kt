@@ -32,6 +32,8 @@ import com.yarisdoctor.domain.health.CRIT
 import com.yarisdoctor.domain.health.WARN
 import com.yarisdoctor.domain.model.Alert
 import com.yarisdoctor.domain.model.Regen
+import com.yarisdoctor.domain.model.UnitSystem
+import com.yarisdoctor.domain.model.Units
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -57,8 +59,8 @@ class MainActivity : ComponentActivity() {
     private var pulse: ValueAnimator? = null
     private lateinit var temp: TextView
     private lateinit var tempSub: TextView
-    private lateinit var miles: TextView
-    private lateinit var milesSub: TextView
+    private lateinit var sinceRegen: TextView
+    private lateinit var sinceRegenSub: TextView
     private lateinit var regenState: TextView
     private lateinit var regenSub: TextView
     private lateinit var nextRegen: TextView
@@ -70,13 +72,13 @@ class MainActivity : ComponentActivity() {
     private lateinit var dpfChart: ChartView
     private lateinit var dpfTitle: TextView
     private lateinit var ashText: TextView
-    private var dpfShown: Pair<DpfCard, String>? = null // the card and unit on screen, so the chart redraws only on a change
+    private lateinit var dpfAbout: TextView
+    private var dpfShown: Pair<DpfCard, UnitSystem>? = null // the card and unit system on screen, so the chart redraws only on a change
     private lateinit var history: LinearLayout
-    private var historyShown: Pair<List<Regen>, String>? = null
+    private var historyShown: Pair<List<Regen>, UnitSystem>? = null
     private lateinit var health: LinearLayout
     private var healthKey: String? = null
     private val allData by lazy { AllData(this, ui) }
-    private val rules by lazy { RulesTab(this, ui) }
     private lateinit var overview: View
     private lateinit var scroll: ScrollView
     private lateinit var tabs: LinearLayout
@@ -130,7 +132,7 @@ class MainActivity : ComponentActivity() {
 
         // Stat tiles: dark, side-scrolling, ~0.62 of the content width each so the next one peeks
         temp = ui.text(Type.STAT, R.color.on_instrument); tempSub = ui.text(Type.BODY_SM, R.color.on_instrument_soft)
-        miles = ui.text(Type.STAT, R.color.on_instrument); milesSub = ui.text(Type.BODY_SM, R.color.on_instrument_soft)
+        sinceRegen = ui.text(Type.STAT, R.color.on_instrument); sinceRegenSub = ui.text(Type.BODY_SM, R.color.on_instrument_soft)
         regenState = ui.text(Type.STAT, R.color.on_instrument); regenSub = ui.text(Type.BODY_SM, R.color.on_instrument_soft)
         nextRegen = ui.text(Type.STAT, R.color.on_instrument); nextRegenSub = ui.text(Type.BODY_SM, R.color.on_instrument_soft)
         val tileW = ((resources.displayMetrics.widthPixels - ui.px(40)) * 0.62f).toInt()
@@ -140,7 +142,7 @@ class MainActivity : ComponentActivity() {
             addView(LinearLayout(context).apply {
                 listOf(
                     tile("DPF temp", temp, tempSub),
-                    tile("Since regen", miles, milesSub),
+                    tile("Since regen", sinceRegen, sinceRegenSub),
                     tile("Regen", regenState, regenSub),
                     tile("Next regen", nextRegen, nextRegenSub),
                 ).forEachIndexed { i, t -> addView(t, LinearLayout.LayoutParams(tileW, -2).apply { if (i > 0) marginStart = ui.px(12) }) }
@@ -156,9 +158,10 @@ class MainActivity : ComponentActivity() {
         dpfChart = ChartView(this, columns = true, ui.chartColors())
         dpfTitle = ui.text(Type.TITLE_MD, R.color.ink, "DPF condition")
         val dpfCard = chartCard("After each regen · last 20", dpfTitle, dpfChart).apply {
-            addView(ui.text(Type.BODY_SM, R.color.muted,
-                "Exhaust restriction right after each regen, in kPa per 100 l/s of exhaust. Burning removes the soot, so what " +
-                    "stays is ash: a rising bar means the filter is filling with ash and needs a clean.").apply { setPadding(0, ui.px(12), 0, 0) })
+            dpfAbout = ui.text(Type.BODY_SM, R.color.muted,
+                "Exhaust restriction right after each regen. Burning removes the soot, so what " +
+                    "stays is ash: a rising bar means the filter is filling with ash and needs a clean.").apply { setPadding(0, ui.px(12), 0, 0) }
+            addView(dpfAbout)
             ashText = ui.text(Type.BODY_SM, R.color.muted).apply { setPadding(0, ui.px(8), 0, 0) }
             addView(ashText)
         }
@@ -232,7 +235,8 @@ class MainActivity : ComponentActivity() {
             tabs.addView(ui.chip(label, k == i) { if (k != tab) showTab(k) }, LinearLayout.LayoutParams(-2, -2).apply { marginEnd = ui.px(8) })
         }
         scroll.removeAllViews()
-        val v = when (i) { 1 -> allData.view; 2 -> rules.view; else -> overview }
+        // The Rules tab is rebuilt on each visit so its descriptions follow a unit-system change made in Settings
+        val v = when (i) { 1 -> allData.view; 2 -> RulesTab(this, ui).view; else -> overview }
         scroll.addView(v)
         scroll.scrollTo(0, 0)
         // Slide in from the side of the chip that was tapped, so the content follows the chip row
@@ -285,21 +289,21 @@ class MainActivity : ComponentActivity() {
         val regenNow = live && last!!.regen
         val open = regens.lastOrNull()?.takeIf { it.end == null }
         val mins = open?.let { (now - it.start) / 60_000 } ?: 0L
+        val units = Prefs.units(this)
         callout.visibility = if (regenNow) View.VISIBLE else View.GONE
-        if (regenNow) calloutText.text = "DPF ${last!!.temp ?: "?"}°C · soot ${last.soot ?: "?"}% · $mins min so far"
-
-        val (perUnit, unit) = Prefs.unit(this)
+        if (regenNow) calloutText.text = "DPF ${last!!.temp?.let { units.temperatureNoSpace(it.toDouble()) } ?: "?"} · " +
+            "soot ${last.soot ?: "?"}% · $mins min so far"
 
         showSoot(last?.soot)
         sootFill.setSoot(last?.soot)
         sootSub.text = last?.let { if (live) "Now" else "At ${fmt(it.t)}" } ?: "No readings yet"
         setPulse(regenNow)
 
-        temp.text = last?.temp?.let { "$it°C" } ?: "—"
+        temp.text = last?.temp?.let { units.temperatureNoSpace(it.toDouble()) } ?: "—"
         tempSub.text = if (live) "Exhaust after the DPF" else "Last reading"
         val gaps = regens.mapNotNull { it.gapM }
-        miles.text = s.metresSinceRegen?.let { "%.0f $unit".format(it / perUnit) } ?: "—"
-        milesSub.text = if (gaps.isEmpty()) "Average after two regens" else "Avg %.0f $unit between".format(gaps.average() / perUnit)
+        sinceRegen.text = s.metresSinceRegen?.let { "%.0f %s".format(units.distance(it), units.distanceLabel) } ?: "—"
+        sinceRegenSub.text = if (gaps.isEmpty()) "Average after two regens" else "Avg %.0f %s between".format(units.distance(gaps.average()), units.distanceLabel)
         regenState.text = if (regenNow) "Burning" else "Off"
         regenState.setTextColor(ui.color(if (regenNow) R.color.primary else R.color.on_instrument))
         regenSub.text = when {
@@ -318,12 +322,14 @@ class MainActivity : ComponentActivity() {
         nextRegen.text = when {
             kmLeft == null -> "—"
             kmLeft <= 0.0 -> "Now"
-            else -> "~%.0f $unit".format(kmLeft * 1000 / perUnit)
+            else -> "~%.0f %s".format(units.distance(kmLeft * 1000), units.distanceLabel)
         }
         nextRegenSub.text = when {
             kmLeft == null -> "drive a little more"
             kmLeft <= 0.0 -> next.triggerSoot?.let { "due at about %.0f %%".format(it) } ?: "due now"
-            else -> next.sootPer100Km?.let { "soot +%.1f %% per 100 km".format(it) } ?: "drive a little more"
+            else -> next.sootPer100Km?.let {
+                "soot +%.1f %% per 100 %s".format(units.sootPer100Distance(it), units.distanceLabel)
+            } ?: "drive a little more"
         }
 
         val series = s.sootSeries
@@ -334,19 +340,23 @@ class MainActivity : ComponentActivity() {
             // Parked time takes no width. Points are 10-min buckets, so only a skipped bucket counts as parked
             gapMs = Db.SOOT_BUCKET_MS,
         )
-        regenTitle.text = if (unit == "km") "Kilometres between regens" else "Miles between regens"
+        regenTitle.text = if (units.metric) "Kilometres between regens" else "Miles between regens"
         val withGap = regens.filter { it.gapM != null }.takeLast(20)
         regenChart.set(
-            withGap.map { it.start }.toLongArray(), withGap.map { (it.gapM!! / perUnit).toFloat() }.toFloatArray(),
-            { i -> "${fmt(withGap[i].start)} · %.0f $unit · ${duration(withGap[i])}".format(withGap[i].gapM!! / perUnit) }, ::fmtDay,
+            withGap.map { it.start }.toLongArray(), withGap.map { units.distance(it.gapM!!).toFloat() }.toFloatArray(),
+            { i -> "${fmt(withGap[i].start)} · %.0f %s · ${duration(withGap[i])}".format(units.distance(withGap[i].gapM!!), units.distanceLabel) },
+            ::fmtDay,
         )
 
+        dpfAbout.text = "Exhaust restriction right after each regen, in ${units.restrictionLabel} of exhaust. Burning removes the " +
+            "soot, so what stays is ash: a rising bar means the filter is filling with ash and needs a clean."
         // The view model reloads the card at most once a minute; redraw only then or on a unit change
-        if (dpfShown?.let { it.first === s.dpf && it.second == unit } != true) {
-            dpfShown = s.dpf to unit
+        if (dpfShown?.let { it.first === s.dpf && it.second == units.system } != true) {
+            dpfShown = s.dpf to units.system
             val d = s.dpf.conditions
             val rate = d.lastOrNull()?.perKm
-            dpfTitle.text = if (rate == null) "DPF condition" else "DPF condition · fills %.2f per %s".format(rate * perUnit / 1000, unit)
+            dpfTitle.text = if (rate == null) "DPF condition" else
+                "DPF condition · fills %.2f per %s".format(units.restrictionPerDistance(rate), units.distanceLabel)
             // Grouped as three counters, the way the ECU's record is laid out
             fun ash(hex: String) = hex.chunked(4).joinToString(" ")
             val changes = s.dpf.ashChanges
@@ -356,23 +366,24 @@ class MainActivity : ComponentActivity() {
                     if (changes.size > 1) "\nChanges:" + changes.joinToString("") { (ct, h) -> "\n${fmt(ct)} · ${ash(h)}" } else ""
             } ?: "ECU ash record: not read yet"
             dpfChart.set(
-                d.map { it.regenStart }.toLongArray(), d.map { it.base!!.toFloat() }.toFloatArray(),
-                { i -> "${fmt(d[i].regenStart)} · %.1f kPa".format(d[i].base) + (d[i].perKm?.let { " · then +%.2f per $unit".format(it * perUnit / 1000) } ?: "") },
+                d.map { it.regenStart }.toLongArray(), d.map { units.restriction(it.base!!).toFloat() }.toFloatArray(),
+                { i -> "${fmt(d[i].regenStart)} · %.1f %s".format(units.restriction(d[i].base!!), units.restrictionLabel) +
+                    (d[i].perKm?.let { " · then +%.2f per ${units.distanceLabel}".format(units.restrictionPerDistance(it)) } ?: "") },
                 ::fmtDay,
             )
         }
 
         val alerts = s.alerts // open ones only: a recovered warning stays stored (and on the hub) but leaves the dashboard
-        val alertsKey = alerts.joinToString("|") { "${it.key}${it.text}${it.end}" }
+        val alertsKey = "${units.system}|" + alerts.joinToString("|") { "${it.key}${it.text}${it.end}" }
         if (alertsKey != healthKey) {
             healthKey = alertsKey
             renderHealth(alerts)
         }
 
         // Rebuilt only when the list or units change, or the newest regen's floor becomes readable; refresh runs every 5 s
-        if (historyShown?.let { it.first === s.history && it.second == unit } != true) {
-            historyShown = s.history to unit
-            renderHistory(s.history, perUnit, unit)
+        if (historyShown?.let { it.first === s.history && it.second == units.system } != true) {
+            historyShown = s.history to units.system
+            renderHistory(s.history, units)
         }
     }
 
@@ -407,6 +418,7 @@ class MainActivity : ComponentActivity() {
     /** The verdict set huge and ended by a square in the status colour, then what the checks found. */
     private fun renderHealth(alerts: List<Alert>) {
         health.removeAllViews()
+        val units = Prefs.units(this)
         val open = alerts.filter { it.end == null }
         val level = open.maxOfOrNull { it.level } ?: 0
         val (title, statusColor) = when (level) {
@@ -417,7 +429,7 @@ class MainActivity : ComponentActivity() {
         health.addView(ui.eyebrow("Health"))
         health.addView(ui.text(Type.HERO, R.color.ink, ui.signal(title, statusColor).first).apply { setPadding(0, ui.px(10), 0, 0) })
         if (open.isEmpty()) health.addView(ui.text(Type.BODY_MD, R.color.body, "No warnings right now.").apply { setPadding(0, ui.px(14), ui.px(40), 0) })
-        for (a in open) health.addView(alertRow(a, if (a.level == CRIT) R.color.status_crit else R.color.status_warn, R.color.ink))
+        for (a in open) health.addView(alertRow(a, if (a.level == CRIT) R.color.status_crit else R.color.status_warn, R.color.ink, units))
         health.addView(ui.text(Type.CAPTION, R.color.primary, SpannableString("SEE THE RULES  ↗").apply { setSpan(UnderlineSpan(), 0, 13, 0) }).apply {
             minHeight = ui.px(48)
             gravity = Gravity.CENTER_VERTICAL
@@ -430,18 +442,18 @@ class MainActivity : ComponentActivity() {
         health.addView(ui.divider(R.color.hairline), LinearLayout.LayoutParams(-1, ui.px(1).coerceAtLeast(1)).apply { topMargin = ui.px(8) })
     }
 
-    private fun alertRow(a: Alert, dot: Int, ink: Int) = LinearLayout(this).apply {
+    private fun alertRow(a: Alert, dot: Int, ink: Int, units: Units) = LinearLayout(this).apply {
         gravity = Gravity.CENTER_VERTICAL
         setPadding(0, ui.px(12), 0, 0)
         addView(ui.dot(dot), LinearLayout.LayoutParams(ui.px(10), ui.px(10)).apply { marginEnd = ui.px(12) })
         addView(ui.column(
-            ui.text(Type.TITLE_SM, ink, (if (a.level == CRIT) "Critical: " else "") + a.text),
+            ui.text(Type.TITLE_SM, ink, (if (a.level == CRIT) "Critical: " else "") + units.text(a.text)),
             ui.eyebrow(fmt(a.start)).apply { setPadding(0, ui.px(2), 0, 0) },
         ), LinearLayout.LayoutParams(0, -2, 1f))
     }
 
     /** [regens] with their signs, newest first, capped at 50 rows. */
-    private fun renderHistory(regens: List<Regen>, perUnit: Double, unit: String) {
+    private fun renderHistory(regens: List<Regen>, units: Units) {
         history.removeAllViews()
         if (regens.isEmpty()) {
             history.addView(ui.text(Type.BODY_MD, R.color.muted, "None logged yet. Regens appear here after a drive.").apply { gravity = Gravity.CENTER_HORIZONTAL })
@@ -451,7 +463,7 @@ class MainActivity : ComponentActivity() {
             if (i > 0) history.addView(ui.divider())
             val badge = when {
                 r.end == null -> ui.pill(ui.text(Type.CAPTION_UPPER, R.color.on_primary, "Ongoing"), R.color.primary)
-                r.gapM != null -> ui.pill(ui.text(Type.CAPTION, R.color.ink, "%.0f $unit".format(r.gapM!! / perUnit)))
+                r.gapM != null -> ui.pill(ui.text(Type.CAPTION, R.color.ink, "%.0f %s".format(units.distance(r.gapM!!), units.distanceLabel)))
                 else -> ui.pill(ui.text(Type.CAPTION, R.color.muted, "First logged"))
             }
             history.addView(LinearLayout(this).apply {
@@ -462,7 +474,7 @@ class MainActivity : ComponentActivity() {
                     ui.text(Type.TITLE_SM, R.color.ink, fmt(r.start)),
                     ui.eyebrow("${duration(r)} · soot ${r.sootStart ?: "?"}→${r.sootEnd ?: "?"}%").apply { setPadding(0, ui.px(4), 0, 0) },
                     // Warning signs: soot 5 min after (the real floor) and the hottest the DPF got
-                    ui.eyebrow(listOfNotNull(r.floor?.let { "after 5 min $it%" }, r.peakTemp?.let { "peak $it°C" }).joinToString(" · ")).apply {
+                    ui.eyebrow(listOfNotNull(r.floor?.let { "after 5 min $it%" }, r.peakTemp?.let { "peak ${units.temperatureNoSpace(it.toDouble())}" }).joinToString(" · ")).apply {
                         setPadding(0, ui.px(2), 0, 0)
                         if (text.isEmpty()) visibility = View.GONE
                     },

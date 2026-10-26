@@ -104,12 +104,15 @@ class DpfService : Service() {
             edge.show(false)
         }
 
-        override fun alertOpened(f: Finding) = nm.notify(alertId(f.key), notification(CH_HEALTH)
-            .setContentTitle(if (f.level == CRIT) "Check the car now" else "Car warning")
-            .setContentText(f.text)
-            .setStyle(Notification.BigTextStyle().bigText(f.text))
-            .setAutoCancel(true)
-            .build())
+        override fun alertOpened(f: Finding) {
+            val text = Prefs.units(this@DpfService).text(f.text)
+            nm.notify(alertId(f.key), notification(CH_HEALTH)
+                .setContentTitle(if (f.level == CRIT) "Check the car now" else "Car warning")
+                .setContentText(text)
+                .setStyle(Notification.BigTextStyle().bigText(text))
+                .setAutoCancel(true)
+                .build())
+        }
 
         override fun alertCleared(key: String) = nm.cancel(alertId(key))
 
@@ -335,7 +338,7 @@ class DpfService : Service() {
     private fun regenNotification(start: Long, sootStart: Int?, soot: Int?, temp: Int?): Notification =
         notification(CH_REGEN)
             .setContentTitle("DPF regenerating · keep driving")
-            .setContentText("DPF ${temp ?: "?"}°C · soot ${soot ?: "?"}%")
+            .setContentText("DPF ${temp?.let { Prefs.units(this).temperatureNoSpace(it.toDouble()) } ?: "?"} · soot ${soot ?: "?"}%")
             .setWhen(start)
             .setUsesChronometer(true)
             .setShowWhen(true)

@@ -83,14 +83,14 @@ class Checker(private val model2015: Boolean = false) {
             },
             Rule("oil_pressure_low", "Oil pressure low", CRIT, 3_000, "Oil pressure under 24.5 kPa with the engine running. Toyota 1ND-TV manual: 24.5 kPa or more at warm idle (in the low-pressure mode, oil at 80 °C). The owner's car idles at 100-350 kPa.", listOf("Engine Oil Pressure", "Engine Speed")) { v("Engine Oil Pressure")?.takeIf { running && it < 24.5 }?.let { "Oil pressure is ${f0(it)} kPa. Stop the engine and check the oil." } },
             Rule("oil_pressure_rpm", "Oil pressure low at high revs", WARN, 5_000, "Oil pressure under 150 kPa at 3000 rpm or more. Toyota 1ND-TV manual: 150 kPa or more at 3200 rpm, warm. The owner's car reads 310-370 kPa there.", listOf("Engine Oil Pressure", "Engine Speed")) {
-                v("Engine Oil Pressure")?.takeIf { (v("Engine Speed") ?: 0.0) >= 3000 && it < 150 }?.let { "Oil pressure is only ${f0(it)} kPa at ${f0(v("Engine Speed")!!)} rpm (Toyota: 150 or more)." }
+                v("Engine Oil Pressure")?.takeIf { (v("Engine Speed") ?: 0.0) >= 3000 && it < 150 }?.let { "Oil pressure is only ${f0(it)} kPa at ${f0(v("Engine Speed")!!)} rpm (Toyota: 150 kPa or more)." }
             },
             Rule("battery_low", "Not charging", WARN, 30_000, "Battery under 13.0 V with the engine running: the alternator should give 13.2-14.8 V.", listOf("Battery Voltage", "Engine Speed")) { v("Battery Voltage")?.takeIf { running && it < 13.0 }?.let { "Battery at ${f1(it)} V with the engine running: the alternator may not be charging." } },
             Rule("battery_high", "Overcharging", WARN, 10_000, "Battery over 15.0 V with the engine running: overcharging.", listOf("Battery Voltage", "Engine Speed")) { v("Battery Voltage")?.takeIf { running && it > 15.0 }?.let { "Charging voltage is ${f1(it)} V, too high for the battery." } },
             Rule("soot_high", "DPF soot high", WARN, 30_000, "DPF soot past the regen-needed level, below the fault level: 100-149 % on 2011-2014 cars, 118-173 % on 2015+ (Settings → Model year). Toyota 1ND-TV manual: normal is 0-149 % (2015+: 0-173), a regen may start above 77 % (2015+: 105) and is needed at 100 % (2015+: 118).", listOf("PM Accumulation Ratio")) { v("PM Accumulation Ratio")?.takeIf { it >= sootNeeded && it < sootFault }?.let { "DPF soot is at ${f0(it)} %, past the point where it needs a regen. Drive 20 min at a steady 65-100 km/h so it can regenerate." } },
             Rule("soot_critical", "DPF soot critical", CRIT, 30_000, "DPF soot at 150 % or more on 2011-2014 cars, 174 % or more on 2015+ (Settings → Model year). Toyota 1ND-TV manual: over 149 % at 4000 rpm is fault code P2463 (DPF restriction, soot) on 2011-2014; 2015+ cars read normal up to 173 %.", listOf("PM Accumulation Ratio")) { v("PM Accumulation Ratio")?.takeIf { it >= sootFault }?.let { "DPF soot is at ${f0(it)} %, the level of fault code P2463. See a garage soon: it may need a forced regen." } },
             Rule("dpf_pressure_idle", "DPF pressure high at idle", WARN, 30_000, "DPF pressure over 3 kPa at warm idle, outside a regen. Toyota 1ND-TV manual: -3 to 3 kPa at idle. The owner's car reads 0.2-2.1 kPa there.", listOf("DPF Differential Pressure", "Coolant Temp", "Engine Speed", "Vehicle Speed")) {
-                v("DPF Differential Pressure")?.takeIf { warm && idle && !inRegen && it > 3 }?.let { "DPF pressure is ${f1(it)} kPa at idle (Toyota: 3 at most): the filter may be clogging." }
+                v("DPF Differential Pressure")?.takeIf { warm && idle && !inRegen && it > 3 }?.let { "DPF pressure is ${f1(it)} kPa at idle (Toyota: 3 kPa at most): the filter may be clogging." }
             },
             Rule("exhaust_sensor", "Exhaust temperature sensor fault", WARN, 60_000, "An exhaust temperature reading exactly 50 °C with the engine warm, or 950 °C or more, for a minute. Toyota 1ND-TV manual: the tester shows 50 °C for an open circuit and 950 °C for a short.", listOf("Exhaust Temperature B1S1", "Exhaust Temperature B1S2", "Coolant Temp", "Engine Speed")) {
                 val bad = listOfNotNull(
@@ -298,7 +298,7 @@ fun trends(regens: List<Regen>, model2015: Boolean = false): List<Finding> {
     }
     val hot = regenTempMax(model2015)
     done.lastOrNull { it.peakTemp != null }?.peakTemp?.takeIf { it > hot }?.let {
-        out += Finding("regen_hot", WARN, "The last regen peaked at $it °C after the DPF (Toyota: $hot at most).")
+        out += Finding("regen_hot", WARN, "The last regen peaked at $it °C after the DPF (Toyota: $hot °C at most).")
     }
     done.lastOrNull()?.gapM?.takeIf { it < 150_000 }?.let {
         out += Finding("regen_frequent", WARN, "The last two regens were only ${"%.0f".format(it / 1000)} km apart (normal is 150-400 km).")

@@ -16,6 +16,7 @@ import com.yarisdoctor.domain.health.WARN
 class RulesTab(private val a: Activity, private val ui: Ui) {
 
     val view: View = ui.column().apply {
+        val units = Prefs.units(a)
         setPadding(ui.px(20), ui.px(8), ui.px(20), ui.px(40))
         addView(ui.eyebrow("How the checks work").apply { gravity = Gravity.CENTER_HORIZONTAL })
         addView(ui.text(Type.DISPLAY_MD, R.color.ink, "Each warning has a rule").apply { gravity = Gravity.CENTER_HORIZONTAL; setPadding(0, ui.px(10), 0, ui.px(12)) })
@@ -27,7 +28,7 @@ class RulesTab(private val a: Activity, private val ui: Ui) {
         section("While driving · ${Checker.RULES.size} rules")
         Checker.RULES.forEachIndexed { i, r ->
             if (i > 0) addView(ui.divider())
-            addView(entry(i + 1, r.title, r.level, r.about,
+            addView(entry(i + 1, r.title, r.level, units.text(r.about),
                 (if (r.holdMs == 0L) "Warns at once" else "Warns after ${r.holdMs / 1000} s") + " · Reads " +
                     // Grouped by rate: "Coolant Temp, Vehicle Speed every 2 s; Engine Run Time every 5 min"
                     r.uses.groupBy { name -> Poller.pollRate(PIDS.first { it.name == name }.lid) }
@@ -36,7 +37,7 @@ class RulesTab(private val a: Activity, private val ui: Ui) {
         section("After each regen or drive · ${TREND_RULES.size} rules")
         TREND_RULES.forEachIndexed { i, (_, title, about) ->
             if (i > 0) addView(ui.divider())
-            addView(entry(i + 1, title, WARN, about, "Checked when a regen or drive ends and when the app starts"))
+            addView(entry(i + 1, title, WARN, units.text(about), "Checked when a regen or drive ends and when the app starts"))
         }
     }
 

@@ -260,7 +260,6 @@ class DpfService : Service() {
         }
     }
 
-
     /**
      * On the home Wi-Fi with nothing left to do: no drive or regen still open (the link may come back), nothing the hub
      * hasn't got (a paused service doesn't sync), no sync queued or running (never stop mid-upload), not Debug mode. Only

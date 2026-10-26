@@ -21,6 +21,7 @@
 
     <application
         android:name=".YarisApp"
+        android:dataExtractionRules="@xml/data_extraction_rules"
         android:icon="@mipmap/ic_launcher"
         android:label="Yaris Doctor"
         android:theme="@style/AppTheme"

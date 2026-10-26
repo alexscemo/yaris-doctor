@@ -51,8 +51,8 @@ From then on it starts at boot. There is nothing to open before a drive.
 - **Edge light (optional):** a coral glow around the screen edges during a regen, drawn over other apps such as Google Maps so it is noticed at a glance. Turn it on in Settings → Car; it asks for "Display over other apps". Touches pass straight through.
 - **Regen history:** for every regen it records the start time, how long it took, soot before and after, and the miles driven since the previous regen ended.
 - **Full log:** soot, temperature and regen state every 5 s while driving (1 s during a regen), stored in a SQLite database on the phone.
-- **App screen:** current soot and miles since the last regen, a 14-day soot chart, a miles-between-regens chart (tap or drag to read values), and the regen history.
-- **Settings** (icon, top right): dongle, background logging on/off, regen notification on/off, Live Updates (Android 16), edge light, miles or kilometres, model year (2011-2014 or 2015+, which sets the soot and temperature limits the checks use), and the date of the last oil change. Also the home hub and **Export database**, which saves the whole log to Downloads as one Markdown file for an AI to read. **Delete trips** removes drives you no longer want, here and on the hub.
+- **App screen:** current soot and miles since the last regen, DPF temperature, a **Next regen** estimate (about how far until the soot reaches the level this car's regens start at, or the build-up rate), a 14-day soot chart, a miles-between-regens chart (tap or drag to read values), and the regen history.
+- **Settings** (icon, top right): dongle, background logging on/off, regen notification on/off, Live Updates (Android 16), edge light, miles or kilometres, model year (2011-2014 or 2015+, which sets the soot and temperature limits the checks use), and the date of the last oil change. Also the home hub, **Back up database** / **Restore database** (one SQLite file you can move to a new phone), **Export database**, which saves the whole log to Downloads as one Markdown file for an AI to read, and **Delete trips**, which removes drives you no longer want here and on the hub.
 - **Debug mode** (Settings → Developer): a simulated dongle feeds random but plausible data, with 14 days of fake history and a regen every few minutes, so you can try the screen and the notification without the car. Nothing is saved to your real log. Debug mode turns itself off when the phone restarts or Android closes the app.
 
 A small, low-priority notification ("Waiting for dongle" / "Logging") is present while the app watches for the car. Android requires one for any app that runs in the background continuously. On your home Wi-Fi (Settings → Home hub → Home Wi-Fi name) the app stops looking for the dongle, so the notification goes away; it starts again within about a minute of leaving that Wi-Fi. This needs location "Allow all the time" and battery optimisation turned off for the app, which it asks for on first start.
@@ -71,7 +71,7 @@ from October 2026 or later (it adds `/api/export`).
 
 ## How it works
 
-- **Finding the car.** An ELM327 dongle never connects to the phone on its own, so the app checks about once a minute and tries to connect. It uses an alarm, so this still happens while the phone is asleep. If the dongle answers but the engine ECU doesn't (ignition off, dongle still powered), it disconnects within seconds so a parked car doesn't drain the phone.
+- **Finding the car.** An ELM327 dongle never connects to the phone on its own, so the app checks about once a minute and tries to connect. It uses an alarm, so this still happens while the phone is asleep, and it checks at once when the phone is plugged into the car. If the dongle answers but the engine ECU doesn't (ignition off, dongle still powered), it disconnects within seconds so a parked car doesn't drain the phone.
 - **Reading the ECU.** The app sets the dongle to talk to the engine ECU (`AT SH 7E0`, `AT CRA 7E8`, CAN 11-bit 500 kbps). It then polls three Toyota mode-21 PIDs:
 
   | PID | Value | Byte (from 0, incl. the echoed `61 xx`) | Formula |
@@ -86,23 +86,23 @@ from October 2026 or later (it adds `/api/export`).
 
 ## Limitations
 
-- When the phone has been asleep a while, Android can delay the background check by a few minutes, so the first minutes of a drive may not be logged.
-- A regen that is interrupted by switching off and then finished on the next drive is stored as two regens, the second with a tiny "miles since last".
+- When the phone has been asleep a while, Android can delay the scheduled background check by a few minutes, so the first minutes of a drive may not be logged. Plugging the phone into the car wakes it at once.
+- A regen that is interrupted by switching off and then finished on the next drive shows as one regen in the app (the soot continues), though the hub still receives the two raw rows.
 - GPS distance is an estimate and misses any driving done without the phone.
-- Some ELM327 clones refuse Android's standard Bluetooth serial connection. If the app never connects, the dongle may be the cause.
-- The database is included in Android's normal app backup. To copy it off the phone, use Settings → Your data → **Export database**: it writes one Markdown file (summary, trips, regenerations, warnings, every reading, engine-signal statistics) that an AI can read directly.
+- Some ELM327 clones refuse Android's standard Bluetooth serial connection. The app retries through the hidden channel those clones usually answer; if it still never connects, the dongle may be the cause.
+- Android's cloud backup excludes the database (it outgrows the 25 MB quota), so use Settings → Your data → **Back up database** and keep the `.db` file somewhere safe. **Export database** is the readable Markdown copy for an AI, and is not restorable.
 
 ## Building
 
 The project uses the Android framework plus AndroidX Activity and Lifecycle for the screens. It has two modules: `domain` (the car logic in plain Kotlin, tested on the JVM) and `app`.
 
-- **Android Studio:** open the folder and run. It generates the Gradle wrapper on first sync.
-- **Command line:** with JDK 17, the Android SDK and Gradle 8.11.1:
+- **Android Studio:** open the folder and run.
+- **Command line:** with JDK 17 and the Android SDK, the committed wrapper pins Gradle 8.11.1:
   ```sh
-  gradle test assembleDebug   # APK in app/build/outputs/apk/debug/
+  ./gradlew test lint assembleDebug   # APK in app/build/outputs/apk/debug/
   ```
 
-The unit tests cover the ELM327 reply parser, the PID decoders, the poller, the health checks, the regen recorder, sync and the Debug-mode simulator, and need no device.
+The unit tests cover the ELM327 reply parser, the PID decoders, the poller, the health checks, the regen recorder, sync, the Debug-mode simulator, the next-regen forecast and the SQLite layer (schema, trips, thinning, backup/restore), and need no device. `lint` runs in CI.
 
 ## Releases
 

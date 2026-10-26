@@ -17,7 +17,7 @@ paths:
 - **The main screen shows the whole car:**
   - `lastSample`, `sootSeries`, `regens` and `metresSinceRegen` read own and peer rows together.
   - Car distance between two instants is `driven()`: the sum of each phone's odometer progress, as in the hub's `distance_m`.
-  - `mergeRegens()` (tested in `SyncTest`) counts a hand-over burn once, but never merges open regens.
+  - `mergeRegens()` (tested in `SyncTest`) counts a hand-over burn once, but never merges open regens. `mergeSameBurn()` then joins this car's own regens that an ignition cycle split (within 30 min and with no soot reset), so the screen and gap math see one burn; `regenRows()` still sends the raw two rows to the hub.
   - `odometer()` stays own-only, because the service restores its GPS odometer from it.
 - **Regens and DPF condition:** the first sync request carries `regens_all: true` with the phone's whole regen list, and the hub deletes that phone's regens missing from it (engine-stop blips the phone dropped). It also carries `dpf` (`Db.dpfRows()`), which the hub stores whole per phone and charts. The hub's status card shows open alerts only, like the Overview.
 - **Frames, alerts and the PID table:** the first sync request also carries `alerts` (`Db.alertRows()`, open plus the last 30 days, resent whole when `alertSignature()` changes) and `defs` (`pidDefs()`, which the hub decodes frames with, so the formulas live only in `PidTable.kt`). Frames follow in pages of `BATCH`, at most `MAX_PAGES` per run, with cursor `Prefs.SYNCED_FRAME_ROWID`. The hub only accepts 2-character lids, so `framesAfter()` and `maxFrameRowid()` both skip the `A918` ash record rows. With only one of the two filtered, a sync would be rejected or would look pending forever.

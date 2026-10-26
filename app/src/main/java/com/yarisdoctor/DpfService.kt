@@ -208,8 +208,7 @@ class DpfService : Service() {
         }
         val adapter = getSystemService(BluetoothManager::class.java).adapter
         if (adapter == null || !adapter.isEnabled) return
-        // A discovery left running slows connect() down and makes clones fail
-        try { adapter.cancelDiscovery() } catch (e: SecurityException) { Log.d(TAG, "discovery not cancelled: $e") }
+        // No cancelDiscovery() here: it needs BLUETOOTH_SCAN, which this app deliberately never requests (it doesn't scan).
         val s = connect(adapter.getRemoteDevice(Prefs.dongle(this))) ?: return
         socket = s
         s.use {

@@ -42,6 +42,7 @@ class ChartView(ctx: Context, private val columns: Boolean, private val p: Color
     private var yMax = 1f
     private var reveal = 1f     // share of the plot drawn, left to right
     private var revealed = false
+    private var revealAnim: ValueAnimator? = null
     // Visible share of the x range, 0..1: a window kept as fractions so new data on the right stays in view when vHi = 1
     private var vLo = 0f
     private var vHi = 1f
@@ -89,6 +90,12 @@ class ChartView(ctx: Context, private val columns: Boolean, private val p: Color
     private val path = Path()
     private val rect = RectF()
 
+    init {
+        // Interactive readout only, so the summary is the whole story for TalkBack: focusable, not clickable
+        isFocusable = true
+        importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_YES
+    }
+
     // Plot area, set in onDraw
     private var left = 0f
     private var right = 0f
@@ -112,17 +119,28 @@ class ChartView(ctx: Context, private val columns: Boolean, private val p: Color
         // First data: the series draws in left to right (600 ms) so the time direction reads at once
         if (!revealed && ys.isNotEmpty()) {
             revealed = true
-            if (Ui.animationsOn()) ValueAnimator.ofFloat(0f, 1f).apply {
+            if (Ui.animationsOn()) revealAnim = ValueAnimator.ofFloat(0f, 1f).apply {
                 duration = 600; interpolator = DecelerateInterpolator(1.5f)
                 addUpdateListener { reveal = it.animatedValue as Float; invalidate() }
                 start()
             }
         }
-        contentDescription = if (ys.isEmpty()) "No data yet" else "Latest: " + readoutOf(ys.lastIndex)
+        // Data summary for TalkBack: name (from the readout), points, span, last/min/max. Never epoch millis.
+        contentDescription = chartDescription(if (ys.isEmpty()) "" else chartLabel(readoutOf(ys.lastIndex)), xs, ys, axisLabel)
         invalidate()
     }
 
+    override fun onDetachedFromWindow() {
+        revealAnim?.cancel()
+        super.onDetachedFromWindow()
+    }
+
     override fun onDraw(c: Canvas) {
+        // Animations turned off mid-reveal: show the whole series rather than a frozen clip
+        if (reveal < 1f && !Ui.animationsOn()) {
+            revealAnim?.cancel()
+            reveal = 1f
+        }
         left = 36 * d; right = width - 8 * d; top = 28 * d; bottom = height - 20 * d
         if (ys.isEmpty()) {
             c.drawText("No data yet", left, top + (bottom - top) / 2, muted)

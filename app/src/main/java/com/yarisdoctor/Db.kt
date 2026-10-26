@@ -405,6 +405,9 @@ class Db internal constructor(ctx: Context, name: String?) : SQLiteOpenHelper(ct
     /** null = this phone, then the other phones' ids. Cached: the DISTINCT scans every peer row, and only putPeers changes it. */
     @Volatile private var phones: List<String?>? = null
 
+    /** Forgets the cached phone list: call after the peer tables are rewritten outside [putPeers] (a restored backup). */
+    fun invalidatePeers() { phones = null }
+
     private fun phones(): List<String?> = phones ?: (listOf<String?>(null) +
         readableDatabase.rawQuery("SELECT DISTINCT device FROM peer_sample", null).use { c -> List(c.count) { c.moveToNext(); c.getString(0) } })
         .also { phones = it }

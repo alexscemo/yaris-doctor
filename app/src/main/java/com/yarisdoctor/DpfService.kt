@@ -4,11 +4,13 @@ import android.Manifest.permission.ACCESS_FINE_LOCATION
 import android.Manifest.permission.BLUETOOTH_CONNECT
 import android.annotation.TargetApi
 import android.app.AlarmManager
+import android.app.ForegroundServiceStartNotAllowedException
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
+import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothManager
 import android.bluetooth.BluetoothSocket
 import android.content.Context
@@ -33,7 +35,11 @@ import com.yarisdoctor.domain.health.CRIT
 import com.yarisdoctor.domain.health.Finding
 import com.yarisdoctor.domain.health.tripSummary
 import java.util.UUID
+import java.util.concurrent.Executors
+import java.util.concurrent.RejectedExecutionException
 import java.util.concurrent.Semaphore
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * Always-on foreground service. Idle: probes the dongle once a minute (alarm-driven so it survives CPU sleep).
@@ -56,6 +62,12 @@ class DpfService : Service() {
     private val idle = Semaphore(0)
     private val probe = AlarmManager.OnAlarmListener { wake.acquire(30_000); idle.release() }
     private val worker = Thread(::run, "dpf")
+    /**
+     * Hub syncs run here, never on [worker]: a long upload must not delay the next dongle probe, so a drive starting
+     * during one is still logged at once. One thread and [syncQueued] keep it single-flight: no overlap, no pile-up.
+     */
+    private val syncs = Executors.newSingleThreadExecutor { r -> Thread(r, "dpf-sync").apply { isDaemon = true } }
+    private val syncQueued = AtomicBoolean(false)
     // Outlives a dongle session, so a regen and a drive's alerts survive a dropped Bluetooth link
     private lateinit var drive: DriveSession // made in onCreate: the model year and the odometer need the context
 
@@ -94,6 +106,7 @@ class DpfService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        alive = true
         nm.createNotificationChannel(NotificationChannel(CH_SERVICE, "Background logger", NotificationManager.IMPORTANCE_MIN))
         nm.createNotificationChannel(NotificationChannel(CH_REGEN, "DPF regeneration", NotificationManager.IMPORTANCE_HIGH))
         nm.createNotificationChannel(NotificationChannel(CH_HEALTH, "Health warnings", NotificationManager.IMPORTANCE_LOW))
@@ -117,15 +130,23 @@ class DpfService : Service() {
         worker.start()
     }
 
-    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int) = START_STICKY
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        // Plugged into the car, or started by hand: probe now instead of waiting out the idle alarm's minute
+        if (intent?.action == ACTION_PROBE) idle.release()
+        return START_STICKY
+    }
 
     override fun onDestroy() {
         running = false
+        alive = false
         Sync.unwatch(this)
         alarms.cancel(probe)
         try { socket?.close() } catch (e: Exception) {}
         idle.release()
         worker.interrupt()
+        // Bounded: a sync blocked on a dead hub must not hold onDestroy (or the next service instance) forever
+        syncs.shutdownNow()
+        try { syncs.awaitTermination(2, TimeUnit.SECONDS) } catch (e: InterruptedException) {}
         super.onDestroy()
     }
 
@@ -143,8 +164,9 @@ class DpfService : Service() {
                 if (wake.isHeld) wake.release()
             }
             if (!running) break
-            // On the home Wi-Fi after a drive: push new data to the hub (no-op elsewhere, when unset, or nothing new)
-            try { Sync.maybe(this) } catch (e: Exception) { Log.d(TAG, "sync check failed: $e") }
+            // On the home Wi-Fi after a drive: push new data to the hub in the background (no-op elsewhere, when unset,
+            // or nothing new). Off the worker, so a long upload never keeps the next dongle probe waiting.
+            syncInBackground()
             try { thin() } catch (e: Exception) { Log.d(TAG, "thinning failed: $e") }
             if (pauseAtHome()) {
                 // No dongle search and no notification at home; HomeWatch starts a fresh instance once the phone leaves
@@ -158,6 +180,27 @@ class DpfService : Service() {
         }
     }
 
+    /**
+     * Hands a sync check to the sync thread, between sessions only. Single-flight: a run still going (or already queued)
+     * means this check is skipped rather than queued, so no pile-up and no two syncs at once.
+     */
+    private fun syncInBackground() {
+        if (!syncQueued.compareAndSet(false, true)) return
+        try {
+            syncs.execute {
+                try {
+                    Sync.maybe(this)
+                } catch (e: Exception) {
+                    Log.d(TAG, "sync check failed: $e")
+                } finally {
+                    syncQueued.set(false)
+                }
+            }
+        } catch (e: RejectedExecutionException) {
+            syncQueued.set(false) // onDestroy shut the executor down
+        }
+    }
+
     private fun session() {
         if (Prefs.debug) {
             nm.notify(ID_SERVICE, status("Debug mode: simulated dongle"))
@@ -165,10 +208,11 @@ class DpfService : Service() {
         }
         val adapter = getSystemService(BluetoothManager::class.java).adapter
         if (adapter == null || !adapter.isEnabled) return
-        val s = adapter.getRemoteDevice(Prefs.dongle(this)).createRfcommSocketToServiceRecord(SPP)
+        // A discovery left running slows connect() down and makes clones fail
+        try { adapter.cancelDiscovery() } catch (e: SecurityException) { Log.d(TAG, "discovery not cancelled: $e") }
+        val s = connect(adapter.getRemoteDevice(Prefs.dongle(this))) ?: return
         socket = s
         s.use {
-            s.connect()
             wake.acquire()
             val elm = Elm(s.inputStream, s.outputStream)
             elm.init()
@@ -185,12 +229,48 @@ class DpfService : Service() {
     }
 
     /**
-     * On the home Wi-Fi with nothing left to do: no drive or regen still open (the link may come back), nothing the hub
-     * hasn't got (a paused service doesn't sync), not Debug mode. Only when the app is exempt from battery optimisation,
-     * because that is what lets HomeWatch start the service again from the background; otherwise it keeps running.
+     * The dongle's SPP socket, connected: the standard service record first, then the clone workaround once. Some
+     * ELM327 clones refuse the service-record connect and only answer the hidden `createRfcommSocket(1)` channel.
+     * A dongle that connects and then stays silent is a normal ignition-off end (an ECU-silent cycle), not a socket
+     * failure, so this never retries after a successful connect. Null when neither socket connects; the caller just
+     * ends its session and the next probe tries again.
      */
-    private fun pauseAtHome() = Sync.atHome(this) && !Prefs.debug && !drive.busy && !Sync.pending(this) &&
+    private fun connect(device: BluetoothDevice): BluetoothSocket? {
+        val standard = device.createRfcommSocketToServiceRecord(SPP)
+        try {
+            standard.connect()
+            return standard
+        } catch (e: Exception) {
+            Log.d(TAG, "SPP connect failed, trying the clone channel: $e")
+            try { standard.close() } catch (e: Exception) {}
+        }
+        val clone = try {
+            device.javaClass.getMethod("createRfcommSocket", Int::class.javaPrimitiveType).invoke(device, 1) as BluetoothSocket
+        } catch (e: Exception) {
+            Log.d(TAG, "clone channel unavailable: $e") // reflection differs per ROM/build: log it, never crash
+            return null
+        }
+        return try {
+            clone.connect()
+            clone
+        } catch (e: Exception) {
+            Log.d(TAG, "clone channel connect failed: $e")
+            try { clone.close() } catch (e: Exception) {}
+            null
+        }
+    }
+
+    /**
+     * On the home Wi-Fi with nothing left to do: no drive or regen still open (the link may come back), nothing the hub
+     * hasn't got (a paused service doesn't sync), no sync queued or running (never stop mid-upload), not Debug mode. Only
+     * when the app is exempt from battery optimisation, because that is what lets HomeWatch start the service again
+     * from the background; otherwise it keeps running.
+     */
+    private fun pauseAtHome() = Sync.atHome(this) && !Prefs.debug && !drive.busy && !Sync.pending(this) && !syncing() &&
         getSystemService(PowerManager::class.java).isIgnoringBatteryOptimizations(packageName)
+
+    /** A sync is queued on this service's executor or still running (also one started by Settings' "Sync now"). */
+    private fun syncing() = syncQueued.get() || Sync.isRunning()
 
     /** Frames older than FULL_MS are thinned to one per request per minute, each stretch once (tracked in Prefs). */
     private fun thin() {
@@ -284,11 +364,29 @@ class DpfService : Service() {
         private const val CH_HEALTH = "health"
         private const val TAG = "DpfService"
         private const val EXTRA_REQUEST_PROMOTED_ONGOING = "android.requestPromotedOngoing" // = Notification/NotificationCompat constant
+        private const val ACTION_PROBE = "com.yarisdoctor.action.PROBE"
+        /** Whether an instance is alive right now: [probe] must not start a stopped service just to wake it. */
+        @Volatile private var alive = false
 
         /** Starts logging if it is enabled and allowed; a no-op when already running. */
         fun start(c: Context) {
             if (Prefs.logging(c) && c.checkSelfPermission(BLUETOOTH_CONNECT) == PERMISSION_GRANTED) {
                 c.startForegroundService(Intent(c, DpfService::class.java))
+            }
+        }
+
+        /**
+         * A running logger probes the dongle at once (it releases the idle wait) instead of waiting out the alarm's
+         * minute - the drive's first minute would otherwise go unlogged. No-op when no instance is alive.
+         */
+        fun probe(c: Context) {
+            if (!alive) return
+            try {
+                c.startForegroundService(Intent(c, DpfService::class.java).setAction(ACTION_PROBE))
+            } catch (e: ForegroundServiceStartNotAllowedException) {
+                Log.d(TAG, "probe refused: $e") // background start limit: the next alarm covers it
+            } catch (e: SecurityException) {
+                Log.d(TAG, "probe refused: $e")
             }
         }
 

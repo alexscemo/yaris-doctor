@@ -1,9 +1,18 @@
 package com.yarisdoctor
 
+import android.app.Application
+import androidx.test.core.app.ApplicationProvider
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
 
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [35])
 class SyncTest {
     @Test fun hubUrlFillsInSchemeAndDefaultPort() {
         assertEquals("http://192.168.1.50:8765", hubUrl("192.168.1.50"))
@@ -20,5 +29,28 @@ class SyncTest {
         assertNull(formatRanges(emptyList()))
         assertEquals(emptyList<LongRange>(), parseRanges(null))
         assertEquals(listOf(5L..9L), parseRanges("x-1,5-9,7,"))
+    }
+
+    /** A sync run stops between pages once its wall-clock budget is gone, and never before. */
+    @Test fun syncStopsOnlyAfterItsBudgetIsUsedUp() {
+        val start = 1_700_000_000_000L
+        assertFalse(overBudget(start, start))
+        assertFalse(overBudget(start, start + SYNC_BUDGET_MS - 1))
+        assertTrue(overBudget(start, start + SYNC_BUDGET_MS))
+        assertTrue(overBudget(start, start + SYNC_BUDGET_MS * 3))
+        assertFalse(overBudget(start, start - 5_000L)) // a clock that jumped back must not end the run for good
+        assertTrue(overBudget(start, start + 30_000L, budgetMs = 30_000L))
+    }
+
+    /**
+     * A run that cannot reach the hub is a status line, never an exception, and it always stops reporting itself as
+     * running (the service's pause-at-home check depends on that).
+     */
+    @Test fun aFailedRunReportsItselfAndStopsRunning() {
+        val c = ApplicationProvider.getApplicationContext<Application>()
+        val status = Sync.run(c)
+        assertFalse(Sync.isRunning())
+        assertTrue(status, status.startsWith("Hub not reachable"))
+        assertEquals(status, Prefs.str(c, Prefs.SYNC_STATUS))
     }
 }

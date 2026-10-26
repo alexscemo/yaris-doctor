@@ -43,6 +43,13 @@
 
         <receiver android:name=".HomeWatch" android:exported="false" />
 
+        <!-- Plugged into the car: an exempt broadcast, so it may wake the logger from the background -->
+        <receiver android:name=".CarPowerReceiver" android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.ACTION_POWER_CONNECTED" />
+            </intent-filter>
+        </receiver>
+
         <receiver android:name=".BootReceiver" android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.BOOT_COMPLETED" />

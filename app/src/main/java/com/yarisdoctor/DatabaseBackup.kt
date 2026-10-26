@@ -97,11 +97,22 @@ object DatabaseBackup {
 
     private fun openReadOnly(from: File): SQLiteDatabase {
         if (!from.isFile) throw IllegalArgumentException("There is no backup file at ${from.absolutePath}")
+        // Check the header before SQLite sees it: openDatabase's corruption handler would delete the file and log a
+        // "DB wipe" for something as ordinary as a picked photo, and its message is less useful than this one.
+        if (!looksLikeSqlite(from)) throw IllegalArgumentException("This file is not a SQLite database: ${from.name}")
         return try {
             SQLiteDatabase.openDatabase(from.absolutePath, null, SQLiteDatabase.OPEN_READONLY)
         } catch (e: SQLException) {
             throw notADatabase(from, e)
         }
+    }
+
+    /** The 16-byte header every SQLite 3 file starts with; a file shorter than one page cannot be a database. */
+    private fun looksLikeSqlite(from: File): Boolean {
+        if (from.length() < 512) return false
+        val header = ByteArray(16)
+        val read = from.inputStream().use { it.read(header) }
+        return read == 16 && header.contentEquals("SQLite format 3\u0000".toByteArray(Charsets.US_ASCII))
     }
 
     private fun notADatabase(from: File, e: SQLException) =

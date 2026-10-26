@@ -19,6 +19,7 @@ import android.text.Spanned
 import android.text.format.DateUtils
 import android.text.style.ForegroundColorSpan
 import android.text.style.RelativeSizeSpan
+import android.util.Log
 import android.view.Gravity
 import android.view.View
 import android.widget.CheckBox
@@ -576,6 +577,7 @@ class SettingsActivity : Activity() {
                 DatabaseBackup.validate(container.real, tmp) // before the question, so a wrong file never asks
                 null
             } catch (e: Exception) {
+                Log.d("DatabaseBackup", "backup rejected: ${e.javaClass.simpleName}: ${e.message}")
                 e.message ?: e.javaClass.simpleName
             }
             if (error != null) {

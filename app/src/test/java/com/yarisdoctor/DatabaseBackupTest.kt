@@ -132,9 +132,21 @@ class DatabaseBackupTest {
         }
     }
 
-    @Test fun aFileThatIsNotADatabaseIsRefused() {
+    @Test fun aFileWithoutTheSqliteHeaderIsRefusedBeforeSqliteOpensIt() {
         val junk = File(dir, "notes.db").apply { writeText("not a database") }
         val e = assertThrows(IllegalArgumentException::class.java) { DatabaseBackup.validate(live, junk) }
+        assertTrue(e.message.orEmpty(), e.message.orEmpty().contains("not a SQLite database"))
+    }
+
+    @Test fun aHeaderWithNoSchemaIsRefusedAsNotThisAppsDatabase() {
+        // A valid SQLite header but nothing behind it: SQLite opens it, then the schema check must refuse it.
+        val fake = File(dir, "fake.db").apply {
+            outputStream().use { out ->
+                out.write("SQLite format 3\u0000".toByteArray(Charsets.US_ASCII))
+                out.write(ByteArray(4096))
+            }
+        }
+        val e = assertThrows(IllegalArgumentException::class.java) { DatabaseBackup.validate(live, fake) }
         assertTrue(e.message.orEmpty(), e.message.orEmpty().contains("not a Yaris Doctor database"))
     }
 

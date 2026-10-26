@@ -194,6 +194,7 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         // Background location must be requested on its own, after fine location (Android 11+)
         if (requestCode == 1 && granted(ACCESS_FINE_LOCATION) && !granted(ACCESS_BACKGROUND_LOCATION)) {
             requestPermissions(arrayOf(ACCESS_BACKGROUND_LOCATION), 2)

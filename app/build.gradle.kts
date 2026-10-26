@@ -40,8 +40,6 @@ android {
         abortOnError = true
         checkReleaseBuilds = false
         warningsAsErrors = false
-        // MainActivity's permission callback handles the result itself and is outside this change's files
-        disable += "MissingSuperCall"
     }
 }
 

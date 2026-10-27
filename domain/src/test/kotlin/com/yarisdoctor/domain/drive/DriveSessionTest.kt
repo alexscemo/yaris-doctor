@@ -2,6 +2,7 @@ package com.yarisdoctor.domain.drive
 
 import com.yarisdoctor.domain.health.Finding
 import com.yarisdoctor.domain.model.Regen
+import com.yarisdoctor.domain.model.Sample
 import com.yarisdoctor.domain.repo.DriveStore
 import com.yarisdoctor.domain.repo.RegenLog
 import org.junit.Assert.assertEquals
@@ -50,6 +51,9 @@ class DriveSessionTest {
 
     class FakeEffects : DriveEffects {
         val events = mutableListOf<String>()
+        /** Every cycle's reading, as the screens get it: one per cycle, whatever the log's sample pace is. */
+        val live = mutableListOf<Sample>()
+        override fun live(t: Long, soot: Int?, temp: Int?, regen: Boolean) { live += Sample(t, soot, temp, regen) }
         override fun regen(start: Long, sootStart: Int?, soot: Int?, temp: Int?) { events += "regen" }
         override fun regenHidden() { events += "hidden" }
         override fun alertOpened(f: Finding) { events += "open ${f.key}" }
@@ -58,6 +62,24 @@ class DriveSessionTest {
     }
 
     private fun car(soot: Int = 60, temp: Int = 300, regen: Boolean = false) = sim.frames(Sim.Reading(soot, temp, regen))
+
+    @Test fun aReadingReachesTheScreensEveryCycleWhileTheLogKeepsItsPace() {
+        // 100 ms a request on this fake clock, so cycles are far closer than the log's 5 s sample
+        val link = ScriptLink { if (it < 30_000) car(soot = 40, temp = 250) else null }
+        session.drive(link) { true }
+        assertEquals(store.frames, effects.live.size) // one reading per answering cycle, not one per sample row
+        assertTrue(log.samples.size * 2 < effects.live.size) // and the log is far slower than that
+        assertEquals(250, effects.live.last().temp)
+        assertEquals(40, effects.live.last().soot)
+        assertFalse(effects.live.last().regen)
+    }
+
+    @Test fun aCycleWithoutAnRpmReplyKeepsTheRegenStateOnTheScreens() {
+        // From 10 s on, 21DF still answers and 210C doesn't: the recorder keeps the burn open, and so must the screens
+        session.drive(ScriptLink { if (it < 20_000) car(regen = true).let { r -> if (it < 10_000) r else r - "210C" } else null }) { true }
+        assertTrue(session.inRegen)
+        assertTrue(effects.live.last().regen)
+    }
 
     @Test fun calibrationIdIsReadOnceADriveUntilStored() {
         val cal = "490401" + "3839363631304430".repeat(2)

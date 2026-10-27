@@ -155,7 +155,7 @@ class AllData(private val a: ComponentActivity, private val ui: Ui) {
         val newest = latest.values.maxOfOrNull { it.first }
         header.text = when {
             newest == null -> "No live data yet. Values appear here after a drive with the dongle connected."
-            System.currentTimeMillis() - newest <= 30_000 -> "Live from the engine ECU · ${PIDS.size} values · tap a row for the last trip"
+            System.currentTimeMillis() - newest <= Live.LIVE_MS -> "Live from the engine ECU · ${PIDS.size} values · tap a row for the last trip"
             else -> "From the last drive, ${fmt(newest)}"
         } + (s.linkAverage?.let { " · requests took $it ms on average last drive" } ?: "")
         val every = s.every

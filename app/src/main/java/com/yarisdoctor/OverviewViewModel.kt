@@ -68,7 +68,13 @@ class OverviewViewModel(app: Application) : AndroidViewModel(app) {
             val hk = "${Prefs.debug} ${regens.size} ${regens.lastOrNull()?.end} ${regens.lastOrNull()?.end?.let { now - it > 2 * FLOOR_AFTER_MS }}"
             val signs = history?.takeIf { hk == historyKey }
                 ?: db.withSigns(regens.takeLast(50)).reversed().also { history = it; historyKey = hk }
-            OverviewState(now, db.lastSample(), regens, rc.metresSinceRegen, rc.sootSeries, db.alerts(now), card, signs)
+            // The service pushes a reading every poll cycle: show that one at once rather than the log's last 5 s sample.
+            // It has to be current, so a restore or a deleted trip leaves no phantom reading on screen.
+            val logged = db.lastSample()
+            val live = Live.reading.value?.takeIf { it.debug == Prefs.debug }?.sample
+                ?.takeIf { now - it.t <= Live.LIVE_MS }
+            val last = if (live != null && (logged == null || live.t > logged.t)) live else logged
+            OverviewState(now, last, regens, rc.metresSinceRegen, rc.sootSeries, db.alerts(now), card, signs)
         }
     }
 

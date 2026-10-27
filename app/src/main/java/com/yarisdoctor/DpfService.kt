@@ -92,8 +92,14 @@ class DpfService : Service() {
         }
     }
 
-    /** The drive's notifications and edge light. Called on the worker thread; EdgeLight posts to the main thread itself. */
+    /**
+     * The drive's notifications, its edge light and the screens' live reading. Called on the worker thread; EdgeLight
+     * posts to the main thread itself.
+     */
     private val effects = object : DriveEffects {
+        /** The screens' live reading: pushed every cycle so they follow the car, not the logger's 5 s sample. */
+        override fun live(t: Long, soot: Int?, temp: Int?, regen: Boolean) = Live.push(t, soot, temp, regen, Prefs.debug)
+
         override fun regen(start: Long, sootStart: Int?, soot: Int?, temp: Int?) {
             if (Prefs.alerts(this@DpfService)) nm.notify(ID_REGEN, regenNotification(start, sootStart, soot, temp)) else nm.cancel(ID_REGEN)
             edge.show(Prefs.edge(this@DpfService))

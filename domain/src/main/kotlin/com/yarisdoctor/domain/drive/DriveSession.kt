@@ -24,8 +24,15 @@ interface ObdLink {
     fun send(cmd: String, timeoutMs: Long = 2000): String?
 }
 
-/** What the drive shows outside the database: the service's notifications and edge light. */
+/** What the drive shows outside the database: the service's notifications, its edge light and the screens' live reading. */
 interface DriveEffects {
+    /**
+     * Every cycle's reading, at the dongle's own pace, before the log takes it: the screens show it at once instead of
+     * waiting for a `sample` row. [soot] and [temp] are null when that reply was missed; [regen] carries the last known
+     * state across a cycle without a `210C` reply.
+     */
+    fun live(t: Long, soot: Int?, temp: Int?, regen: Boolean)
+
     /** A regen is running: its start, the soot it started from, and the latest soot and DPF temperature. */
     fun regen(start: Long, sootStart: Int?, soot: Int?, temp: Int?)
 
@@ -135,6 +142,9 @@ class DriveSession(
                     lastSample = t
                 }
                 checks(t, checker.check(t, replies, rec.inRegen))
+                // After the row writes, so a screen that reads the database sees this same cycle; every cycle, so the
+                // Overview and All data follow the car rather than the log's 5 s pace
+                effects.live(t, soot, temp, regen ?: rec.inRegen)
                 // No pause: the next cycle starts at once, so the pace is set by how fast this dongle answers, regen or not
             }
         } finally {
@@ -157,6 +167,7 @@ class DriveSession(
                 val frames = sim.frames(r)
                 store.frames(t, frames)
                 checks(t, checker.check(t, frames, rec.inRegen))
+                effects.live(t, r.soot, r.temp, r.regen)
                 // The debug Db lives in RAM: keep 30 min at full rate, older frames one per minute, or a day of it runs out of memory
                 if (t - 30 * 60_000L - thinnedTo >= 60_000L) {
                     store.thinFrames(thinnedTo, t - 30 * 60_000L)

@@ -11,6 +11,7 @@ import android.content.pm.PackageManager.PERMISSION_GRANTED
 import android.net.Uri
 import android.os.Bundle
 import android.os.PowerManager
+import android.os.SystemClock
 import android.provider.Settings
 import android.text.SpannableString
 import android.text.style.UnderlineSpan
@@ -36,6 +37,9 @@ import com.yarisdoctor.domain.model.UnitSystem
 import com.yarisdoctor.domain.model.Units
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
@@ -67,6 +71,7 @@ class MainActivity : ComponentActivity() {
     private lateinit var nextRegenSub: TextView
     private lateinit var sootFill: SootView
     private lateinit var sootChart: ChartView
+    private var sootSeriesShown: Pair<List<Pair<Long, Float>>, UnitSystem>? = null // the series on screen, to skip a redraw
     private lateinit var regenChart: ChartView
     private lateinit var regenTitle: TextView
     private lateinit var dpfChart: ChartView
@@ -210,13 +215,24 @@ class MainActivity : ComponentActivity() {
         refresh()
     }
 
-    // Live while visible: the service writes a sample every 1-5 s when connected
+    /**
+     * Live while visible: the service pushes a reading every poll cycle, so the screen redraws at the pace the car
+     * answers (about 1-2 s) instead of waiting out a timer. A [TICK_MS] tick stays underneath for everything that isn't
+     * a reading: the wall clock, other phones' rows from the hub, and a service that stopped pushing. A dongle that
+     * answers very fast is held to [MIN_REDRAW_MS], so neither the screen nor SQLite works faster than the eye follows.
+     */
     override fun onResume() {
         super.onResume()
         ticker = lifecycleScope.launch {
-            while (true) {
+            var drawn = 0L
+            merge(
+                flow { while (true) { emit(Unit); delay(TICK_MS) } },
+                Live.reading.map { Unit },
+            ).collect {
+                val now = SystemClock.elapsedRealtime()
+                if (now - drawn < MIN_REDRAW_MS) return@collect
+                drawn = now
                 refreshNow()
-                delay(5_000)
             }
         }
     }
@@ -266,7 +282,7 @@ class MainActivity : ComponentActivity() {
         val last = s.last
         val regens = s.regens
         val now = s.now
-        val live = last != null && now - last.t <= 30_000
+        val live = last != null && now - last.t <= Live.LIVE_MS
 
         statusText.text = when {
             last == null -> "Waiting for the first drive"
@@ -332,21 +348,26 @@ class MainActivity : ComponentActivity() {
             } ?: "drive a little more"
         }
 
+        // The series and the regens behind it come from the view model's minute cache: redraw a chart only when that
+        // instance changes, not on each live reading (both rebuild a few thousand points)
         val series = s.sootSeries
-        sootChart.set(
-            series.map { it.first }.toLongArray(), series.map { it.second }.toFloatArray(),
-            { i -> "${fmt(series[i].first)} · %.0f%% soot".format(series[i].second) }, ::fmtDay,
-            regens.map { it.start to (it.end ?: now) },
-            // Parked time takes no width. Points are 10-min buckets, so only a skipped bucket counts as parked
-            gapMs = Db.SOOT_BUCKET_MS,
-        )
-        regenTitle.text = if (units.metric) "Kilometres between regens" else "Miles between regens"
-        val withGap = regens.filter { it.gapM != null }.takeLast(20)
-        regenChart.set(
-            withGap.map { it.start }.toLongArray(), withGap.map { units.distance(it.gapM!!).toFloat() }.toFloatArray(),
-            { i -> "${fmt(withGap[i].start)} · %.0f %s · ${duration(withGap[i])}".format(units.distance(withGap[i].gapM!!), units.distanceLabel) },
-            ::fmtDay,
-        )
+        if (sootSeriesShown?.let { it.first === series && it.second == units.system } != true) {
+            sootSeriesShown = series to units.system
+            sootChart.set(
+                series.map { it.first }.toLongArray(), series.map { it.second }.toFloatArray(),
+                { i -> "${fmt(series[i].first)} · %.0f%% soot".format(series[i].second) }, ::fmtDay,
+                regens.map { it.start to (it.end ?: now) },
+                // Parked time takes no width. Points are 10-min buckets, so only a skipped bucket counts as parked
+                gapMs = Db.SOOT_BUCKET_MS,
+            )
+            regenTitle.text = if (units.metric) "Kilometres between regens" else "Miles between regens"
+            val withGap = regens.filter { it.gapM != null }.takeLast(20)
+            regenChart.set(
+                withGap.map { it.start }.toLongArray(), withGap.map { units.distance(it.gapM!!).toFloat() }.toFloatArray(),
+                { i -> "${fmt(withGap[i].start)} · %.0f %s · ${duration(withGap[i])}".format(units.distance(withGap[i].gapM!!), units.distanceLabel) },
+                ::fmtDay,
+            )
+        }
 
         dpfAbout.text = "Exhaust restriction right after each regen, in ${units.restrictionLabel} of exhaust. Burning removes the " +
             "soot, so what stays is ash: a rising bar means the filter is filling with ash and needs a clean."
@@ -505,5 +526,9 @@ class MainActivity : ComponentActivity() {
 
     companion object {
         private val TABS = listOf("Overview", "All data", "Rules")
+        /** The fallback redraw: what the screens can't learn from a reading (see [onResume]). */
+        private const val TICK_MS = 5_000L
+        /** Readings land about every 1-2 s; this only guards against a dongle that answers unusually fast. */
+        private const val MIN_REDRAW_MS = 250L
     }
 }

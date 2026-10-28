@@ -38,7 +38,12 @@ jobs:
         run: |
           export KEYSTORE_PATH="$RUNNER_TEMP/release.p12"
           export VERSION_NAME="${GITHUB_REF_NAME#v}"
+          # The notes are this version's CHANGELOG.md section; no section, no release
+          awk -v v="[$VERSION_NAME]" '/^## /{p = index($0, v) > 0; next} p' CHANGELOG.md > "$RUNNER_TEMP/notes.md"
+          if ! grep -q '[^[:space:]]' "$RUNNER_TEMP/notes.md"; then echo "::error::CHANGELOG.md has no section for $VERSION_NAME"; exit 1; fi
+          # 1.0.0-rc.1 and the like: Obtainium installs them only with "Include prereleases" on
+          case "$VERSION_NAME" in *-*) PRE=--prerelease ;; *) PRE= ;; esac
           echo "$KEYSTORE_BASE64" | base64 -d > "$KEYSTORE_PATH"
           ./gradlew assembleRelease
           cp app/build/outputs/apk/release/app-release.apk "yaris-doctor-$GITHUB_REF_NAME.apk"
-          gh release create "$GITHUB_REF_NAME" "yaris-doctor-$GITHUB_REF_NAME.apk" --generate-notes
+          gh release create "$GITHUB_REF_NAME" "yaris-doctor-$GITHUB_REF_NAME.apk" --title "$GITHUB_REF_NAME" --notes-file "$RUNNER_TEMP/notes.md" $PRE

@@ -7,7 +7,7 @@ import java.io.OutputStream
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
 
-/** ELM327 over a Bluetooth SPP stream. Replies are cleaned exactly like ELMduino so DPFViewer's PID offsets still apply. */
+/** ELM327 over a Bluetooth SPP or [BleLink] stream. Replies are cleaned exactly like ELMduino so DPFViewer's PID offsets still apply. */
 class Elm(input: InputStream, private val output: OutputStream) : ObdLink {
     /**
      * Bytes from the dongle as they arrive, -1 once the link drops. A thread blocked in read() wakes the moment data comes,

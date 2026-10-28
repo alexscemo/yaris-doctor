@@ -34,6 +34,7 @@ import com.yarisdoctor.domain.drive.burnPercent
 import com.yarisdoctor.domain.health.CRIT
 import com.yarisdoctor.domain.health.Finding
 import com.yarisdoctor.domain.health.tripSummary
+import java.io.Closeable
 import java.util.UUID
 import java.util.concurrent.Executors
 import java.util.concurrent.RejectedExecutionException
@@ -49,7 +50,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 class DpfService : Service() {
 
     @Volatile private var running = true
-    @Volatile private var socket: BluetoothSocket? = null
+    @Volatile private var socket: Closeable? = null
     private var lastFix: Location? = null
     private val db by lazy { container.db() }
     private val nm by lazy { getSystemService(NotificationManager::class.java) }
@@ -237,11 +238,16 @@ class DpfService : Service() {
         val adapter = getSystemService(BluetoothManager::class.java).adapter
         if (adapter == null || !adapter.isEnabled) return
         // No cancelDiscovery() here: it needs BLUETOOTH_SCAN, which this app deliberately never requests (it doesn't scan).
-        val s = connect(adapter.getRemoteDevice(Prefs.dongle(this))) ?: return
+        val device = adapter.getRemoteDevice(Prefs.dongle(this))
+        // The bonded device's type picks the link: SPP for classic, GATT for BLE-only, SPP then GATT for dual/unknown
+        val type = try { device.type } catch (e: SecurityException) { return } // "Nearby devices" revoked
+        val spp = if (type != BluetoothDevice.DEVICE_TYPE_LE) connect(device) else null
+        val ble = if (spp == null && type != BluetoothDevice.DEVICE_TYPE_CLASSIC) ble(device) else null
+        val s: Closeable = spp ?: ble ?: return
         socket = s
         s.use {
             wake.acquire()
-            val elm = Elm(s.inputStream, s.outputStream)
+            val elm = if (spp != null) Elm(spp.inputStream, spp.outputStream) else Elm(ble!!.inputStream, ble.outputStream)
             elm.init()
             startGps()
             nm.notify(ID_SERVICE, status("Logging"))
@@ -285,6 +291,14 @@ class DpfService : Service() {
             try { clone.close() } catch (e: Exception) {}
             null
         }
+    }
+
+    /** The dongle over BLE, or null when it isn't in range or has no serial-like GATT service. */
+    private fun ble(device: BluetoothDevice): BleLink? = try {
+        BleLink(this, device)
+    } catch (e: Exception) {
+        Log.d(TAG, "BLE connect failed: $e")
+        null
     }
 
     /**

@@ -303,11 +303,12 @@ class DpfService : Service() {
 
     /**
      * On the home Wi-Fi with nothing left to do: no drive or regen still open (the link may come back), nothing the hub
-     * hasn't got (a paused service doesn't sync), no sync queued or running (never stop mid-upload), not Debug mode. Only
+     * hasn't got (a paused service doesn't sync), no sync queued or running (never stop mid-upload), not Debug mode, and
+     * the car's Bluetooth not connected (ignition on in the drive: keep probing until the dongle answers). Only
      * when the app is exempt from battery optimisation, because that is what lets HomeWatch start the service again
      * from the background; otherwise it keeps running.
      */
-    private fun pauseAtHome() = Sync.atHome(this) && !Prefs.debug && !drive.busy && !Sync.pending(this) && !syncing() &&
+    private fun pauseAtHome() = Sync.atHome(this) && !Prefs.debug && !drive.busy && !Sync.pending(this) && !syncing() && !Prefs.carBtOn(this) &&
         getSystemService(PowerManager::class.java).isIgnoringBatteryOptimizations(packageName)
 
     /** A sync is queued on this service's executor or still running (also one started by Settings' "Sync now"). */

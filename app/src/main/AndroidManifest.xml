@@ -61,6 +61,18 @@
             </intent-filter>
         </receiver>
 
+        <!-- The car's Bluetooth connected (exempt broadcasts too). Exported because the Bluetooth stack sends them under
+             its own uid; the permission keeps apps without Bluetooth access from faking them -->
+        <receiver
+            android:name=".CarBtReceiver"
+            android:exported="true"
+            android:permission="android.permission.BLUETOOTH_CONNECT">
+            <intent-filter>
+                <action android:name="android.bluetooth.device.action.ACL_CONNECTED" />
+                <action android:name="android.bluetooth.device.action.ACL_DISCONNECTED" />
+            </intent-filter>
+        </receiver>
+
         <receiver android:name=".BootReceiver" android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.BOOT_COMPLETED" />

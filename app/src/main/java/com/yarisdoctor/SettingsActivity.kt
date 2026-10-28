@@ -1,9 +1,11 @@
 package com.yarisdoctor
 
+import android.annotation.SuppressLint
 import android.Manifest.permission.BLUETOOTH_CONNECT
 import android.app.Activity
 import android.app.AlertDialog
 import android.app.NotificationManager
+import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothManager
 import android.content.ActivityNotFoundException
 import android.content.ContentValues
@@ -48,6 +50,8 @@ class SettingsActivity : Activity() {
             addView(section("Car"))
             addView(group(
                 row("Bluetooth dongle", Prefs.dongleName(context)?.let { "$it · ${Prefs.dongle(context)}" } ?: Prefs.dongle(context)) { pickDongle() },
+                row("Car's Bluetooth", Prefs.carBt(context)?.let { "${Prefs.carBtName(context) ?: it} · logging starts when it connects" }
+                    ?: "Not set · pick the car's hands-free to start logging at ignition, even at home") { pickCarBt() },
                 toggle("Background logging", "Connect to the dongle automatically and log every drive", Prefs.logging(context)) {
                     Prefs.put(context, Prefs.LOGGING, it)
                     DpfService.restart(context)
@@ -119,16 +123,41 @@ class SettingsActivity : Activity() {
         setContentView(root)
     }
 
-    private fun pickDongle() {
+    /** Paired devices, or null (after a toast) when Bluetooth isn't allowed or nothing is paired. */
+    private fun bonded(): List<BluetoothDevice>? {
         if (checkSelfPermission(BLUETOOTH_CONNECT) != PERMISSION_GRANTED) {
             toast("Allow \"Nearby devices\" for Yaris Doctor first")
-            return
+            return null
         }
         val devices = getSystemService(BluetoothManager::class.java).adapter?.bondedDevices?.toList().orEmpty()
-        if (devices.isEmpty()) {
-            toast("No paired devices. Pair the dongle in Android's Bluetooth settings first.")
-            return
-        }
+        if (devices.isEmpty()) toast("No paired devices. Pair it in Android's Bluetooth settings first.")
+        return devices.ifEmpty { null }
+    }
+
+    /** The car's head unit; the dongle is left out, since the app's own connection to it would look like the ignition. */
+    @SuppressLint("MissingPermission") // bonded() returns null without BLUETOOTH_CONNECT
+    private fun pickCarBt() {
+        val devices = bonded()?.filter { it.address != Prefs.dongle(this) } ?: return
+        AlertDialog.Builder(this)
+            .setTitle("Car's Bluetooth")
+            .setItems(devices.map { "${it.name ?: "Unknown device"}\n${it.address}" }.toTypedArray()) { _, i ->
+                Prefs.put(this, Prefs.CAR_BT, devices[i].address)
+                Prefs.put(this, Prefs.CAR_BT_NAME, devices[i].name)
+                Prefs.put(this, Prefs.CAR_BT_ON, false) // known from its next connection
+                render()
+            }
+            .setNeutralButton("None") { _, _ ->
+                Prefs.put(this, Prefs.CAR_BT, null as String?)
+                Prefs.put(this, Prefs.CAR_BT_ON, false)
+                render()
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    @SuppressLint("MissingPermission") // bonded() returns null without BLUETOOTH_CONNECT
+    private fun pickDongle() {
+        val devices = bonded() ?: return
         AlertDialog.Builder(this)
             .setTitle("Bluetooth dongle")
             .setItems(devices.map { "${it.name ?: "Unknown device"}\n${it.address}" }.toTypedArray()) { _, i ->

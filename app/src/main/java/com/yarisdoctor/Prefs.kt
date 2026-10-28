@@ -9,6 +9,10 @@ import java.util.UUID
 object Prefs {
     const val DONGLE = "dongle"
     const val DONGLE_NAME = "dongle_name"
+    const val CAR_BT = "car_bt"
+    const val CAR_BT_NAME = "car_bt_name"
+    /** The car's Bluetooth is connected right now (set by CarPowerReceiver from the ACL broadcasts, cleared at boot). */
+    const val CAR_BT_ON = "car_bt_on"
     const val LOGGING = "logging"
     const val ALERTS = "alerts"
     const val EDGE = "edge"
@@ -48,6 +52,10 @@ object Prefs {
     fun dongle(c: Context) = sp(c).getString(DONGLE, DEFAULT_DONGLE)!!
     fun dongleName(c: Context) = sp(c).getString(DONGLE_NAME, null)
     fun logging(c: Context) = sp(c).getBoolean(LOGGING, true)
+    /** The car's own Bluetooth (head unit, hands-free), whose connection means the ignition is on; null when not set. */
+    fun carBt(c: Context) = sp(c).getString(CAR_BT, null)
+    fun carBtName(c: Context) = sp(c).getString(CAR_BT_NAME, null)
+    fun carBtOn(c: Context) = sp(c).getBoolean(CAR_BT_ON, false)
     fun alerts(c: Context) = sp(c).getBoolean(ALERTS, true)
     fun edge(c: Context) = sp(c).getBoolean(EDGE, false) // off by default: it needs "Display over other apps"
     /** True = metric, false = imperial. The key stays KM so existing installs keep their choice. */

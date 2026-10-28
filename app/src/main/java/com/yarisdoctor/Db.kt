@@ -16,7 +16,10 @@ import com.yarisdoctor.domain.health.Finding
 import com.yarisdoctor.domain.health.FinishedRegen
 import com.yarisdoctor.domain.health.diffAlerts
 import com.yarisdoctor.domain.health.dpfConditions
+import com.yarisdoctor.domain.health.OIL_CHANGE_KM
 import com.yarisdoctor.domain.health.restriction
+import com.yarisdoctor.domain.maintenance.Job
+import com.yarisdoctor.domain.maintenance.OIL
 import com.yarisdoctor.domain.model.Alert
 import com.yarisdoctor.domain.model.FLOOR_AFTER_MS
 import com.yarisdoctor.domain.model.Regen
@@ -25,11 +28,13 @@ import com.yarisdoctor.domain.model.TRIP_GAP_MS
 import com.yarisdoctor.domain.model.Trip
 import com.yarisdoctor.domain.model.TripStats
 import com.yarisdoctor.domain.repo.DriveStore
+import java.time.Instant
+import java.time.ZoneId
 import org.json.JSONArray
 import org.json.JSONObject
 
 /** [name] null = in-memory database (Debug mode), gone when closed. Created by [AppContainer]: one per database per process. */
-class Db internal constructor(private val ctx: Context, name: String?) : SQLiteOpenHelper(ctx, name, null, 6), DriveStore {
+class Db internal constructor(private val ctx: Context, name: String?) : SQLiteOpenHelper(ctx, name, null, 7), DriveStore {
 
     override fun onCreate(db: SQLiteDatabase) {
         // odo_m: GPS distance accumulated by this app (metres), our stand-in for the odometer
@@ -40,6 +45,7 @@ class Db internal constructor(private val ctx: Context, name: String?) : SQLiteO
         createFrames(db)
         createAlerts(db)
         createLink(db)
+        createMaintenance(db)
     }
 
     override fun onUpgrade(db: SQLiteDatabase, old: Int, new: Int) {
@@ -53,7 +59,50 @@ class Db internal constructor(private val ctx: Context, name: String?) : SQLiteO
         if (old < 5) createAlerts(db)
         // v6: dongle request timings per session
         if (old < 6) createLink(db)
+        // v7: the maintenance logbook, which takes over the oil change Settings used to keep
+        if (old < 7) {
+            createMaintenance(db)
+            migrateOil(db)
+        }
     }
+
+    /** The logbook ([Job]): day is an epoch day, km the car's odometer, odo_m this phone's GPS odometer when logged. */
+    private fun createMaintenance(db: SQLiteDatabase) =
+        db.execSQL("CREATE TABLE maintenance(id INTEGER PRIMARY KEY, day INTEGER, kind TEXT, note TEXT, done INTEGER, km REAL, odo_m REAL, every_km INTEGER, every_months INTEGER)")
+
+    /** The oil change recorded in Settings (Prefs.OIL_AT / OIL_ODO) as the logbook's first line, with Toyota's interval. */
+    private fun migrateOil(db: SQLiteDatabase) {
+        val at = Prefs.long(ctx, Prefs.OIL_AT).takeIf { it > 0 } ?: return
+        db.insert("maintenance", null, ContentValues().apply {
+            put("day", Instant.ofEpochMilli(at).atZone(ZoneId.systemDefault()).toLocalDate().toEpochDay())
+            put("kind", OIL); put("note", ""); put("done", 1)
+            put("odo_m", Prefs.long(ctx, Prefs.OIL_ODO).toDouble()); put("every_km", OIL_CHANGE_KM)
+        })
+    }
+
+    /** The whole logbook, in no particular order. */
+    fun jobs(): List<Job> = readableDatabase.rawQuery(
+        "SELECT id, day, kind, note, done, km, odo_m, every_km, every_months FROM maintenance", null,
+    ).use {
+        val out = ArrayList<Job>()
+        while (it.moveToNext()) out += Job(
+            it.getLong(0), if (it.isNull(1)) null else it.getLong(1), it.getString(2), it.getString(3) ?: "", it.getInt(4) == 1,
+            if (it.isNull(5)) null else it.getDouble(5), if (it.isNull(6)) null else it.getDouble(6), it.intOrNull(7), it.intOrNull(8),
+        )
+        out
+    }
+
+    /** Inserts [j] when its id is 0, else replaces that line. */
+    fun putJob(j: Job) {
+        val v = ContentValues().apply {
+            put("day", j.day); put("kind", j.kind); put("note", j.note); put("done", if (j.done) 1 else 0)
+            put("km", j.km); put("odo_m", j.odoM); put("every_km", j.everyKm); put("every_months", j.everyMonths)
+        }
+        if (j.id == 0L) writableDatabase.insert("maintenance", null, v)
+        else writableDatabase.update("maintenance", v, "id = ?", arrayOf(j.id.toString()))
+    }
+
+    fun deleteJob(id: Long) = writableDatabase.delete("maintenance", "id = ?", arrayOf(id.toString()))
 
     /** One row per command per session ([t] = session start): count, answered, and average ms (see [Elm.Timing]). */
     private fun createLink(db: SQLiteDatabase) =

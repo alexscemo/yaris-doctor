@@ -21,10 +21,12 @@ import android.view.animation.DecelerateInterpolator
 import android.view.animation.PathInterpolator
 import android.widget.FrameLayout
 import android.widget.HorizontalScrollView
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import androidx.activity.ComponentActivity
+import androidx.activity.OnBackPressedCallback
 import androidx.activity.viewModels
 import androidx.lifecycle.lifecycleScope
 import com.yarisdoctor.Ui.Type
@@ -84,10 +86,15 @@ class MainActivity : ComponentActivity() {
     private lateinit var health: LinearLayout
     private var healthKey: String? = null
     private val allData by lazy { AllData(this, ui) }
+    private val maintenance by lazy { MaintenanceTab(this, ui) }
     private lateinit var overview: View
     private lateinit var scroll: ScrollView
-    private lateinit var tabs: LinearLayout
-    private var tab = 0 // index into TABS
+    private val nav = ArrayList<NavItem>() // one per TABS entry
+    private var tab = OVERVIEW // index into TABS
+    private val scrollY = IntArray(TABS.size) // where each tab was left, so going back to it lands there
+    private val backToOverview = object : OnBackPressedCallback(false) {
+        override fun handleOnBackPressed() = showTab(OVERVIEW)
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -190,10 +197,16 @@ class MainActivity : ComponentActivity() {
         val settings = ui.iconButton(R.drawable.ic_settings, "Settings") { startActivity(Intent(this, SettingsActivity::class.java)) }
         overview = content
         scroll = ScrollView(this)
-        tabs = LinearLayout(this).apply { setPadding(ui.px(20), ui.px(4), ui.px(20), ui.px(12)) }
-        showTab(0)
-        val root = ui.column(ui.topBar("Yaris Doctor", end = settings), tabs).apply {
+        // Bottom navigation: in thumb reach and always on screen, one tap from any tab to any other
+        val bar = LinearLayout(this).apply {
+            TABS.indices.forEach { i -> addView(navItem(i).also { nav += it }.root, LinearLayout.LayoutParams(0, -2, 1f)) }
+        }
+        onBackPressedDispatcher.addCallback(this, backToOverview)
+        showTab(OVERVIEW)
+        val root = ui.column(ui.topBar("Yaris Doctor", end = settings)).apply {
             addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
+            addView(ui.divider(R.color.hairline))
+            addView(bar)
         }
         ui.fitSystemBars(root)
         setContentView(root)
@@ -223,6 +236,7 @@ class MainActivity : ComponentActivity() {
      */
     override fun onResume() {
         super.onResume()
+        if (tab == MAINTENANCE) maintenance.load() // back from Settings: the units may have changed
         ticker = lifecycleScope.launch {
             var drawn = 0L
             merge(
@@ -245,16 +259,15 @@ class MainActivity : ComponentActivity() {
 
     private fun showTab(i: Int) {
         val from = tab
+        if (scroll.childCount > 0) scrollY[from] = scroll.scrollY
         tab = i
-        tabs.removeAllViews()
-        TABS.forEachIndexed { k, label ->
-            tabs.addView(ui.chip(label, k == i) { if (k != tab) showTab(k) }, LinearLayout.LayoutParams(-2, -2).apply { marginEnd = ui.px(8) })
-        }
+        nav.forEachIndexed { k, item -> item.paint(k == i) }
+        backToOverview.isEnabled = i != OVERVIEW
         scroll.removeAllViews()
         // The Rules tab is rebuilt on each visit so its descriptions follow a unit-system change made in Settings
-        val v = when (i) { 1 -> allData.view; 2 -> RulesTab(this, ui).view; else -> overview }
+        val v = when (i) { DATA -> allData.view; RULES -> RulesTab(this, ui).view; MAINTENANCE -> maintenance.view; else -> overview }
         scroll.addView(v)
-        scroll.scrollTo(0, 0)
+        scroll.post { scroll.scrollTo(0, scrollY[i]) } // after layout, or a taller tab's position is clamped
         // Slide in from the side of the chip that was tapped, so the content follows the chip row
         if (from != i && Ui.animationsOn()) {
             v.alpha = 0f
@@ -262,6 +275,7 @@ class MainActivity : ComponentActivity() {
             v.animate().alpha(1f).translationX(0f).setStartDelay(0).setDuration(280)
                 .setInterpolator(PathInterpolator(0.4f, 0f, 0.2f, 1f)).start()
         }
+        if (i == MAINTENANCE) maintenance.load()
         refresh()
     }
 
@@ -272,9 +286,9 @@ class MainActivity : ComponentActivity() {
     /** Reads off the main thread, then draws the visible tab. */
     private suspend fun refreshNow() {
         when (tab) {
-            0 -> vm.load().let { if (tab == 0) render(it) }
-            1 -> allData.refresh()
-            // 2: the rules don't change
+            OVERVIEW -> vm.load().let { if (tab == OVERVIEW) render(it) }
+            DATA -> allData.refresh()
+            // Rules don't change; the logbook loads per visit (see MaintenanceTab)
         }
     }
 
@@ -458,7 +472,7 @@ class MainActivity : ComponentActivity() {
             contentDescription = "See the rules"
             isClickable = true
             ui.ripple(this)
-            setOnClickListener { showTab(2) }
+            setOnClickListener { showTab(RULES) }
         }, LinearLayout.LayoutParams(-2, -2).apply { topMargin = ui.px(8) })
         health.addView(ui.divider(R.color.hairline), LinearLayout.LayoutParams(-1, ui.px(1).coerceAtLeast(1)).apply { topMargin = ui.px(8) })
     }
@@ -521,11 +535,47 @@ class MainActivity : ComponentActivity() {
         ui.text(Type.BODY_SM, R.color.muted, "Tap or drag the chart to read values").apply { setPadding(0, 0, 0, ui.px(12)) },
     ).apply { addView(chart, LinearLayout.LayoutParams(-1, ui.px(190))) }
 
+    /** A bottom-bar entry: icon over label; the open tab's icon sits in an orange pill with black ink, the brand's one signal colour. */
+    private inner class NavItem(val root: LinearLayout, val pill: FrameLayout, val icon: ImageView, val label: TextView) {
+        fun paint(on: Boolean) {
+            pill.background = if (on) ui.shape(R.color.primary, 999) else null
+            icon.setColorFilter(ui.color(if (on) R.color.on_primary else R.color.muted))
+            label.setTextColor(ui.color(if (on) R.color.ink else R.color.muted))
+            label.fontVariationSettings = "'wght' ${if (on) 800 else 600}"
+            root.isSelected = on
+        }
+    }
+
+    private fun navItem(i: Int): NavItem {
+        val (title, iconId) = TABS[i]
+        val icon = ImageView(this).apply { setImageResource(iconId); importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO }
+        val pill = FrameLayout(this).apply { addView(icon, FrameLayout.LayoutParams(ui.px(24), ui.px(24), Gravity.CENTER)) }
+        val label = ui.text(Type.CAPTION, R.color.muted, title).apply { maxLines = 1; importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO }
+        val root = ui.column().apply {
+            gravity = Gravity.CENTER_HORIZONTAL
+            setPadding(0, ui.px(12), 0, ui.px(14))
+            addView(pill, LinearLayout.LayoutParams(ui.px(64), ui.px(32)))
+            addView(label, LinearLayout.LayoutParams(-2, -2).apply { topMargin = ui.px(4) })
+            contentDescription = title
+            isClickable = true
+            ui.ripple(this)
+            // The open tab again: back to its top, as every Android app's bottom bar does
+            setOnClickListener { if (i == tab) scroll.smoothScrollTo(0, 0) else showTab(i) }
+        }
+        return NavItem(root, pill, icon, label)
+    }
+
     private fun duration(r: Regen) = r.end?.let { "${(it - r.start) / 60_000} min" } ?: "ongoing"
     private fun granted(perm: String) = checkSelfPermission(perm) == PERMISSION_GRANTED
 
     companion object {
-        private val TABS = listOf("Overview", "All data", "Rules")
+        /** Daily first, reference last. */
+        private val TABS = listOf("Overview" to R.drawable.ic_tab_overview, "Data" to R.drawable.ic_tab_data,
+            "Maintenance" to R.drawable.ic_tab_maintenance, "Rules" to R.drawable.ic_tab_rules)
+        private const val OVERVIEW = 0
+        private const val DATA = 1
+        private const val MAINTENANCE = 2
+        private const val RULES = 3
         /** The fallback redraw: what the screens can't learn from a reading (see [onResume]). */
         private const val TICK_MS = 5_000L
         /** Readings land about every 1-2 s; this only guards against a dongle that answers unusually fast. */

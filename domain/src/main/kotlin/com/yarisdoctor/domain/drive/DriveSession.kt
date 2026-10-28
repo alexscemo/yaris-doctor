@@ -9,7 +9,6 @@ import com.yarisdoctor.domain.car.sootOf
 import com.yarisdoctor.domain.car.tempOf
 import com.yarisdoctor.domain.health.Checker
 import com.yarisdoctor.domain.health.Finding
-import com.yarisdoctor.domain.health.oilDue
 import com.yarisdoctor.domain.health.sensorZero
 import com.yarisdoctor.domain.health.shortTrips
 import com.yarisdoctor.domain.health.trends
@@ -59,7 +58,8 @@ class DriveSession(
     private val store: DriveStore,
     private val effects: DriveEffects,
     private val model2015: Boolean,
-    private val oilMetres: () -> Double?,
+    /** The maintenance_due warning, read from the logbook each time the history checks run. */
+    private val maintenance: () -> Finding?,
     private val now: () -> Long = System::currentTimeMillis,
     private val sleep: (Long) -> Unit = Thread::sleep,
 ) {
@@ -202,7 +202,7 @@ class DriveSession(
     }
 
     /**
-     * Regen-history checks, the DPF sensor's engine-off zero and the oil change; kept open while they apply, rechecked at
+     * Regen-history checks, the DPF sensor's engine-off zero and the maintenance reminders; kept open while they apply, rechecked at
      * start and after drives and regens. Only the last regens get their floor and peak: trends() reads the newest.
      */
     private fun history(): List<Finding> {
@@ -210,7 +210,7 @@ class DriveSession(
         val finished = regens.filter { it.end != null }
         val next = forecast(store.lastSample()?.soot, finished.lastOrNull()?.sootEnd, store.metresSinceRegen(), finished.mapNotNull { it.sootStart }, model2015)
         return trends(regens, model2015) +
-            listOfNotNull(sensorZero(store.engineOffDp()), oilDue(oilMetres()), shortTrips(next.kmToRegen, store.trips()))
+            listOfNotNull(sensorZero(store.engineOffDp()), maintenance(), shortTrips(next.kmToRegen, store.trips()))
     }
 
     companion object {

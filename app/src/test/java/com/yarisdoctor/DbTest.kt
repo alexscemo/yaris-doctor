@@ -5,7 +5,11 @@ import android.content.Context
 import androidx.test.core.app.ApplicationProvider
 import com.yarisdoctor.domain.drive.Poller
 import com.yarisdoctor.domain.health.Finding
+import com.yarisdoctor.domain.maintenance.Job
+import com.yarisdoctor.domain.maintenance.OIL
 import com.yarisdoctor.domain.model.TRIP_GAP_MS
+import java.time.LocalDate
+import java.time.ZoneId
 import kotlinx.coroutines.runBlocking
 import org.json.JSONArray
 import org.json.JSONObject
@@ -246,6 +250,41 @@ class DbTest {
             while (c.moveToNext()) out += c.getLong(0)
             out
         }
+
+    /** v6 → v7: the oil change Settings recorded becomes the logbook's first line, still counting from its GPS odometer. */
+    @Test fun upgradeMovesTheOilChangeIntoTheLogbook() {
+        val name = "upgrade-test.db"
+        ctx.deleteDatabase(name)
+        Db(ctx, name).apply {
+            writableDatabase.execSQL("DROP TABLE maintenance")
+            writableDatabase.version = 6
+            close()
+        }
+        val at = LocalDate.of(2026, 3, 14).atTime(9, 30).atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
+        Prefs.put(ctx, Prefs.OIL_AT, at)
+        Prefs.put(ctx, Prefs.OIL_ODO, 12_345L)
+        val db = Db(ctx, name)
+        try {
+            assertEquals(7, db.readableDatabase.version)
+            assertEquals(listOf(Job(1, LocalDate.of(2026, 3, 14).toEpochDay(), OIL, "", true, null, 12_345.0, 15_000, null)), db.jobs())
+        } finally {
+            db.close()
+            ctx.deleteDatabase(name)
+            Prefs.put(ctx, Prefs.OIL_AT, 0L)
+        }
+    }
+
+    @Test fun jobsAreUpdatedAndDeletedById() {
+        val db = db()
+        db.putJob(Job(0, 100, "Brakes", "", false, null, null, null, null))
+        db.putJob(Job(0, null, "Coolant", "", false, 150_000.0, null, null, null))
+        val brakes = db.jobs().single { it.kind == "Brakes" }
+        db.putJob(brakes.copy(done = true, note = "front pads", everyMonths = 24))
+        assertEquals(brakes.copy(done = true, note = "front pads", everyMonths = 24), db.jobs().single { it.kind == "Brakes" })
+        assertNull(db.jobs().single { it.kind == "Coolant" }.day)
+        db.deleteJob(brakes.id)
+        assertEquals(listOf("Coolant"), db.jobs().map { it.kind })
+    }
 
     companion object {
         private const val MIN = 60_000L

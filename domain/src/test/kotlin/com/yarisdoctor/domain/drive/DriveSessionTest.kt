@@ -19,7 +19,7 @@ class DriveSessionTest {
     private val store = FakeStore(log)
     private val effects = FakeEffects()
     private val sleeps = mutableListOf<Long>()
-    private val session = DriveSession(store, effects, model2015 = false, oilMetres = { null }, now = { t }, sleep = { sleeps += it; t += it })
+    private val session = DriveSession(store, effects, model2015 = false, maintenance = { null }, now = { t }, sleep = { sleeps += it; t += it })
     private val sim = Sim(0f, 0f, 0, 0.0, Random(1))
 
     /** Every request takes 100 ms on the fake clock; [script] says what the ECU answers at that moment (null = silent). */

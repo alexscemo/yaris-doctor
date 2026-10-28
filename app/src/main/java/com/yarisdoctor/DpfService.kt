@@ -34,7 +34,10 @@ import com.yarisdoctor.domain.drive.burnPercent
 import com.yarisdoctor.domain.health.CRIT
 import com.yarisdoctor.domain.health.Finding
 import com.yarisdoctor.domain.health.tripSummary
+import com.yarisdoctor.domain.maintenance.maintenanceDue
+import com.yarisdoctor.domain.maintenance.upcoming
 import java.io.Closeable
+import java.time.LocalDate
 import java.util.UUID
 import java.util.concurrent.Executors
 import java.util.concurrent.RejectedExecutionException
@@ -141,7 +144,12 @@ class DpfService : Service() {
             startForeground(ID_SERVICE, status("Waiting for dongle"), FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE)
         }
         // The model year is read once: Settings restarts the service on a change
-        drive = DriveSession(db, effects, Prefs.model2015(this), { Prefs.oilMetres(this) }).apply { odoM = db.odometer() }
+        // The logbook is always the real one, Debug mode or not
+        drive = DriveSession(db, effects, Prefs.model2015(this), {
+            val real = container.real
+            val today = LocalDate.now().toEpochDay()
+            maintenanceDue(upcoming(real.jobs(), real.odometer(), today), today)
+        }).apply { odoM = db.odometer() }
         // A previous process killed mid-regen never closed its row; it would show "Ongoing" forever
         container.real.closeOrphanRegens()
         // Engine-stop blips (under a minute, no distance) are not burns; every start, so one that slips past engineStopped() goes too

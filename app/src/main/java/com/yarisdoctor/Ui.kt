@@ -157,6 +157,16 @@ class Ui(private val a: Activity) {
         if (end != null) addView(end)
     }
 
+    /** Rows in one hairline card (connector-tile style), separated by soft dividers. */
+    fun group(vararg rows: View) = column().apply {
+        background = shape(R.color.surface_card, 20, R.color.hairline_soft)
+        clipToOutline = true
+        rows.forEachIndexed { i, r ->
+            if (i > 0) addView(divider())
+            addView(r)
+        }
+    }
+
     /** Uppercase mono label above a block. */
     fun eyebrow(s: String, colorId: Int = R.color.muted) = text(Type.CAPTION_UPPER, colorId, s)
 

@@ -14,7 +14,13 @@ import java.io.File
 object DatabaseBackup {
 
     /** The tables a snapshot must hold, in the order [restore] copies them. */
-    private val TABLES = listOf("sample", "regen", "frame", "alert", "link", "peer_sample", "peer_regen")
+    private val TABLES = listOf("sample", "regen", "frame", "alert", "link", "peer_sample", "peer_regen", "maintenance")
+
+    /** Tables newer than [OLDEST], by the schema version that added them: an older snapshot lacks them. */
+    private val ADDED = mapOf("maintenance" to 7)
+
+    /** The oldest snapshot [restore] takes: its other tables have the same columns as now. */
+    private const val OLDEST = 6
 
     /** What a restore put back: this phone's readings, its regens, the engine frames and the warnings. */
     data class RestoreResult(val readings: Int, val regens: Int, val frames: Int, val warnings: Int)
@@ -36,8 +42,8 @@ object DatabaseBackup {
     }
 
     /**
-     * Checks that [from] is a snapshot this build can restore: a readable SQLite file with the live schema version and
-     * every table. Throws [IllegalArgumentException] with a message fit to show the user. Reads nothing else.
+     * Checks that [from] is a snapshot this build can restore: a readable SQLite file from schema [OLDEST] up to the
+     * live version, with every table its version had. Throws [IllegalArgumentException] with a message fit to show the user. Reads nothing else.
      */
     fun validate(db: Db, from: File) {
         val expected = db.readableDatabase.version
@@ -49,10 +55,10 @@ object DatabaseBackup {
             } catch (e: SQLException) {
                 throw notADatabase(from, e)
             }
-            if (version != expected) throw IllegalArgumentException(
+            if (version !in OLDEST..expected) throw IllegalArgumentException(
                 "The backup was made by another version of the app (database $version, this phone $expected)",
             )
-            val missing = TABLES.firstOrNull { !hasTable(src, it) }
+            val missing = TABLES.firstOrNull { (ADDED[it] ?: 0) <= version && !hasTable(src, it) }
             if (missing != null) throw IllegalArgumentException("The backup is missing the $missing table: not a Yaris Doctor database")
         } finally {
             src.close()
@@ -76,6 +82,8 @@ object DatabaseBackup {
             live.beginTransaction()
             try {
                 for (table in TABLES) {
+                    // A snapshot from before the table existed: the phone keeps its own rows (the logbook), rather than none
+                    if (!hasTable(live, table, "src")) continue
                     live.execSQL("DELETE FROM main.$table")
                     live.execSQL("INSERT INTO main.$table SELECT * FROM src.$table")
                 }
@@ -118,8 +126,8 @@ object DatabaseBackup {
     private fun notADatabase(from: File, e: SQLException) =
         IllegalArgumentException("This file is not a Yaris Doctor database: ${e.message ?: from.name}", e)
 
-    private fun hasTable(db: SQLiteDatabase, table: String): Boolean =
-        db.rawQuery("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", arrayOf(table)).use { it.moveToFirst() }
+    private fun hasTable(db: SQLiteDatabase, table: String, schema: String = "main"): Boolean =
+        db.rawQuery("SELECT 1 FROM $schema.sqlite_master WHERE type = 'table' AND name = ?", arrayOf(table)).use { it.moveToFirst() }
 
     private fun count(db: SQLiteDatabase, table: String): Int =
         db.rawQuery("SELECT COUNT(*) FROM $table", null).use { it.moveToFirst(); it.getInt(0) }

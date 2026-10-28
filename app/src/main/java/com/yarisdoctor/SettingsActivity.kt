@@ -31,10 +31,8 @@ import android.widget.ScrollView
 import android.widget.Switch
 import android.widget.Toast
 import com.yarisdoctor.Ui.Type
-import com.yarisdoctor.domain.health.OIL_CHANGE_KM
 import com.yarisdoctor.domain.model.Trip
 import java.io.File
-import java.text.DateFormat
 import java.text.SimpleDateFormat
 import java.util.Locale
 
@@ -48,7 +46,7 @@ class SettingsActivity : Activity() {
             setPadding(ui.px(20), 0, ui.px(20), ui.px(40))
             addView(ui.text(Type.DISPLAY_MD, R.color.ink, "Set up the dongle and your car.").apply { setPadding(0, ui.px(8), ui.px(24), ui.px(4)) })
             addView(section("Car"))
-            addView(group(
+            addView(ui.group(
                 row("Bluetooth dongle", Prefs.dongleName(context)?.let { "$it · ${Prefs.dongle(context)}" } ?: Prefs.dongle(context)) { pickDongle() },
                 row("Car's Bluetooth", Prefs.carBt(context)?.let { "${Prefs.carBtName(context) ?: it} · logging starts when it connects" }
                     ?: "Not set · pick the car's hands-free to start logging at ignition, even at home") { pickCarBt() },
@@ -63,10 +61,9 @@ class SettingsActivity : Activity() {
                 edgeLightRow(),
                 row("Units", unitsLabel()) { pickUnits() },
                 row("Model year", if (Prefs.model2015(context)) "2015 or later" else "2011-2014") { pickModelYear() },
-                oilRow(),
             ))
             addView(section("Home hub"))
-            addView(group(
+            addView(ui.group(
                 row("Driver name", Prefs.driver(context)) {
                     ask("Driver name", "Shown on the hub dashboard next to your trips", Prefs.driver(context)) {
                         if (it.isNotBlank()) Prefs.put(context, Prefs.DRIVER, it.trim().take(40))
@@ -98,14 +95,14 @@ class SettingsActivity : Activity() {
             ))
             addView(syncBlock(), LinearLayout.LayoutParams(-1, -2).apply { topMargin = ui.px(12) })
             addView(section("Your data"))
-            addView(group(
+            addView(ui.group(
                 row("Back up database", "Saves the whole log to Downloads as one file you can restore here") { backUp() },
-                row("Restore database", "Replaces every reading, regen and warning on this phone with a backup") { pickBackup() },
+                row("Restore database", "Replaces every reading, regen, warning and logbook entry on this phone with a backup") { pickBackup() },
                 row("Export database", "Saves the whole log to Downloads as one Markdown file an AI can read") { exportAll() },
                 row("Delete trips", "Pick drives to remove from this phone and the hub") { pickTrips() },
             ))
             addView(section("Developer"))
-            addView(group(
+            addView(ui.group(
                 toggle("Debug mode", "Simulated dongle with random data, for testing without the car. Nothing is saved, and it turns off when the app is closed or the phone restarts.", Prefs.debug) {
                     Prefs.debug = it
                     if (!it) container.dropDebug()
@@ -113,7 +110,7 @@ class SettingsActivity : Activity() {
                 },
             ))
             addView(section("About"))
-            addView(group(row("Version", packageManager.getPackageInfo(packageName, 0).versionName ?: "?")))
+            addView(ui.group(row("Version", packageManager.getPackageInfo(packageName, 0).versionName ?: "?")))
         }
         val back = ui.iconButton(R.drawable.ic_back, "Back") { finish() }
         val root = ui.column(ui.topBar("Settings", start = back)).apply {
@@ -202,7 +199,6 @@ class SettingsActivity : Activity() {
 
     override fun onResume() {
         super.onResume()
-        oil = null // the odometer and regen count move while the screen is away: read them again
         render() // the Live Updates row reflects a change made in system settings
     }
 
@@ -259,61 +255,6 @@ class SettingsActivity : Activity() {
             .show()
     }
 
-    /** The oil row's numbers: the GPS odometer and the regens started since the change, both database reads. */
-    private class Oil(val at: Long, val metres: Double, val regens: Int, val cutShort: Int)
-
-    /** Filled by [oilRow]'s background read; null until it returns, and cleared by [onResume] for fresh numbers. */
-    private var oil: Oil? = null
-
-    /**
-     * Records an oil change at today's date and the GPS odometer; the oil_change_due check counts from it. Unlike the
-     * other rows this one has to read the log, so its numbers arrive from a background thread.
-     */
-    private fun oilRow(): View {
-        val at = Prefs.long(this, Prefs.OIL_AT)
-        val cached = oil?.takeIf { it.at == at }
-        val sub = ui.text(Type.BODY_SM, R.color.muted, oilLabel(at, cached)).apply { setPadding(0, ui.px(2), 0, 0) }
-        if (at != 0L && cached == null) Thread {
-            val since = container.real.regens().filter { it.start >= at && it.end != null }
-            // Under 10 min, as regen_interrupted counts: each stopped burn's after injection still thins the oil
-            val fresh = Oil(at, container.real.odometer(), since.size, since.count { it.end!! - it.start < 10 * 60_000L })
-            runOnUiThread {
-                oil = fresh
-                if (!isFinishing) sub.text = oilLabel(at, fresh)
-            }
-        }.start()
-        return row("Oil changed", sub) {
-            val interval = Prefs.units(this).distanceFromKmText(OIL_CHANGE_KM.toDouble(), grouped = true)
-            AlertDialog.Builder(this)
-                .setTitle("Oil changed today?")
-                .setMessage("Counts distance and regens from now. Toyota changes the oil every $interval on this engine.")
-                .setPositiveButton("Record") { _, _ ->
-                    val now = System.currentTimeMillis()
-                    Thread {
-                        val odo = container.real.odometer().toLong() // off the main thread, like the row's numbers
-                        runOnUiThread {
-                            Prefs.put(this, Prefs.OIL_AT, now)
-                            Prefs.put(this, Prefs.OIL_ODO, odo)
-                            DpfService.restart(this) // closes an oil-change warning now
-                            render()
-                        }
-                    }.start()
-                }
-                .setNegativeButton("Cancel", null)
-                .show()
-        }
-    }
-
-    /** "26 Oct 2026 · 1,204 mi, 3 regens since (1 cut short)", or just the date while the background read is still running. */
-    private fun oilLabel(at: Long, oil: Oil?): String {
-        if (at == 0L) return "Never recorded · tap when the oil is changed"
-        val date = DateFormat.getDateInstance().format(at)
-        if (oil == null) return "$date · reading the log…"
-        val units = Prefs.units(this)
-        val short = if (oil.cutShort > 0) " (${oil.cutShort} cut short)" else ""
-        return "%s · %.0f %s, %s since%s".format(date, units.distance(oil.metres), units.distanceLabel, plural(oil.regens, "regen"), short)
-    }
-
     /** caption-uppercase label above a group. */
     private fun section(title: String) = ui.eyebrow(title).apply {
         setPadding(ui.px(4), ui.px(28), 0, ui.px(10))
@@ -356,21 +297,11 @@ class SettingsActivity : Activity() {
         }
     }
 
-    /** Rows in one hairline card (connector-tile style), separated by soft dividers. */
-    private fun group(vararg rows: View) = ui.column().apply {
-        background = ui.shape(R.color.surface_card, 20, R.color.hairline_soft)
-        clipToOutline = true
-        rows.forEachIndexed { i, r ->
-            if (i > 0) addView(ui.divider())
-            addView(r)
-        }
-    }
-
     /** 64dp-min row; [onClick] null makes it display-only. */
     private fun row(title: String, sub: String, end: View? = null, onClick: (() -> Unit)? = null) =
         row(title, ui.text(Type.BODY_SM, R.color.muted, sub).apply { setPadding(0, ui.px(2), 0, 0) }, end, onClick)
 
-    /** [row] with a subtitle the caller keeps, to fill once a background read returns (see [oilRow]). */
+    /** [row] with a subtitle view. */
     private fun row(title: String, sub: View, end: View? = null, onClick: (() -> Unit)? = null) = LinearLayout(this).apply {
         gravity = Gravity.CENTER_VERTICAL
         minimumHeight = ui.px(64)
@@ -638,7 +569,7 @@ class SettingsActivity : Activity() {
     private fun confirmRestore(file: File, name: String) {
         val dialog = AlertDialog.Builder(this)
             .setTitle("Restore $name?")
-            .setMessage("This replaces every reading, regen and warning on this phone. The hub is not changed.")
+            .setMessage("This replaces every reading, regen, warning and maintenance logbook entry on this phone. The hub is not changed.")
             .setPositiveButton("Restore") { _, _ -> restore(file) }
             .setNegativeButton("Cancel") { _, _ -> file.delete() }
             .show()
@@ -664,7 +595,6 @@ class SettingsActivity : Activity() {
                 file.delete()
             }
             runOnUiThread {
-                oil = null
                 DpfService.start(this) // stopped above, and a failed restore still needs logging back on
                 toast(result)
                 render()

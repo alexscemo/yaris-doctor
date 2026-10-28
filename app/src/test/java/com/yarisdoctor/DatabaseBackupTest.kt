@@ -5,6 +5,8 @@ import android.database.Cursor
 import android.database.sqlite.SQLiteDatabase
 import androidx.test.core.app.ApplicationProvider
 import com.yarisdoctor.domain.health.Finding
+import com.yarisdoctor.domain.maintenance.Job
+import com.yarisdoctor.domain.maintenance.OIL
 import java.io.File
 import org.json.JSONArray
 import org.junit.After
@@ -48,6 +50,7 @@ class DatabaseBackupTest {
             JSONArray().put(JSONArray().put("other").put(7).put(1_500).put(11).put(210).put(0).put(50.0)),
             JSONArray().put(JSONArray().put("other").put(7).put(1_500).put(1_900).put(11).put(9)),
         )
+        db.putJob(Job(0, 20_000, OIL, "5W-30", true, 145_000.0, 100.0, 15_000, 12))
     }
 
     @Test fun roundTripCopiesEveryTable() {
@@ -60,7 +63,7 @@ class DatabaseBackupTest {
                 DatabaseBackup.RestoreResult(readings = 3, regens = 1, frames = 2, warnings = 1),
                 DatabaseBackup.restore(fresh, snapshot),
             )
-            assertEquals("restore keeps the schema version", 6, fresh.readableDatabase.version)
+            assertEquals("restore keeps the schema version", 7, fresh.readableDatabase.version)
 
             assertEquals(listOf(1000L, 2000L, 3000L), fresh.rows("SELECT t FROM sample ORDER BY t") { it.getLong(0) })
             assertEquals(listOf(10, 30, 12), fresh.rows("SELECT soot FROM sample ORDER BY t") { it.getInt(0) })
@@ -76,6 +79,7 @@ class DatabaseBackupTest {
             // The peer tables came too, and Db's cached phone list was dropped so they are actually read again
             assertEquals(listOf("other"), fresh.rows("SELECT device FROM peer_sample") { it.getString(0) })
             assertEquals(listOf(1_500L), fresh.rows("SELECT start_t FROM peer_regen") { it.getLong(0) })
+            assertEquals(listOf(Job(1, 20_000, OIL, "5W-30", true, 145_000.0, 100.0, 15_000, 12)), fresh.jobs())
         } finally {
             fresh.close()
         }
@@ -101,6 +105,25 @@ class DatabaseBackupTest {
         }
     }
 
+    /** A backup made before the update (schema 6, no logbook) still restores, and the phone keeps its logbook. */
+    @Test fun aV6BackupRestoresAndKeepsTheLogbook() {
+        seed(live)
+        DatabaseBackup.export(live, snapshot)
+        SQLiteDatabase.openDatabase(snapshot.absolutePath, null, SQLiteDatabase.OPEN_READWRITE).use {
+            it.execSQL("DROP TABLE maintenance")
+            it.execSQL("PRAGMA user_version = 6")
+        }
+
+        val target = Db(context, null)
+        try {
+            target.putJob(Job(0, 30_000, "Brakes", "", true, null, null, null, 24))
+            assertEquals(3, DatabaseBackup.restore(target, snapshot).readings)
+            assertEquals(listOf("Brakes"), target.jobs().map { it.kind })
+        } finally {
+            target.close()
+        }
+    }
+
     @Test fun anEmptyDatabaseExportsAndRestores() {
         DatabaseBackup.export(live, snapshot)
         assertTrue(snapshot.length() > 0)
@@ -108,7 +131,7 @@ class DatabaseBackupTest {
         val fresh = Db(context, null)
         try {
             assertEquals(DatabaseBackup.RestoreResult(0, 0, 0, 0), DatabaseBackup.restore(fresh, snapshot))
-            assertEquals(6, fresh.readableDatabase.version)
+            assertEquals(7, fresh.readableDatabase.version)
         } finally {
             fresh.close()
         }

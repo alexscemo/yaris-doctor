@@ -191,12 +191,6 @@ class ChecksTest {
         assertTrue("regen_flag_check" !in run(true, 4) { none })
     }
 
-    @Test fun oilChangeDueAt15000Km() {
-        assertEquals(null, oilDue(null)) // never recorded: no warning
-        assertEquals(null, oilDue(14_999_000.0))
-        assertEquals("oil_change_due", oilDue(15_200_000.0)?.key)
-    }
-
     @Test fun ecuOverfillFlagWarns() {
         val c = Checker()
         val overfill = replies(Triple("E6", 3, 0x41 or 0x20)) // bit 26 = 0x20 of payload byte 3

@@ -179,6 +179,28 @@ class DbTest {
         assertEquals(16, db.count("SELECT COUNT(*) FROM frame"))
     }
 
+    @Test fun thinFramesKeepsWhatTheHubHasNotReceived() {
+        val db = db()
+        Prefs.put(ctx, Prefs.THINNED_TO, 0L)
+        Prefs.put(ctx, Prefs.THINNED_HOURLY_TO, 0L)
+        Prefs.put(ctx, Prefs.SERVER, "http://192.168.1.50:8765")
+        val sent = (B - 30 * DAY) / MIN * MIN
+        val notSent = (B - 20 * DAY) / MIN * MIN
+        for (i in 0 until 5) db.frame(sent + i * 10_000, "0C") // rowids 1-5, on the hub
+        for (i in 0 until 5) db.frame(notSent + i * 10_000, "0C") // rowids 6-10, not yet
+        Prefs.put(ctx, Prefs.SYNCED_FRAME_ROWID, 5L)
+
+        db.thinFrames(B)
+        assertEquals(1, db.count("SELECT COUNT(*) FROM frame WHERE t < ?", arrayOf(notSent.toString())))
+        assertEquals(5, db.count("SELECT COUNT(*) FROM frame WHERE t >= ?", arrayOf(notSent.toString())))
+
+        // Once the hub has them, the next pass thins them too
+        Prefs.put(ctx, Prefs.SYNCED_FRAME_ROWID, 10L)
+        db.thinFrames(B)
+        assertEquals(2, db.count("SELECT COUNT(*) FROM frame"))
+        Prefs.put(ctx, Prefs.SERVER, "")
+    }
+
     @Test fun putPeersIgnoresFutureDatedRows() {
         val db = db()
         val future = System.currentTimeMillis() + DAY

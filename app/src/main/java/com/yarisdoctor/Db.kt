@@ -322,24 +322,32 @@ class Db internal constructor(private val ctx: Context, name: String?) : SQLiteO
     /**
      * Tiered frame retention for the real log: the last [RECENT_MS] is untouched, 7-90 days keep one frame per [lid] per
      * minute, and anything older one per hour. Each pass starts where the previous one stopped (Prefs.THINNED_TO and
-     * Prefs.THINNED_HOURLY_TO), so only new rows are looked at and a second run deletes nothing.
+     * Prefs.THINNED_HOURLY_TO), so only new rows are looked at and a second run deletes nothing. With a hub set, nothing from
+     * the oldest frame it hasn't received on is thinned: the hub is the full-detail backup, so every frame has to reach it.
      */
     fun thinFrames(now: Long) {
+        val unsynced = if (Prefs.server(ctx).isBlank()) null else oldestUnsyncedFrame(Prefs.long(ctx, Prefs.SYNCED_FRAME_ROWID))
+        val keepFrom = unsynced ?: now
         // 7-90 days: one per lid per minute. From at most 90 days back, so older rows go straight to the hourly pass
-        val minuteTo = now - RECENT_MS
+        val minuteTo = minOf(now - RECENT_MS, keepFrom)
         val minuteFrom = maxOf(Prefs.long(ctx, Prefs.THINNED_TO), now - HOURLY_AFTER_MS)
         if (minuteTo - minuteFrom >= TRIM_STEP_MS) {
             thin(minuteFrom, minuteTo, BUCKET_MINUTE_MS)
             Prefs.put(ctx, Prefs.THINNED_TO, minuteTo)
         }
         // Older than 90 days: one per lid per hour
-        val hourTo = now - HOURLY_AFTER_MS
+        val hourTo = minOf(now - HOURLY_AFTER_MS, keepFrom)
         val hourFrom = Prefs.long(ctx, Prefs.THINNED_HOURLY_TO)
         if (hourTo - hourFrom >= TRIM_STEP_MS) {
             thin(hourFrom, hourTo, BUCKET_HOUR_MS)
             Prefs.put(ctx, Prefs.THINNED_HOURLY_TO, hourTo)
         }
     }
+
+    /** Time of the first frame after the hub's cursor [rowid], with the same lid filter as [framesAfter]; null when all are sent. */
+    private fun oldestUnsyncedFrame(rowid: Long): Long? =
+        readableDatabase.rawQuery("SELECT t FROM frame WHERE rowid > ? AND length(lid) = 2 ORDER BY rowid LIMIT 1", arrayOf(rowid.toString()))
+            .use { if (it.moveToFirst()) it.getLong(0) else null }
 
     /** Deletes every frame in [[from], [to]) but the lowest rowid of each [lid] per [bucketMs]. */
     private fun thin(from: Long, to: Long, bucketMs: Long) = writableDatabase.execSQL(

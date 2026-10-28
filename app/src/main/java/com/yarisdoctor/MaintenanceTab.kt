@@ -4,6 +4,7 @@ import android.app.AlertDialog
 import android.app.DatePickerDialog
 import android.content.DialogInterface
 import android.text.InputType
+import android.text.method.DigitsKeyListener
 import android.view.Gravity
 import android.view.View
 import android.widget.EditText
@@ -14,6 +15,7 @@ import androidx.activity.ComponentActivity
 import androidx.lifecycle.lifecycleScope
 import com.yarisdoctor.Ui.Type
 import com.yarisdoctor.domain.maintenance.Due
+import com.yarisdoctor.domain.maintenance.Fill
 import com.yarisdoctor.domain.maintenance.Job
 import com.yarisdoctor.domain.maintenance.KINDS
 import com.yarisdoctor.domain.maintenance.MILEAGE
@@ -22,10 +24,13 @@ import com.yarisdoctor.domain.maintenance.OIL
 import com.yarisdoctor.domain.maintenance.OTHER
 import com.yarisdoctor.domain.maintenance.anchor
 import com.yarisdoctor.domain.maintenance.carKm
+import com.yarisdoctor.domain.maintenance.decimal
 import com.yarisdoctor.domain.maintenance.defaultEveryKm
+import com.yarisdoctor.domain.maintenance.spending
 import com.yarisdoctor.domain.maintenance.title
 import com.yarisdoctor.domain.maintenance.upcoming
 import com.yarisdoctor.domain.model.Units
+import java.text.NumberFormat
 import java.time.LocalDate
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -43,7 +48,7 @@ import kotlinx.coroutines.withContext
 class MaintenanceTab(private val a: ComponentActivity, private val ui: Ui) {
 
     /** One load: the logbook, this phone's GPS odometer, and the regens since the newest oil change (all, cut short). */
-    private class State(val jobs: List<Job>, val odoM: Double, val today: Long, val oilRegens: Pair<Int, Int>?)
+    private class State(val jobs: List<Job>, val odoM: Double, val today: Long, val oilRegens: Pair<Int, Int>?, val fills: List<Fill>)
 
     private var state: State? = null
     private val body = ui.column()
@@ -68,7 +73,7 @@ class MaintenanceTab(private val a: ComponentActivity, private val ui: Ui) {
                     // Under 10 min, as regen_interrupted counts: each stopped burn's after injection still thins the oil
                     since.size to since.count { it.end!! - it.start < 10 * 60_000L }
                 }
-                State(jobs, db.odometer(), LocalDate.now().toEpochDay(), regens)
+                State(jobs, db.odometer(), LocalDate.now().toEpochDay(), regens, db.fills())
             }
             state = s
             render(s)
@@ -79,6 +84,8 @@ class MaintenanceTab(private val a: ComponentActivity, private val ui: Ui) {
         body.removeAllViews()
         val units = Prefs.units(a)
         body.addView(mileageCard(s, units))
+
+        fuel(s)
 
         body.addView(section("Coming up"))
         val due = upcoming(s.jobs, s.odoM, s.today)
@@ -117,6 +124,133 @@ class MaintenanceTab(private val a: ComponentActivity, private val ui: Ui) {
             }, LinearLayout.LayoutParams(-2, -2).apply { topMargin = ui.px(16) })
         }
     }
+
+    /** Fuel: what was spent this month and year, the average price per litre, and the newest fill-ups. */
+    private fun fuel(s: State) {
+        body.addView(LinearLayout(a).apply {
+            gravity = Gravity.CENTER_VERTICAL
+            addView(ui.eyebrow("Fuel").apply { setPadding(ui.px(4), 0, 0, 0) }, LinearLayout.LayoutParams(0, -2, 1f))
+            addView(button("+ Add fill-up") { addFill() })
+        }, LinearLayout.LayoutParams(-1, -2).apply { topMargin = ui.px(28); bottomMargin = ui.px(10) })
+        if (s.fills.isEmpty()) {
+            body.addView(ui.text(Type.BODY_SM, R.color.muted, "No fill-ups yet. Log each one with the litres and what you paid to see your spending."))
+            return
+        }
+        val sp = spending(s.fills, s.today)
+        val summary = listOf(
+            info("${money(sp.monthCents)} this month", "${money(sp.yearCents)} this year · ${money(sp.totalCents)} in all"),
+            info("${perLitre(sp.perLitreCents!!)} per litre on average", "%.1f L over ${plural(s.fills.size, "fill-up")}".format(sp.litres)),
+        )
+        val list = s.fills.take(FILLS_SHOWN).map { f ->
+            row(date(f.day), listOf("%.2f L · ${money(f.cents)} · ${perLitre(f.cents / f.litres)}/L".format(f.litres))) { editFill(f) }
+        }
+        body.addView(ui.group(*(summary + list).toTypedArray()))
+    }
+
+    /** A summary line: laid out like a [row], but not a button. */
+    private fun info(title: String, line: String) = ui.column(
+        ui.text(Type.TITLE_SM, R.color.ink, title),
+        ui.text(Type.BODY_SM, R.color.muted, line).apply { setPadding(0, ui.px(2), 0, 0) },
+    ).apply { setPadding(ui.px(20), ui.px(14), ui.px(20), ui.px(14)) }
+
+    /** A new fill-up, today: from the Fuel section or the Overview's fuel tile. */
+    fun addFill() = editFill(Fill(0, LocalDate.now().toEpochDay(), 0.0, 0, null))
+
+    /** Adds ([f] with id 0) or edits a fill-up: its day (up to today), the litres and the total paid, decimals with either separator. */
+    private fun editFill(f: Fill) {
+        val today = LocalDate.now().toEpochDay()
+        var day = f.day
+        fun decimalField(value: String?, hint: String) = EditText(a).apply {
+            inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL
+            // Some keyboards (French ones) type a comma: let it through, decimal() reads both
+            keyListener = DigitsKeyListener.getInstance("0123456789.,")
+            setRawInputType(InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL) // the key listener set its own type: the number pad back
+            setText(value.orEmpty())
+            this.hint = hint
+            setSingleLine()
+        }
+        val litres = decimalField(f.litres.takeIf { it > 0 }?.let { "%.2f".format(it) }, "e.g. 38.5")
+        val paid = decimalField(f.cents.takeIf { it > 0 }?.let { "%.2f".format(it / 100.0) }, "e.g. 64.90")
+        val dateText = ui.text(Type.TITLE_SM, R.color.ink, date(day))
+        val dateRow = LinearLayout(a).apply {
+            gravity = Gravity.CENTER_VERTICAL
+            minimumHeight = ui.px(48)
+            background = ui.shape(R.color.surface_alt, 12)
+            setPadding(ui.px(16), 0, ui.px(16), 0)
+            addView(dateText, LinearLayout.LayoutParams(0, -2, 1f))
+            addView(ui.text(Type.CAPTION, R.color.primary, "Change"))
+            contentDescription = "Date: ${dateText.text}. Change"
+            ui.ripple(this)
+        }
+        dateRow.setOnClickListener {
+            pickDate(day, today, false) { d ->
+                day = d!!
+                dateText.text = date(day)
+                dateRow.contentDescription = "Date: ${dateText.text}. Change"
+            }
+        }
+        // Labelled above, not only by the hint: the hint goes once a number is typed
+        fun labelled(label: String, f: EditText) = ui.column(ui.eyebrow(label).apply {
+            setPadding(0, ui.px(20), 0, 0)
+            f.id = View.generateViewId()
+            labelFor = f.id
+        }, f)
+        val currency = NumberFormat.getCurrencyInstance().currency?.symbol ?: "total"
+        val box = ui.column(
+            ui.eyebrow("Date").apply { setPadding(0, 0, 0, ui.px(8)) },
+            dateRow,
+            labelled("Litres", litres),
+            labelled("Paid, $currency", paid),
+        ).apply { setPadding(ui.px(24), ui.px(8), ui.px(24), 0) }
+        val dialog = AlertDialog.Builder(a)
+            .setTitle("Fill-up")
+            .setView(ScrollView(a).apply { addView(box) })
+            .setPositiveButton("Save", null)
+            .setNegativeButton("Cancel", null)
+            .apply { if (f.id != 0L) setNeutralButton("Delete", null) }
+            .show()
+        // Set after show(): a listener given to the builder would close the dialog on bad input too
+        dialog.getButton(DialogInterface.BUTTON_POSITIVE).setOnClickListener {
+            val l = decimal(litres.text.toString())?.takeIf { it <= 200 } ?: return@setOnClickListener toast("Litres: a number up to 200")
+            val p = decimal(paid.text.toString())?.takeIf { it <= 10_000 } ?: return@setOnClickListener toast("Paid: the total, e.g. 64.90")
+            dialog.dismiss()
+            saveFill { db ->
+                // The GPS odometer only means something on the day it was read: kept for an unmoved line, read now for today
+                val odoM = if (f.id != 0L && f.day == day) f.odoM else if (day == LocalDate.now().toEpochDay()) db.odometer() else null
+                db.putFill(Fill(f.id, day, l, (p * 100).roundToLong(), odoM))
+            }
+        }
+        if (f.id != 0L) dialog.getButton(DialogInterface.BUTTON_NEUTRAL).apply {
+            setTextColor(ui.color(R.color.status_crit))
+            setOnClickListener {
+                val confirm = AlertDialog.Builder(a)
+                    .setTitle("Delete this fill-up?")
+                    .setMessage("${date(f.day)} · ${money(f.cents)}. This can't be undone.")
+                    .setPositiveButton("Delete") { _, _ ->
+                        dialog.dismiss()
+                        saveFill { it.deleteFill(f.id) }
+                    }
+                    .setNegativeButton("Cancel", null)
+                    .show()
+                confirm.getButton(DialogInterface.BUTTON_POSITIVE).setTextColor(ui.color(R.color.status_crit))
+            }
+        }
+    }
+
+    /** Fill-ups raise no warning, so unlike [save] this doesn't restart the service. */
+    private fun saveFill(write: (Db) -> Unit) {
+        a.lifecycleScope.launch {
+            withContext(Dispatchers.IO) { write(a.container.real) }
+            load()
+        }
+    }
+
+    /** In the phone's currency and format, e.g. "64,90 €". */
+    private fun money(cents: Long): String = NumberFormat.getCurrencyInstance().format(cents / 100.0)
+
+    /** Pump prices have three decimals: "1,749 €". */
+    private fun perLitre(cents: Double): String =
+        NumberFormat.getCurrencyInstance().apply { minimumFractionDigits = 3; maximumFractionDigits = 3 }.format(cents / 100.0)
 
     /** "in 2,300 km · at 147,500 km · by 3 Mar 2027" over when it was last done; a warning dot when overdue. */
     private fun dueRow(d: Due, s: State, units: Units): View {
@@ -364,4 +498,8 @@ class MaintenanceTab(private val a: ComponentActivity, private val ui: Ui) {
     private fun date(day: Long): String = DateTimeFormatter.ofLocalizedDate(FormatStyle.MEDIUM).format(LocalDate.ofEpochDay(day))
     private fun plural(n: Int, what: String) = "%,d $what${if (n == 1) "" else "s"}".format(n)
     private fun toast(s: String) = Toast.makeText(a, s, Toast.LENGTH_LONG).show()
+
+    private companion object {
+        const val FILLS_SHOWN = 10
+    }
 }

@@ -43,6 +43,7 @@ class AiExportTest {
         private val links: List<AiExport.LinkRow> = emptyList(),
         private val ash: List<AiExport.AshRow> = emptyList(),
         private val cals: List<AiExport.CalRow> = emptyList(),
+        private val probes: List<AiExport.ProbeRow> = emptyList(),
     ) : AiExport.Source {
         override fun trips(emit: (AiExport.TripRow) -> Unit) = trips.forEach(emit)
         override fun regens(emit: (AiExport.RegenRow) -> Unit) = regens.forEach(emit)
@@ -54,6 +55,7 @@ class AiExportTest {
         override fun links(emit: (AiExport.LinkRow) -> Unit) = links.forEach(emit)
         override fun ash(emit: (AiExport.AshRow) -> Unit) = ash.forEach(emit)
         override fun calIds(emit: (AiExport.CalRow) -> Unit) = cals.forEach(emit)
+        override fun odoProbes(emit: (AiExport.ProbeRow) -> Unit) = probes.forEach(emit)
     }
 
     private fun fullSource() = Source(
@@ -83,6 +85,7 @@ class AiExportTest {
             AiExport.AshRow(start + 60_000, "BAD", null, null, null, false),
         ),
         cals = listOf(AiExport.CalRow(start, "0130303030303030303030303030303030", "00000000000000")),
+        probes = listOf(AiExport.ProbeRow(start, "ODO:611", "6110000A1B2C 6110000A1B2D")),
     )
 
     private fun render(meta: AiExport.Meta = meta(), source: AiExport.Source = fullSource()): String =
@@ -135,7 +138,11 @@ class AiExportTest {
         assertTrue(md.contains("_No link timings logged._"))
         assertTrue(md.contains("_No ash record reads logged._"))
         assertTrue(md.contains("_No calibration ID recorded._"))
+        assertTrue(md.contains("_No odometer probe run._"))
     }
+
+    @Test fun `odometer probe answers are listed raw`() =
+        assertTrue(render().contains("2026-09-01T10:00:00+02:00,ODO:611,6110000A1B2C 6110000A1B2D\n"))
 
     @Test fun `summary survives no readings`() {
         val md = render(meta(samples = 0, peers = 0, trips = 0, regens = 0, alerts = 0, frames = 0, links = 0, first = null, last = null), Source())

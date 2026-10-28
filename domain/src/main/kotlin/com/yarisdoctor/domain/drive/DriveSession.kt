@@ -22,6 +22,18 @@ interface ObdLink {
 
     /** The cleaned reply, or null on timeout / ELM error. Throws IOException when the link drops. */
     fun send(cmd: String, timeoutMs: Long = 2000): String?
+
+    /** ELM `AT MA` for [ms]: the raw bus lines it printed, then stopped and back at the prompt. Throws IOException when the link drops. */
+    fun monitor(ms: Long): List<String> = emptyList()
+}
+
+/** The meter reads only the real drive makes; tests and Debug mode leave them out. */
+interface MeterHooks {
+    /** Armed in Settings: run the odometer probe once, in the next drive. */
+    fun probeArmed(): Boolean
+
+    /** The probe ran at [t]: store [results] and disarm. */
+    fun probed(t: Long, results: Map<String, String>)
 }
 
 /** What the drive shows outside the database: the service's notifications, its edge light and the screens' live reading. */
@@ -62,6 +74,8 @@ class DriveSession(
     private val maintenance: () -> Finding?,
     private val now: () -> Long = System::currentTimeMillis,
     private val sleep: (Long) -> Unit = Thread::sleep,
+    /** Fuel level every [Meter.FUEL_MS] and the odometer probe; null = engine only. */
+    private val meterHooks: MeterHooks? = null,
 ) {
     /** GPS distance on this phone, metres. */
     @Volatile var odoM = 0.0
@@ -111,6 +125,9 @@ class DriveSession(
      */
     fun drive(link: ObdLink, running: () -> Boolean) {
         val poller = Poller { link.send(it) }
+        val meter = Meter(link)
+        var fuelAt = Long.MIN_VALUE / 2
+        var fuelMisses = 0
         var fails = 0
         var seen = false
         var lastSample = 0L
@@ -142,6 +159,16 @@ class DriveSession(
                 // After the row writes, so a screen that reads the database sees this same cycle; every cycle, so the
                 // Overview and All data follow the car rather than the log's 5 s pace
                 effects.live(t, soot, temp, regen ?: rec.inRegen)
+                // Not during a regen: its 1 s log must not stall for the meter (the probe takes ~30 s)
+                if (meterHooks != null && !rec.inRegen) {
+                    // A meter that never answers while the engine does doesn't have it: stop asking for this session
+                    if (fuelMisses < 3 && t - fuelAt >= Meter.FUEL_MS) {
+                        fuelAt = t
+                        val r = meter.fuel()
+                        if (r == null) fuelMisses++ else { fuelMisses = 0; store.frames(t, mapOf(Meter.FUEL to r)) }
+                    }
+                    if (meterHooks.probeArmed()) meterHooks.probed(t, meter.probe())
+                }
                 // No pause: the next cycle starts at once, so the pace is set by how fast this dongle answers, regen or not
             }
         } finally {
@@ -162,7 +189,7 @@ class DriveSession(
                 publish(rec, r.soot, r.temp, r.regen)
                 val t = now()
                 val frames = sim.frames(r)
-                store.frames(t, frames)
+                store.frames(t, frames + (Meter.FUEL to sim.fuel())) // the checker gets only the engine's
                 checks(t, checker.check(t, frames, rec.inRegen))
                 effects.live(t, r.soot, r.temp, r.regen)
                 // The debug Db lives in RAM: keep 30 min at full rate, older frames one per minute, or a day of it runs out of memory

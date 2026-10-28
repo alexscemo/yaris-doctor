@@ -40,6 +40,8 @@ object Prefs {
     /** The oil change older builds recorded in Settings (time, GPS odometer); Db's v7 upgrade moves it into the logbook. */
     const val OIL_AT = "oil_at"
     const val OIL_ODO = "oil_odo"
+    /** Armed in Settings: the next drive runs the odometer probe once (Meter.probe), then clears it. */
+    const val ODO_PROBE = "odo_probe"
     private const val DEVICE_ID = "device_id"
 
     // DPFViewer's dongle, kept as the default so existing installs keep connecting

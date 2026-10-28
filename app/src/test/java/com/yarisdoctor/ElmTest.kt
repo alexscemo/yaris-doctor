@@ -34,4 +34,20 @@ class ElmTest {
         assertEquals(0, elm.timings.getValue("2110").ok)
         assertTrue(elm.timings.keys.none { it.startsWith("AT") })
     }
+
+    @Test fun monitorStopsTheElmAndReadsToItsPrompt() {
+        val dongle = PipedOutputStream()
+        val sent = ByteArrayOutputStream()
+        val elm = Elm(PipedInputStream(dongle), sent)
+        Thread {
+            Thread.sleep(30); dongle.write("611 00 12 34\r611 00 12 35\r".toByteArray()); dongle.flush()
+            // The stop byte arrives after the listen window; the ELM answers it with STOPPED and its prompt
+            while (!sent.toString().endsWith("AT MA\r\r")) Thread.sleep(5)
+            dongle.write("STOPPED\r\r>".toByteArray()); dongle.flush()
+            while (!sent.toString().endsWith("AT H0\r")) Thread.sleep(5)
+            dongle.write("OK\r\r>".toByteArray()); dongle.flush()
+        }.start()
+        assertEquals(listOf("611 00 12 34", "611 00 12 35", "STOPPED"), elm.monitor(200))
+        assertEquals("OK", elm.send("AT H0")) // the monitor's prompt was used up, not left for this
+    }
 }

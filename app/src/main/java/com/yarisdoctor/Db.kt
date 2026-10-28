@@ -8,6 +8,10 @@ import android.database.sqlite.SQLiteOpenHelper
 import com.yarisdoctor.domain.car.PIDS
 import com.yarisdoctor.domain.car.PID_IDLE
 import com.yarisdoctor.domain.car.PID_LENGTHS
+import com.yarisdoctor.domain.drive.CONSUMPTION_MS
+import com.yarisdoctor.domain.drive.Consumption
+import com.yarisdoctor.domain.drive.Meter
+import com.yarisdoctor.domain.drive.consumption
 import com.yarisdoctor.domain.drive.Poller
 import com.yarisdoctor.domain.drive.mergeRegens
 import com.yarisdoctor.domain.drive.mergeSameBurn
@@ -18,6 +22,7 @@ import com.yarisdoctor.domain.health.diffAlerts
 import com.yarisdoctor.domain.health.dpfConditions
 import com.yarisdoctor.domain.health.OIL_CHANGE_KM
 import com.yarisdoctor.domain.health.restriction
+import com.yarisdoctor.domain.maintenance.Fill
 import com.yarisdoctor.domain.maintenance.Job
 import com.yarisdoctor.domain.maintenance.OIL
 import com.yarisdoctor.domain.model.Alert
@@ -30,11 +35,12 @@ import com.yarisdoctor.domain.model.TripStats
 import com.yarisdoctor.domain.repo.DriveStore
 import java.time.Instant
 import java.time.ZoneId
+import java.util.Locale
 import org.json.JSONArray
 import org.json.JSONObject
 
 /** [name] null = in-memory database (Debug mode), gone when closed. Created by [AppContainer]: one per database per process. */
-class Db internal constructor(private val ctx: Context, name: String?) : SQLiteOpenHelper(ctx, name, null, 7), DriveStore {
+class Db internal constructor(private val ctx: Context, name: String?) : SQLiteOpenHelper(ctx, name, null, 8), DriveStore {
 
     override fun onCreate(db: SQLiteDatabase) {
         // odo_m: GPS distance accumulated by this app (metres), our stand-in for the odometer
@@ -46,6 +52,7 @@ class Db internal constructor(private val ctx: Context, name: String?) : SQLiteO
         createAlerts(db)
         createLink(db)
         createMaintenance(db)
+        createFuel(db)
     }
 
     override fun onUpgrade(db: SQLiteDatabase, old: Int, new: Int) {
@@ -64,7 +71,29 @@ class Db internal constructor(private val ctx: Context, name: String?) : SQLiteO
             createMaintenance(db)
             migrateOil(db)
         }
+        // v8: fill-ups
+        if (old < 8) createFuel(db)
     }
+
+    /** Fill-ups ([Fill]): day is an epoch day, cents what was paid, odo_m this phone's GPS odometer when logged that day. */
+    private fun createFuel(db: SQLiteDatabase) =
+        db.execSQL("CREATE TABLE fuel(id INTEGER PRIMARY KEY, day INTEGER, litres REAL, cents INTEGER, odo_m REAL)")
+
+    /** Every fill-up, newest first. */
+    fun fills(): List<Fill> = readableDatabase.rawQuery("SELECT id, day, litres, cents, odo_m FROM fuel ORDER BY day DESC, id DESC", null).use {
+        val out = ArrayList<Fill>()
+        while (it.moveToNext()) out += Fill(it.getLong(0), it.getLong(1), it.getDouble(2), it.getLong(3), if (it.isNull(4)) null else it.getDouble(4))
+        out
+    }
+
+    /** Inserts [f] when its id is 0, else replaces that fill-up. */
+    fun putFill(f: Fill) {
+        val v = ContentValues().apply { put("day", f.day); put("litres", f.litres); put("cents", f.cents); put("odo_m", f.odoM) }
+        if (f.id == 0L) writableDatabase.insert("fuel", null, v)
+        else writableDatabase.update("fuel", v, "id = ?", arrayOf(f.id.toString()))
+    }
+
+    fun deleteFill(id: Long) = writableDatabase.delete("fuel", "id = ?", arrayOf(id.toString()))
 
     /** The logbook ([Job]): day is an epoch day, km the car's odometer, odo_m this phone's GPS odometer when logged. */
     private fun createMaintenance(db: SQLiteDatabase) =
@@ -173,13 +202,14 @@ class Db internal constructor(private val ctx: Context, name: String?) : SQLiteO
 
     /**
      * [replies]: request code → cleaned reply, as Poller.cycle returns them; codes outside the table aren't stored, except the
-     * ash record and the calibration ID, kept under their whole codes ("A918", "0904") so they can't clash with a `21` lid.
+     * ash record, the calibration ID and the meter's fuel level, kept under their whole codes ("A918", "0904", "M29") so they
+     * can't clash with a `21` lid.
      */
     override fun frames(t: Long, replies: Map<String, String>) = tx { db ->
         for ((code, reply) in replies) {
             val lid = when (code) {
                 in PID_LENGTHS -> code.substring(2)
-                Poller.ASH_RECORD, Poller.CAL_ID -> code
+                Poller.ASH_RECORD, Poller.CAL_ID, Meter.FUEL -> code
                 else -> continue
             }
             db.insert("frame", null, ContentValues().apply { put("t", t); put("lid", lid); put("hex", reply.substring(4)) })
@@ -192,6 +222,27 @@ class Db internal constructor(private val ctx: Context, name: String?) : SQLiteO
             if (it.moveToFirst()) lid to (it.getLong(0) to it.getString(1)) else null
         }
     }.toMap()
+
+    /** The odometer probe's answers ([Meter.probe]), stored whole under their own lids with the logbook mileage at the time. */
+    fun odoProbe(t: Long, results: Map<String, String>, carKm: Double?) = tx { db ->
+        for ((what, raw) in results + ("${Meter.PROBE}:KM" to (carKm?.let { "%.1f".format(Locale.ROOT, it) } ?: ""))) {
+            db.insert("frame", null, ContentValues().apply { put("t", t); put("lid", what); put("hex", raw) })
+        }
+    }
+
+    /** Every odometer probe answer, as (time, what was asked, raw answer), oldest first. */
+    fun odoProbes(): List<Triple<Long, String, String>> =
+        readableDatabase.rawQuery("SELECT t, lid, hex FROM frame WHERE lid LIKE '${Meter.PROBE}:%' ORDER BY t, rowid", null).use {
+            val out = ArrayList<Triple<Long, String, String>>()
+            while (it.moveToNext()) out += Triple(it.getLong(0), it.getString(1), it.getString(2))
+            out
+        }
+
+    /** The newest fuel level read and when, in litres, or null if the meter never answered. */
+    fun fuelLevel(): Pair<Long, Double>? =
+        readableDatabase.rawQuery("SELECT t, hex FROM frame WHERE lid = ? ORDER BY t DESC LIMIT 1", arrayOf(Meter.FUEL)).use {
+            if (it.moveToFirst()) Meter.litres(it.getString(1))?.let { l -> it.getLong(0) to l } else null
+        }
 
     /** Newest ash record read (13 bytes after `E9 18`) and when, or null if this ECU never answered it. */
     fun ashRecord(): Pair<Long, String>? =
@@ -283,6 +334,20 @@ class Db internal constructor(private val ctx: Context, name: String?) : SQLiteO
             if (v != null) out += v
         }
         out
+    }
+
+    /** [consumption] over the last [CONSUMPTION_MS] of readings, up to the newest cycle that read injection volume, rpm and speed together. */
+    fun consumption(): Consumption? = readableDatabase.rawQuery(
+        "SELECT a.hex, c.hex, s.hex FROM frame a " +
+            "JOIN frame c ON c.t = a.t AND c.lid = '0C' JOIN frame s ON s.t = a.t AND s.lid = '0D' " +
+            "WHERE a.lid = 'AD' AND a.t >= (SELECT MAX(t) FROM frame WHERE lid = 'AD') - ?",
+        arrayOf(CONSUMPTION_MS.toString()),
+    ).use {
+        val inj = pid("Injection Volume"); val rpm = pid("Engine Speed"); val kmh = pid("Vehicle Speed")
+        val out = ArrayList<Triple<Double, Double, Double>>()
+        while (it.moveToNext()) out += Triple(inj.decode(it.getString(0)) ?: continue, rpm.decode(it.getString(1)) ?: continue,
+            kmh.decode(it.getString(2)) ?: continue)
+        consumption(out)
     }
 
     /** [DpfCondition] for this phone's finished regens, oldest first (see [dpfConditions] in the domain). */

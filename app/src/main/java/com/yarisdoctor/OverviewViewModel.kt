@@ -2,6 +2,7 @@ package com.yarisdoctor
 
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
+import com.yarisdoctor.domain.drive.Consumption
 import com.yarisdoctor.domain.health.DpfCondition
 import com.yarisdoctor.domain.model.Alert
 import com.yarisdoctor.domain.model.FLOOR_AFTER_MS
@@ -25,6 +26,10 @@ class OverviewState(
     val dpf: DpfCard,
     /** The newest regens with floor and peak, newest first; the same instance until the list changes. */
     val history: List<Regen>,
+    /** The meter's newest fuel level read (time, litres), or null if it never answered. */
+    val fuel: Pair<Long, Double>?,
+    /** Fuel use over the last few minutes of readings (see [Db.consumption]). */
+    val consumption: Consumption?,
 )
 
 /** The DPF condition card: conditions with a base, the newest ash record read and where it changed. */
@@ -74,7 +79,7 @@ class OverviewViewModel(app: Application) : AndroidViewModel(app) {
             val live = Live.reading.value?.takeIf { it.debug == Prefs.debug }?.sample
                 ?.takeIf { now - it.t <= Live.LIVE_MS }
             val last = if (live != null && (logged == null || live.t > logged.t)) live else logged
-            OverviewState(now, last, regens, rc.metresSinceRegen, rc.sootSeries, db.alerts(now), card, signs)
+            OverviewState(now, last, regens, rc.metresSinceRegen, rc.sootSeries, db.alerts(now), card, signs, db.fuelLevel(), db.consumption())
         }
     }
 

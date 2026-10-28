@@ -90,6 +90,24 @@ class DriveSessionTest {
         assertFalse(Poller.CAL_ID in link.sent)
     }
 
+    @Test fun theMeterIsReadForFuelAndTheArmedProbeRunsOnce() {
+        val probes = mutableListOf<Map<String, String>>()
+        var armed = true
+        val hooks = object : MeterHooks {
+            override fun probeArmed() = armed
+            override fun probed(t: Long, results: Map<String, String>) { probes += results; armed = false }
+        }
+        val meter = DriveSession(store, effects, model2015 = false, maintenance = { null }, now = { t }, sleep = { t += it }, meterHooks = hooks)
+        // AT commands answer OK; the fake has one ECU, so "2129" stands in for the meter's reply
+        val link = ScriptLink { if (it < 20_000) car() + mapOf("AT S" to "OK", "AT C" to "OK", "2129" to "61295A") else null }
+        meter.drive(link) { true }
+        assertEquals(1, probes.size)
+        assertEquals("ODO:7E0:2128", probes[0].keys.first())
+        assertEquals(4, link.inits) // the probe resets the dongle after its listen, then each of the 3 dead cycles at the end
+        assertTrue(Meter.FUEL in store.lids)
+        assertEquals(1, link.sent.count { it == "2129" }) // once a minute, and the drive lasted 20 s
+    }
+
     @Test fun aQuickProbeOfASilentEcuEndsAfterOneDeadCycle() {
         val link = ScriptLink { null }
         session.drive(link) { true }

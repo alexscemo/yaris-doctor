@@ -29,11 +29,13 @@ import android.os.SystemClock
 import android.util.Log
 import com.yarisdoctor.domain.drive.DriveEffects
 import com.yarisdoctor.domain.drive.DriveSession
+import com.yarisdoctor.domain.drive.MeterHooks
 import com.yarisdoctor.domain.drive.Sim
 import com.yarisdoctor.domain.drive.burnPercent
 import com.yarisdoctor.domain.health.CRIT
 import com.yarisdoctor.domain.health.Finding
 import com.yarisdoctor.domain.health.tripSummary
+import com.yarisdoctor.domain.maintenance.carKm
 import com.yarisdoctor.domain.maintenance.maintenanceDue
 import com.yarisdoctor.domain.maintenance.upcoming
 import java.io.Closeable
@@ -149,6 +151,13 @@ class DpfService : Service() {
             val real = container.real
             val today = LocalDate.now().toEpochDay()
             maintenanceDue(upcoming(real.jobs(), real.odometer(), today), today)
+        }, meterHooks = object : MeterHooks {
+            override fun probeArmed() = Prefs.bool(this@DpfService, Prefs.ODO_PROBE, false)
+            override fun probed(t: Long, results: Map<String, String>) {
+                val real = container.real
+                real.odoProbe(t, results, carKm(real.jobs(), real.odometer()))
+                Prefs.put(this@DpfService, Prefs.ODO_PROBE, false)
+            }
         }).apply { odoM = db.odometer() }
         // A previous process killed mid-regen never closed its row; it would show "Ongoing" forever
         container.real.closeOrphanRegens()

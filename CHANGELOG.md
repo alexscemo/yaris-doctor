@@ -4,6 +4,28 @@ All notable changes to Yaris Doctor. The format follows [Keep a Changelog](https
 versions follow [Semantic Versioning](https://semver.org/). Each release's GitHub notes are its section below, so a tag
 without a section here fails the release build.
 
+## [1.1.0] - 2026-10-28
+
+Fuel: what's in the tank, what the engine burns, and what you spend on it.
+
+### Added
+
+- **Fuel tile** on Overview: the fuel left in the tank, read from the instrument cluster about once a minute while
+  driving. Tap it to log a fill-up. Not yet confirmed on the car: if the cluster doesn't answer, the tile stays blank.
+- **Fuel use tile** on Overview: L/100 km, or US mpg in imperial units, over the last 5 minutes of driving, and L/h
+  while idling. After a drive it keeps showing the end of the last drive. It is an estimate from the engine ECU's
+  injection volume and is not yet checked against real fill-ups.
+- **Fill-ups** in the Maintenance tab: log litres and the amount paid (`,` or `.` both work). Shows what you spent this
+  month, this year and in total, the average price per litre, and the last 10 fill-ups. Kept on the phone only: not
+  synced to the hub and not in the AI export.
+- **Odometer probe** (Settings → Developer): on the next drive, the app asks the engine and the cluster for the
+  odometer and listens to the car's network for about 30 s, then turns itself off. The answers go in Export database.
+  It is there to find where this car keeps its odometer.
+
+### Upgrade notes
+
+- The database moves to version 8 (a new `fuel` table). Existing history is kept.
+
 ## [1.0.0] - 2026-10-28
 
 The first stable release: a maintenance logbook with reminders and the car's mileage, and a new bottom navigation.

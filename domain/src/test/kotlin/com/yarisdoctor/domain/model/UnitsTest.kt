@@ -27,6 +27,9 @@ class UnitsTest {
         assertEquals("0.8 psi per 100 cfm", u.restrictionText(12.34))
         assertEquals("9,321 mi", u.distanceFromKmText(15_000.0, grouped = true))
         assertEquals("599°F", u.temperatureNoSpace(315.0))
+        assertEquals("47.0 mpg", u.consumptionText(5.0)) // US gallons
+        assertEquals("0.16 gal/h", u.fuelRateText(0.6))
+        assertEquals("5.0 L/100 km", Units.METRIC.consumptionText(5.0))
     }
 
     @Test fun metricLeavesValuesAlone() {

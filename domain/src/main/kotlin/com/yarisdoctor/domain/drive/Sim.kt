@@ -54,22 +54,41 @@ class Sim(
      * Replies to the whole table for [r], as Poller.cycle returns them: the captured idle payloads with the DPF values,
      * revs, speed and coolant swapped in, so the All data tab has something to show in Debug mode.
      */
-    fun frames(r: Reading): Map<String, String> = PID_IDLE.mapValues { (lid, idle) ->
-        val b = idle.chunked(2).toMutableList()
-        fun put(at: Int, v: Int, n: Int = 1) { for (i in 0 until n) b[at + i] = "%02X".format(v shr (8 * (n - 1 - i)) and 0xFF) }
-        when (lid) {
-            "05" -> put(0, 85 + 40 + rnd.nextInt(4))
-            "0C" -> put(0, (if (r.regen) 1800 else 800 + rnd.nextInt(1700)) * 4, 2)
-            "0D" -> put(0, rnd.nextInt(110))
-            "DD" -> put(17, (r.soot / 2).coerceIn(0, 255))
-            "DF" -> { put(9, if (r.regen) 2 else 0); put(14, if (r.regen) 1 else 0) } // byte 16 of the reply: the regen flag
-            "AD" -> put(6, if (r.regen) 500 else 0, 2) // After Injection Period, µs: Toyota's own regen sign
-            "F1" -> { put(4, (r.temp * 1.6 + 40).toInt(), 2); put(6, (r.temp * 1.6).toInt(), 2) }
-        }
-        "61$lid" + b.joinToString("")
-    }.mapKeys { "21${it.key}" }
+    fun frames(r: Reading): Map<String, String> {
+        val rpm = if (r.regen) 1800 else 800 + rnd.nextInt(1700)
+        val kmh = rnd.nextInt(110)
+        return PID_IDLE.mapValues { (lid, idle) ->
+            val b = idle.chunked(2).toMutableList()
+            fun put(at: Int, v: Int, n: Int = 1) { for (i in 0 until n) b[at + i] = "%02X".format(v shr (8 * (n - 1 - i)) and 0xFF) }
+            when (lid) {
+                "05" -> put(0, 85 + 40 + rnd.nextInt(4))
+                "0C" -> put(0, rpm * 4, 2)
+                "0D" -> put(0, kmh)
+                "DD" -> put(17, (r.soot / 2).coerceIn(0, 255))
+                "DF" -> { put(9, if (r.regen) 2 else 0); put(14, if (r.regen) 1 else 0) } // byte 16 of the reply: the regen flag
+                "AD" -> {
+                    put(6, if (r.regen) 500 else 0, 2) // After Injection Period, µs: Toyota's own regen sign
+                    put(20, injectionRaw(rpm, kmh), 2) // Injection Volume, so the consumption tile moves
+                }
+                "F1" -> { put(4, (r.temp * 1.6 + 40).toInt(), 2); put(6, (r.temp * 1.6).toInt(), 2) }
+            }
+            "61$lid" + b.joinToString("")
+        }.mapKeys { "21${it.key}" }
+    }
+
+    private var tank = 80 // the meter's byte: half litres
+    private var ticks = 0
+
+    /** The meter's `21 29` reply ([Meter.fuel]): the tank empties half a litre every 100 ticks, refilled near empty. */
+    fun fuel(): String {
+        if (++ticks % 100 == 0) tank = if (tank <= 10) 80 else tank - 1
+        return "6129%02X".format(tank)
+    }
 
     companion object {
+        /** Injection Volume's raw 16 bits (× 125/64 ÷ 100 = mm³/st): ~6 at idle, ~20 at a 100 km/h cruise. */
+        fun injectionRaw(rpm: Int, kmh: Int) = ((6 + kmh * 0.12 + (rpm - 800) * 0.004) * 100 * 64 / 125).toInt()
+
         /** One tick per second, compressed so a regen comes round every few minutes. */
         fun live() = Sim(growth = 0.4f, drop = 1.5f, regenTicks = 45, metresPerTick = 400.0)
 

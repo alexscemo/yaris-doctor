@@ -5,6 +5,7 @@ import android.content.Context
 import androidx.test.core.app.ApplicationProvider
 import com.yarisdoctor.domain.drive.Poller
 import com.yarisdoctor.domain.health.Finding
+import com.yarisdoctor.domain.maintenance.Fill
 import com.yarisdoctor.domain.maintenance.Job
 import com.yarisdoctor.domain.maintenance.OIL
 import com.yarisdoctor.domain.model.TRIP_GAP_MS
@@ -257,6 +258,7 @@ class DbTest {
         ctx.deleteDatabase(name)
         Db(ctx, name).apply {
             writableDatabase.execSQL("DROP TABLE maintenance")
+            writableDatabase.execSQL("DROP TABLE fuel")
             writableDatabase.version = 6
             close()
         }
@@ -265,7 +267,7 @@ class DbTest {
         Prefs.put(ctx, Prefs.OIL_ODO, 12_345L)
         val db = Db(ctx, name)
         try {
-            assertEquals(7, db.readableDatabase.version)
+            assertEquals(8, db.readableDatabase.version)
             assertEquals(listOf(Job(1, LocalDate.of(2026, 3, 14).toEpochDay(), OIL, "", true, null, 12_345.0, 15_000, null)), db.jobs())
         } finally {
             db.close()
@@ -284,6 +286,31 @@ class DbTest {
         assertNull(db.jobs().single { it.kind == "Coolant" }.day)
         db.deleteJob(brakes.id)
         assertEquals(listOf("Coolant"), db.jobs().map { it.kind })
+    }
+
+    @Test fun fillsAreUpdatedAndDeletedById() {
+        val db = db()
+        db.putFill(Fill(0, 100, 40.0, 7_000, null))
+        db.putFill(Fill(0, 101, 30.5, 5_500, 1_234.0))
+        assertEquals(listOf(101L, 100L), db.fills().map { it.day }) // newest first
+        val first = db.fills().last()
+        db.putFill(first.copy(cents = 7_100))
+        assertEquals(7_100L, db.fills().last().cents)
+        db.deleteFill(first.id)
+        assertEquals(listOf(Fill(2, 101, 30.5, 5_500, 1_234.0)), db.fills())
+    }
+
+    /** The meter's fuel byte is stored under its own lid, never synced; the probe's answers whole, with the mileage. */
+    @Test fun fuelLevelAndOdometerProbeAreKeptApart() {
+        val db = db()
+        assertNull(db.fuelLevel())
+        db.frames(5_000, mapOf("M29" to "61295A", "210C" to "610C0BB8"))
+        assertEquals(5_000L to 45.0, db.fuelLevel())
+        db.odoProbe(6_000, mapOf("ODO:7E0:2128" to "", "ODO:611" to "6110000A1B2C"), 152_340.04)
+        assertEquals(listOf(
+            Triple(6_000L, "ODO:7E0:2128", ""), Triple(6_000L, "ODO:611", "6110000A1B2C"), Triple(6_000L, "ODO:KM", "152340.0"),
+        ), db.odoProbes())
+        assertEquals("0C", db.string("SELECT group_concat(lid) FROM frame WHERE length(lid) = 2"))
     }
 
     companion object {

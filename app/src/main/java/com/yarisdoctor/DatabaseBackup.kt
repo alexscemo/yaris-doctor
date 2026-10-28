@@ -14,10 +14,10 @@ import java.io.File
 object DatabaseBackup {
 
     /** The tables a snapshot must hold, in the order [restore] copies them. */
-    private val TABLES = listOf("sample", "regen", "frame", "alert", "link", "peer_sample", "peer_regen", "maintenance")
+    private val TABLES = listOf("sample", "regen", "frame", "alert", "link", "peer_sample", "peer_regen", "maintenance", "fuel")
 
     /** Tables newer than [OLDEST], by the schema version that added them: an older snapshot lacks them. */
-    private val ADDED = mapOf("maintenance" to 7)
+    private val ADDED = mapOf("maintenance" to 7, "fuel" to 8)
 
     /** The oldest snapshot [restore] takes: its other tables have the same columns as now. */
     private const val OLDEST = 6
@@ -82,7 +82,7 @@ object DatabaseBackup {
             live.beginTransaction()
             try {
                 for (table in TABLES) {
-                    // A snapshot from before the table existed: the phone keeps its own rows (the logbook), rather than none
+                    // A snapshot from before the table existed: the phone keeps its own rows (the logbook, fill-ups), rather than none
                     if (!hasTable(live, table, "src")) continue
                     live.execSQL("DELETE FROM main.$table")
                     live.execSQL("INSERT INTO main.$table SELECT * FROM src.$table")

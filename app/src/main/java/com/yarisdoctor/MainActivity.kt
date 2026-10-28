@@ -71,6 +71,10 @@ class MainActivity : ComponentActivity() {
     private lateinit var regenSub: TextView
     private lateinit var nextRegen: TextView
     private lateinit var nextRegenSub: TextView
+    private lateinit var fuel: TextView
+    private lateinit var fuelSub: TextView
+    private lateinit var use: TextView
+    private lateinit var useSub: TextView
     private lateinit var sootFill: SootView
     private lateinit var sootChart: ChartView
     private var sootSeriesShown: Pair<List<Pair<Long, Float>>, UnitSystem>? = null // the series on screen, to skip a redraw
@@ -147,6 +151,8 @@ class MainActivity : ComponentActivity() {
         sinceRegen = ui.text(Type.STAT, R.color.on_instrument); sinceRegenSub = ui.text(Type.BODY_SM, R.color.on_instrument_soft)
         regenState = ui.text(Type.STAT, R.color.on_instrument); regenSub = ui.text(Type.BODY_SM, R.color.on_instrument_soft)
         nextRegen = ui.text(Type.STAT, R.color.on_instrument); nextRegenSub = ui.text(Type.BODY_SM, R.color.on_instrument_soft)
+        fuel = ui.text(Type.STAT, R.color.on_instrument); fuelSub = ui.text(Type.BODY_SM, R.color.on_instrument_soft)
+        use = ui.text(Type.STAT, R.color.on_instrument); useSub = ui.text(Type.BODY_SM, R.color.on_instrument_soft)
         val tileW = ((resources.displayMetrics.widthPixels - ui.px(40)) * 0.62f).toInt()
         val tiles = HorizontalScrollView(this).apply {
             isHorizontalScrollBarEnabled = false
@@ -154,6 +160,12 @@ class MainActivity : ComponentActivity() {
             addView(LinearLayout(context).apply {
                 listOf(
                     tile("DPF temp", temp, tempSub),
+                    // A tap logs a fill-up: the Maintenance tab keeps them
+                    tile("Fuel", fuel, fuelSub).apply {
+                        ui.ripple(this)
+                        setOnClickListener { showTab(MAINTENANCE); maintenance.addFill() }
+                    },
+                    tile("Fuel use", use, useSub),
                     tile("Since regen", sinceRegen, sinceRegenSub),
                     tile("Regen", regenState, regenSub),
                     tile("Next regen", nextRegen, nextRegenSub),
@@ -331,6 +343,18 @@ class MainActivity : ComponentActivity() {
 
         temp.text = last?.temp?.let { units.temperatureNoSpace(it.toDouble()) } ?: "—"
         tempSub.text = if (live) "Exhaust after the DPF" else "Last reading"
+        // shortcut: litres whatever the unit setting (Units has no volume), add gallons if an imperial user asks
+        fuel.text = s.fuel?.let { "%.1f L".format(it.second) } ?: "—"
+        fuelSub.text = (s.fuel?.let { (t, _) -> if (now - t <= 2 * 60_000L) "In the tank" else "At ${fmt(t)}" } ?: "Read on the next drive") +
+            " · tap to log a fill-up"
+        val c = s.consumption
+        use.text = c?.let { it.per100Km?.let(units::consumptionText) ?: units.fuelRateText(it.litresPerHour) } ?: "—"
+        useSub.text = when {
+            c == null -> "Shown once driving"
+            c.per100Km == null -> "Idling"
+            live -> "Last 5 min · estimate"
+            else -> "End of the last drive · estimate"
+        }
         val gaps = regens.mapNotNull { it.gapM }
         sinceRegen.text = s.metresSinceRegen?.let { "%.0f %s".format(units.distance(it), units.distanceLabel) } ?: "—"
         sinceRegenSub.text = if (gaps.isEmpty()) "Average after two regens" else "Avg %.0f %s between".format(units.distance(gaps.average()), units.distanceLabel)

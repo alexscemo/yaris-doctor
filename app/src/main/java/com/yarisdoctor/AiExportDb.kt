@@ -148,6 +148,10 @@ private class AiExportSource(private val db: Db) : AiExport.Source {
         if (c.moveToFirst()) emit(AiExport.CalRow(c.getLong(0), c.getString(1), calText(c.getString(1))))
     }
 
+    override fun odoProbes(emit: (AiExport.ProbeRow) -> Unit) {
+        for ((t, what, raw) in db.odoProbes()) emit(AiExport.ProbeRow(t, what, raw))
+    }
+
     /** This phone's first and last soot within [trip]'s own sample window. */
     private fun soot(trip: Trip): Pair<Int?, Int?> = db.readableDatabase.rawQuery(
         "SELECT (SELECT soot FROM sample WHERE t BETWEEN ? AND ? AND soot IS NOT NULL ORDER BY t LIMIT 1), " +

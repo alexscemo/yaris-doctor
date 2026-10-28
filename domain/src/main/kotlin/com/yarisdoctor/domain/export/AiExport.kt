@@ -62,6 +62,9 @@ object AiExport {
 
     data class CalRow(val t: Long, val hex: String, val text: String)
 
+    /** One odometer probe answer: [what] was asked (`ODO:<header>:<request>`, `ODO:611`, `ODO:ALL`, `ODO:KM`), [raw] the reply. */
+    data class ProbeRow(val t: Long, val what: String, val raw: String)
+
     /** How [write] gets its rows; [Db] implements it with cursors, tests with lists. */
     interface Source {
         fun trips(emit: (TripRow) -> Unit)
@@ -74,6 +77,7 @@ object AiExport {
         fun links(emit: (LinkRow) -> Unit)
         fun ash(emit: (AshRow) -> Unit)
         fun calIds(emit: (CalRow) -> Unit)
+        fun odoProbes(emit: (ProbeRow) -> Unit)
     }
 
     private val TIME = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ssXXX")
@@ -88,6 +92,7 @@ object AiExport {
         val links = ArrayList<LinkRow>().apply { source.links { add(it) } }
         val ash = ArrayList<AshRow>().apply { source.ash { add(it) } }
         val cals = ArrayList<CalRow>().apply { source.calIds { add(it) } }
+        val probes = ArrayList<ProbeRow>().apply { source.odoProbes { add(it) } }
 
         fun time(t: Long?) = t?.let { Instant.ofEpochMilli(it).atZone(meta.zone).format(TIME) } ?: ""
         fun q(s: String) = "\"" + s.replace("\\", "\\\\").replace("\"", "\\\"") + "\""
@@ -294,6 +299,20 @@ object AiExport {
             out.line("```csv")
             out.line("time,raw_hex,text")
             for (c in cals) out.line(csv(time(c.t), c.hex, c.text))
+            out.line("```")
+        }
+        out.line()
+
+        out.line("## Odometer probe")
+        out.line()
+        out.line("Run from Settings to find where this car exposes its odometer: `ODO:7E0:<request>` engine ECU and `ODO:7C0:<request>` meter replies (blank = no answer), `ODO:611` the distinct CAN lines heard on id 0x611 (headers on: the first 3 characters are the id), `ODO:ALL` per CAN id seen on an unfiltered listen as `id×lines:last line`, and `ODO:KM` the logbook mileage at that moment, to match the bytes against.")
+        out.line()
+        if (probes.isEmpty()) {
+            out.line("_No odometer probe run._")
+        } else {
+            out.line("```csv")
+            out.line("time,what,raw")
+            for (p in probes) out.line(csv(time(p.t), p.what, p.raw))
             out.line("```")
         }
         out.line()

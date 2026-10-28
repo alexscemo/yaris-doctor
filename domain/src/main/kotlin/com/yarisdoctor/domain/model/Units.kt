@@ -72,6 +72,15 @@ class Units private constructor(val system: UnitSystem) {
 
     fun restrictionText(kpaPer100Lps: Double, decimals: Int = 1): String = "${number(restriction(kpaPer100Lps), decimals)} $restrictionLabel"
 
+    // shortcut: imperial is US mpg and US gal/h, add a UK-gallon choice if a UK user asks
+    /** Fuel use: "5.4 L/100 km", or "43.6 mpg" (higher is better there). */
+    fun consumptionText(per100Km: Double): String =
+        if (metric) "${number(per100Km, 1)} L/100 km" else "${number(MPG_US_PER_L100KM / per100Km, 1)} mpg"
+
+    /** Fuel use while standing still: "0.6 L/h" or "0.15 gal/h". */
+    fun fuelRateText(litresPerHour: Double): String =
+        if (metric) "${number(litresPerHour, 1)} L/h" else "${number(litresPerHour / LITRES_PER_US_GALLON, 2)} gal/h"
+
     /** [value] in [unit]'s metric unit, converted for display, or null when the unit is already neutral. */
     fun displayValue(value: Double, unit: String): Double? = when (unit) {
         "kPa" -> pressure(value)
@@ -175,6 +184,9 @@ class Units private constructor(val system: UnitSystem) {
         private const val POUNDS_PER_MINUTE_PER_GPS = 0.13227735731092653
         private const val LITRES_PER_CUBIC_FOOT = 28.316846592
         private const val CFM_PER_LPS = 60.0 / LITRES_PER_CUBIC_FOOT
+        private const val LITRES_PER_US_GALLON = 3.785411784
+        /** mpg = this ÷ L/100 km. */
+        private const val MPG_US_PER_L100KM = 100 * LITRES_PER_US_GALLON / (METRES_PER_MILE / 1000)
 
         /** Degree sign, units and the ranges between them; the lookarounds keep "kg/s" and "km/h" intact. */
         private val MEASURE = Regex(

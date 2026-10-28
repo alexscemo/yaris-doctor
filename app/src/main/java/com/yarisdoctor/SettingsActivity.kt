@@ -103,6 +103,8 @@ class SettingsActivity : Activity() {
             ))
             addView(section("Developer"))
             addView(ui.group(
+                toggle("Odometer probe", "On the next drive, listens to the car's network for about 30 s to look for the odometer, then turns itself off. Soot readings pause meanwhile. Set the mileage first; the results go in Export database.",
+                    Prefs.bool(context, Prefs.ODO_PROBE, false)) { Prefs.put(context, Prefs.ODO_PROBE, it) },
                 toggle("Debug mode", "Simulated dongle with random data, for testing without the car. Nothing is saved, and it turns off when the app is closed or the phone restarts.", Prefs.debug) {
                     Prefs.debug = it
                     if (!it) container.dropDebug()

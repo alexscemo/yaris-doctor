@@ -63,6 +63,32 @@ class Elm(input: InputStream, private val output: OutputStream) : ObdLink {
         }
     }
 
+    override fun monitor(ms: Long): List<String> {
+        rx.clear()
+        output.write("AT MA\r".toByteArray())
+        output.flush()
+        val raw = StringBuilder()
+        // The ELM ends monitoring on its own only on an error (BUFFER FULL): then the prompt has already come
+        if (!readTo(raw, System.nanoTime() + ms * 1_000_000)) {
+            output.write("\r".toByteArray()) // any byte stops it
+            output.flush()
+            // Read up to its prompt here, or the next send() takes this one as its own and returns early
+            readTo(raw, System.nanoTime() + 2_000_000_000L)
+        }
+        return raw.split('\r', '\n').map { it.trim() }.filter { it.isNotEmpty() }
+    }
+
+    /** Appends to [raw] until the `>` prompt (true) or [deadline] (false). */
+    private fun readTo(raw: StringBuilder, deadline: Long): Boolean {
+        while (true) {
+            val wait = deadline - System.nanoTime()
+            val c = (if (wait > 0) rx.poll(wait, TimeUnit.NANOSECONDS) else null) ?: return false
+            if (c < 0) throw IOException("dongle closed the link")
+            if (c == '>'.code) return true
+            raw.append(c.toChar())
+        }
+    }
+
     private fun time(cmd: String, t0: Long, first: Long, last: Long, end: Long, ok: Boolean) {
         if (cmd.startsWith("AT")) return
         val t = timings.getOrPut(cmd) { Timing() }

@@ -198,6 +198,16 @@ class DbTest {
         assertEquals(listOf(B + HOUR), db.regens().map { it.start })
     }
 
+    @Test fun putPeersDropsTripsAnotherPhoneDeleted() {
+        val db = db()
+        fun row(dev: String, id: Int, t: Long) = JSONArray().put(dev).put(id).put(t).put(40).put(250).put(0).put(1_000.0)
+        db.putPeers(JSONArray().put(row("P2", 1, B)).put(row("P2", 2, B + HOUR)).put(row("P3", 1, B)), JSONArray())
+
+        db.putPeers(JSONArray(), JSONArray(), JSONArray().put(JSONArray().put("P2").put(B - 1).put(B + 1)))
+
+        assertEquals("P2 ${B + HOUR},P3 $B", db.string("SELECT GROUP_CONCAT(x) FROM (SELECT device || ' ' || t AS x FROM peer_sample ORDER BY device, t)"))
+    }
+
     /** One stored frame, as [Db.frames] receives a cycle's replies. */
     private fun Db.frame(t: Long, lid: String, hex: String = "0000") =
         frames(t, mapOf((if (lid.length == 2) "21$lid" else lid) to "0000$hex"))

@@ -231,7 +231,7 @@ class SettingsActivity : Activity() {
     }
 
     /** The oil row's numbers: the GPS odometer and the regens started since the change, both database reads. */
-    private class Oil(val at: Long, val metres: Double, val regens: Int)
+    private class Oil(val at: Long, val metres: Double, val regens: Int, val cutShort: Int)
 
     /** Filled by [oilRow]'s background read; null until it returns, and cleared by [onResume] for fresh numbers. */
     private var oil: Oil? = null
@@ -245,7 +245,9 @@ class SettingsActivity : Activity() {
         val cached = oil?.takeIf { it.at == at }
         val sub = ui.text(Type.BODY_SM, R.color.muted, oilLabel(at, cached)).apply { setPadding(0, ui.px(2), 0, 0) }
         if (at != 0L && cached == null) Thread {
-            val fresh = Oil(at, container.real.odometer(), container.real.regens().count { it.start >= at })
+            val since = container.real.regens().filter { it.start >= at && it.end != null }
+            // Under 10 min, as regen_interrupted counts: each stopped burn's after injection still thins the oil
+            val fresh = Oil(at, container.real.odometer(), since.size, since.count { it.end!! - it.start < 10 * 60_000L })
             runOnUiThread {
                 oil = fresh
                 if (!isFinishing) sub.text = oilLabel(at, fresh)
@@ -273,13 +275,14 @@ class SettingsActivity : Activity() {
         }
     }
 
-    /** "26 Oct 2026 · 1,204 mi, 3 regens since", or just the date while the background read is still running. */
+    /** "26 Oct 2026 · 1,204 mi, 3 regens since (1 cut short)", or just the date while the background read is still running. */
     private fun oilLabel(at: Long, oil: Oil?): String {
         if (at == 0L) return "Never recorded · tap when the oil is changed"
         val date = DateFormat.getDateInstance().format(at)
         if (oil == null) return "$date · reading the log…"
         val units = Prefs.units(this)
-        return "%s · %.0f %s, %s since".format(date, units.distance(oil.metres), units.distanceLabel, plural(oil.regens, "regen"))
+        val short = if (oil.cutShort > 0) " (${oil.cutShort} cut short)" else ""
+        return "%s · %.0f %s, %s since%s".format(date, units.distance(oil.metres), units.distanceLabel, plural(oil.regens, "regen"), short)
     }
 
     /** caption-uppercase label above a group. */

@@ -41,6 +41,17 @@
             android:exported="false"
             android:foregroundServiceType="connectedDevice|location" />
 
+        <service
+            android:name=".SootTile"
+            android:exported="true"
+            android:icon="@drawable/ic_stat_gauge"
+            android:label="Soot"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+        </service>
+
         <receiver android:name=".HomeWatch" android:exported="false" />
 
         <!-- Plugged into the car: an exempt broadcast, so it may wake the logger from the background -->

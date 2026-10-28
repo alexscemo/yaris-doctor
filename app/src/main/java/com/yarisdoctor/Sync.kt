@@ -194,7 +194,7 @@ object Sync {
                     val prev = cursor
                     val page = request(c, "/api/export?device=${Prefs.deviceId(c)}&after=$cursor", null)
                     val samples = page.getJSONArray("samples")
-                    db.putPeers(samples, page.getJSONArray("regens"))
+                    db.putPeers(samples, page.getJSONArray("regens"), page.optJSONArray("deleted"))
                     cursor = page.getLong("next")
                     Prefs.put(c, Prefs.PULLED_ROWID, cursor)
                     got += samples.length()

@@ -2,6 +2,8 @@ package com.yarisdoctor.domain.repo
 
 import com.yarisdoctor.domain.health.Finding
 import com.yarisdoctor.domain.model.Regen
+import com.yarisdoctor.domain.model.Sample
+import com.yarisdoctor.domain.model.Trip
 
 /** What a drive reads and writes besides the regen log: the app's Db (the Debug one in Debug mode), or a fake in tests. */
 interface DriveStore : RegenLog {
@@ -19,6 +21,15 @@ interface DriveStore : RegenLog {
 
     /** Newest DPF pressure readings (kPa) taken with the engine stopped and the ignition on, newest first. */
     fun engineOffDp(limit: Int = 5): List<Double>
+
+    /** This phone's drives, oldest first. */
+    fun trips(): List<Trip>
+
+    /** The newest reading, own or another phone's. */
+    fun lastSample(): Sample?
+
+    /** Car distance since the last finished regen, or null before the first. */
+    fun metresSinceRegen(): Double?
 
     /** Keeps the first frame per request per minute in [[from], [to]). */
     fun thinFrames(from: Long, to: Long)

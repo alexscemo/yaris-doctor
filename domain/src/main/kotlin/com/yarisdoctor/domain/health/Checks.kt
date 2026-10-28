@@ -2,6 +2,7 @@ package com.yarisdoctor.domain.health
 
 import com.yarisdoctor.domain.car.PIDS
 import com.yarisdoctor.domain.model.Regen
+import com.yarisdoctor.domain.model.Trip
 import kotlin.math.abs
 
 /** One problem the checks found. [level]: [WARN] or [CRIT]. [key] is stable, so the same issue is one alert row. */
@@ -212,6 +213,7 @@ val TREND_RULES = listOf(
     Triple("regen_interrupted", "Regens keep stopping early", "The last 3 regens each lasted under 10 minutes. A regen needs 15-20 min of steady driving (carchecker, 1.4 D-4D)."),
     Triple("soot_floor", "Soot high after a regen", "Estimate: soot at $SOOT_FLOOR_HIGH % or more 5 min after the newest regen ended. A burn ends near 10 %, and the figure 5 min on is what the ECU really reads after it. Toyota 1ND-TV manual (2011-2014): the DPF test passes a filter that reads 40 % or less after two forced regens. The owner's car read 38-40 % after each regen while its ash record was wrongly cleared, with regens every ~40 km. A high floor points at a wrong ash record, ash build-up or the pressure sensor."),
     Triple("regen_hot", "Regen ran hot", "The newest regen's peak DPF temperature (Exhaust Temperature B1S2) above Toyota's regen range: 500-700 °C on 2011-2014 cars, 500-750 °C on 2015+ (Settings → Model year), from the 1ND-TV manual. The owner's car peaks at 627-638 °C. A hotter burn (too much soot at once, or too much after injection) can crack the filter."),
+    Triple("short_trips", "Regen due on short drives", "Estimate: the next regen is due within $SHORT_TRIP_DUE_KM km (the Next regen tile) and each of the last 3 drives took under $SHORT_TRIP_MIN min. A regen needs 15-20 min of steady driving (carchecker, 1.4 D-4D); started on a short drive it stops early and soot keeps climbing."),
     Triple("oil_change_due", "Oil change due", "$OIL_CHANGE_KM km or more since the oil change recorded in Settings: Toyota's interval, checked in its P252F (oil dilution) procedure. Each regen's after injection puts some fuel in the oil, which thins it. The distance is this phone's GPS. Off until an oil change is recorded."),
     Triple("dpf_sensor_zero", "DPF pressure sensor off zero", "The DPF pressure sensor reads over 1 kPa, or under -0.5 kPa, with the engine stopped and the ignition on, when no exhaust flows. Toyota 1ND-TV manual: the displayed value leaves out the ECU's zero-point correction, so it may read about ±0.3 kPa at zero; the owner's car reads 0.3-0.4. A drifting sensor or a split or blocked hose makes the ECU's soot figure wrong."),
 )
@@ -284,6 +286,19 @@ const val OIL_CHANGE_KM = 15_000
 /** [metres]: driven since the recorded oil change, null when none was recorded. */
 fun oilDue(metres: Double?): Finding? = metres?.takeIf { it >= OIL_CHANGE_KM * 1000.0 }?.let {
     Finding("oil_change_due", WARN, "It is ${"%.0f".format(it / 1000)} km since the oil change (Toyota: every $OIL_CHANGE_KM km). Regens thin the oil with fuel: change it.")
+}
+
+const val SHORT_TRIP_DUE_KM = 30
+const val SHORT_TRIP_MIN = 15
+
+/**
+ * [kmToRegen]: the Next regen forecast (0 = due now, null = no trend). [trips]: this phone's drives, oldest first. Warns
+ * before the regen starts, so the driver can plan a longer drive instead of cutting it short.
+ */
+fun shortTrips(kmToRegen: Double?, trips: List<Trip>): Finding? {
+    if (kmToRegen == null || kmToRegen > SHORT_TRIP_DUE_KM || trips.size < 3) return null
+    if (trips.takeLast(3).any { it.end - it.start >= SHORT_TRIP_MIN * 60_000L }) return null
+    return Finding("short_trips", WARN, "A regen is due ${if (kmToRegen <= 0) "now" else "within about ${"%.0f".format(kmToRegen)} km"} and the last 3 drives were under $SHORT_TRIP_MIN min. Plan 20 min at a steady speed above 60 km/h so it can finish.")
 }
 
 /**

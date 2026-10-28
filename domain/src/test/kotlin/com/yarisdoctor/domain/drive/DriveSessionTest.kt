@@ -3,6 +3,7 @@ package com.yarisdoctor.domain.drive
 import com.yarisdoctor.domain.health.Finding
 import com.yarisdoctor.domain.model.Regen
 import com.yarisdoctor.domain.model.Sample
+import com.yarisdoctor.domain.model.Trip
 import com.yarisdoctor.domain.repo.DriveStore
 import com.yarisdoctor.domain.repo.RegenLog
 import org.junit.Assert.assertEquals
@@ -46,6 +47,9 @@ class DriveSessionTest {
         override fun recentRegens(n: Int) = log.regens.takeLast(n).map { Regen(it[0] as Long, it[3] as Long?, null, it[2] as Int?, it[5] as Int?) }
         override fun engineOffDp(limit: Int) = emptyList<Double>()
         override fun thinFrames(from: Long, to: Long) {}
+        override fun trips() = emptyList<Trip>()
+        override fun lastSample(): Sample? = null
+        override fun metresSinceRegen(): Double? = null
     }
 
     class FakeEffects : DriveEffects {

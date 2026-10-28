@@ -11,6 +11,7 @@ import com.yarisdoctor.domain.health.Checker
 import com.yarisdoctor.domain.health.Finding
 import com.yarisdoctor.domain.health.oilDue
 import com.yarisdoctor.domain.health.sensorZero
+import com.yarisdoctor.domain.health.shortTrips
 import com.yarisdoctor.domain.health.trends
 import com.yarisdoctor.domain.model.TRIP_GAP_MS
 import com.yarisdoctor.domain.repo.DriveStore
@@ -204,8 +205,13 @@ class DriveSession(
      * Regen-history checks, the DPF sensor's engine-off zero and the oil change; kept open while they apply, rechecked at
      * start and after drives and regens. Only the last regens get their floor and peak: trends() reads the newest.
      */
-    private fun history() = trends(store.recentRegens(10), model2015) +
-        listOfNotNull(sensorZero(store.engineOffDp()), oilDue(oilMetres()))
+    private fun history(): List<Finding> {
+        val regens = store.recentRegens(10)
+        val finished = regens.filter { it.end != null }
+        val next = forecast(store.lastSample()?.soot, finished.lastOrNull()?.sootEnd, store.metresSinceRegen(), finished.mapNotNull { it.sootStart }, model2015)
+        return trends(regens, model2015) +
+            listOfNotNull(sensorZero(store.engineOffDp()), oilDue(oilMetres()), shortTrips(next.kmToRegen, store.trips()))
+    }
 
     companion object {
         /** A regen or a drive outlives a link drop shorter than this; a trip ends at the same silence. */

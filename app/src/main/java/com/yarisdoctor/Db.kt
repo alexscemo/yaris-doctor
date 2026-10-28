@@ -270,7 +270,7 @@ class Db internal constructor(private val ctx: Context, name: String?) : SQLiteO
     )
 
     /** This phone's drives, newest first: runs of samples with no gap over [TRIP_GAP_MS] (see [Trip]). */
-    fun trips(): List<Trip> = readableDatabase.rawQuery(
+    override fun trips(): List<Trip> = readableDatabase.rawQuery(
         "SELECT s, e, m, (SELECT COUNT(*) FROM regen WHERE start_t BETWEEN s AND e + $TRIP_GAP_MS) FROM " +
             "(SELECT MIN(t) AS s, MAX(t) AS e, COALESCE(MAX(odo_m) - MIN(odo_m), 0) AS m FROM " +
             "(SELECT t, odo_m, SUM(gap) OVER (ORDER BY t) AS trip FROM " +
@@ -390,7 +390,7 @@ class Db internal constructor(private val ctx: Context, name: String?) : SQLiteO
         readableDatabase.rawQuery("SELECT COALESCE(MAX(odo_m), 0) FROM sample", null).use { it.moveToFirst(); it.getDouble(0) }
 
     /** The car's latest reading, from this phone or another one. */
-    fun lastSample(): Sample? = listOf("sample", "peer_sample").mapNotNull { table ->
+    override fun lastSample(): Sample? = listOf("sample", "peer_sample").mapNotNull { table ->
         readableDatabase.rawQuery("SELECT t, soot, temp, regen FROM $table ORDER BY t DESC LIMIT 1", null).use {
             if (it.moveToFirst()) Sample(it.getLong(0), it.intOrNull(1), it.intOrNull(2), it.getInt(3) == 1) else null
         }
@@ -433,7 +433,7 @@ class Db internal constructor(private val ctx: Context, name: String?) : SQLiteO
         }
 
     /** Car distance since the last finished regen, by any phone. */
-    fun metresSinceRegen(): Double? =
+    override fun metresSinceRegen(): Double? =
         readableDatabase.rawQuery("SELECT MAX(t) FROM (SELECT MAX(end_t) AS t FROM regen UNION ALL SELECT MAX(end_t) FROM peer_regen)", null).use {
             if (it.moveToFirst() && !it.isNull(0)) {
                 val end = it.getLong(0)
@@ -504,7 +504,7 @@ class Db internal constructor(private val ctx: Context, name: String?) : SQLiteO
      * Stores one page of the hub's export: other phones' samples (re-sent rows are ignored) and their full regen list,
      * which replaces the old one because regens gain an end time later.
      */
-    fun putPeers(samples: JSONArray, regens: JSONArray) {
+    fun putPeers(samples: JSONArray, regens: JSONArray, deleted: JSONArray? = null) {
         // A future-dated row would win lastSample() forever (a "live" regen that never ends): bad peer clock or forged hub data
         val latest = System.currentTimeMillis() + PEER_CLOCK_SLACK_MS
         try {
@@ -516,6 +516,11 @@ class Db internal constructor(private val ctx: Context, name: String?) : SQLiteO
                         put("device", r.getString(0)); put("phone_rowid", r.getLong(1)); put("t", r.getLong(2))
                         put("soot", r.intOrNull(3)); put("temp", r.intOrNull(4)); put("regen", r.getInt(5) == 1); put("odo_m", r.optDouble(6, 0.0))
                     }, SQLiteDatabase.CONFLICT_IGNORE)
+                }
+                // Trips another phone deleted (a hub that predates this sends none): its rows in them go here too
+                for (i in 0 until (deleted?.length() ?: 0)) {
+                    val r = deleted!!.getJSONArray(i) // device, from, to
+                    db.delete("peer_sample", "device = ? AND t BETWEEN ? AND ?", arrayOf(r.getString(0), r.getLong(1).toString(), r.getLong(2).toString()))
                 }
                 db.delete("peer_regen", null, null)
                 for (i in 0 until regens.length()) {

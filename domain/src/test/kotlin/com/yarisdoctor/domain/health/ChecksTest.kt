@@ -8,7 +8,9 @@ import com.yarisdoctor.domain.car.toyotaNormal
 import com.yarisdoctor.domain.drive.Poller
 import com.yarisdoctor.domain.model.METRES_PER_MILE
 import com.yarisdoctor.domain.model.Regen
+import com.yarisdoctor.domain.model.Trip
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -299,5 +301,16 @@ class ChecksTest {
         assertEquals("every cycle", Poller.pollRate("0C"))
         assertEquals("every 8 cycles", Poller.pollRate("AD"))
         assertEquals("every 5 min", Poller.pollRate("E1"))
+    }
+
+    @Test
+    fun shortTripsWarnOnlyWhenARegenIsDueAndDrivesAreShort() {
+        fun trips(vararg mins: Int) = mins.mapIndexed { i, m -> Trip(i * 86_400_000L, i * 86_400_000L + m * 60_000L, 5000.0, 0) }
+        assertEquals("short_trips", shortTrips(10.0, trips(8, 9, 12))?.key)
+        assertTrue(shortTrips(0.0, trips(8, 9, 12))!!.text.contains("due now"))
+        assertNull(shortTrips(80.0, trips(8, 9, 12))) // not due yet
+        assertNull(shortTrips(null, trips(8, 9, 12))) // no trend
+        assertNull(shortTrips(10.0, trips(8, 25, 12))) // one long drive among the last 3
+        assertNull(shortTrips(10.0, trips(8, 9))) // too little history
     }
 }

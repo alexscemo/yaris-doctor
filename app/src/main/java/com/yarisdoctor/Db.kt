@@ -137,8 +137,6 @@ class Db internal constructor(private val ctx: Context, name: String?) : SQLiteO
         }
     }
 
-    override fun hasFrame(lid: String) = readableDatabase.rawQuery("SELECT 1 FROM frame WHERE lid = ? LIMIT 1", arrayOf(lid)).use { it.moveToFirst() }
-
     /** Newest payload per lid, as lid → (t, hex). One indexed lookup per lid: a GROUP BY would scan every frame. */
     fun latestFrames(): Map<String, Pair<Long, String>> = PID_IDLE.keys.mapNotNull { lid ->
         readableDatabase.rawQuery("SELECT t, hex FROM frame WHERE lid = ? ORDER BY t DESC LIMIT 1", arrayOf(lid)).use {

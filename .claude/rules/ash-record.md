@@ -15,7 +15,7 @@ paths:
   - **Owner's history:** the DPF pressure sensor was replaced and the record cleared on 19 Mar 2026, at ~82-83k miles; ~88k miles in Oct 2026. That fits C as engine seconds: 175 h over ~5,500 miles (~8,850 km) is ~51 km/h on average, ~49 min of driving a day.
   - **First real write, 24 Oct 2026:** `3B 18 00` + 12 bytes is stored as given for **B and C**; **A comes back re-based** (wrote 2,448,642, read back 2,449,690 one second later, then +3.75/s), so the ECU adds its own awake ticks to the stored A and A can never be set exactly. Do not judge a write by A.
   - **`01 DD` and `01 EF` do not answer with the engine off** (`01 05` and `01 10` do), so any before/after PM-ratio test has to be done at a warm idle, not at ignition-on.
-- **Calibration ID** (`Poller.CAL_ID`, OBD mode 09 PID 04): `DriveSession` adds it once a drive, to the cycle after the first live one (a miss before anything answered would end a probe), until `Db.hasFrame("0904")` finds one stored, so it's read once ever. Stored raw as frame lid `0904` (`49 04 <count>` dropped to `<count>` + 16 ASCII bytes per ID; the hub skips it like `A918`). It's there to look up which tools can read this ECU's flash; nothing displays it.
+- **Calibration ID** (`Poller.CAL_ID`, OBD mode 09 PID 04): no longer asked (removed 28 Oct 2026). Older builds read it once ever and stored it raw as frame lid `0904` (`49 04 <count>` dropped to `<count>` + 16 ASCII bytes per ID; the hub skips it like `A918`). Those rows stay: `Db.frames()` still maps the lid and the AI export still prints the newest one.
 
 ## Write format (from the vehicle's local-ID writes, 23-24 Oct; never sent by the app)
 

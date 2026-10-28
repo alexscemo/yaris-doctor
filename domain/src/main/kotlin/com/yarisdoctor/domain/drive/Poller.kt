@@ -58,7 +58,6 @@ class Poller(private val send: (String) -> String?) {
     /** A reply for [code] of the length the table says, one retry. */
     private fun ask(code: String): String? {
         if (code == ASH_RECORD) return send(code).takeIf(::ashRecordOk) ?: send(code).takeIf(::ashRecordOk)
-        if (code == CAL_ID) return send(code).takeIf(::calIdOk) ?: send(code).takeIf(::calIdOk)
         val len = PID_LENGTHS.getValue(code)
         val want = (len + 2) * 2
         // Exact length, header and hex only: catches cut-off or mixed frames and ELM chatter like BUFFER FULL
@@ -102,11 +101,8 @@ class Poller(private val send: (String) -> String?) {
             val b = r.substring(4).chunked(2).map { it.toInt(16) }
             return b.dropLast(1).fold(0) { x, v -> x xor v } == b.last()
         }
-        /** OBD mode 09 calibration ID(s): `49 04 <count>` + 16 ASCII bytes each. Read once ever, to look up the ECU's flash tools. */
+        /** OBD mode 09 calibration ID(s), no longer asked: older builds stored one under this lid, still exported. */
         const val CAL_ID = "0904"
-
-        fun calIdOk(r: String?) = r != null && r.startsWith("4904") && r.length >= 38 && (r.length - 6) % 32 == 0 &&
-            r.all { it in '0'..'9' || it in 'A'..'F' }
         const val SLOW_MS = 5 * 60_000L
         /** Often enough to tie the ash record's counters to what the car did between reads (one read is ~40 ms). */
         const val ASH_MS = 60_000L

@@ -20,9 +20,6 @@ interface DriveStore : RegenLog {
     /** Newest DPF pressure readings (kPa) taken with the engine stopped and the ignition on, newest first. */
     fun engineOffDp(limit: Int = 5): List<Double>
 
-    /** Whether any frame was ever stored for [lid] (a whole code such as "0904" for the reads kept under it). */
-    fun hasFrame(lid: String): Boolean
-
     /** Keeps the first frame per request per minute in [[from], [to]). */
     fun thinFrames(from: Long, to: Long)
 }

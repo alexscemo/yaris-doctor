@@ -4,6 +4,39 @@ All notable changes to Yaris Doctor. The format follows [Keep a Changelog](https
 versions follow [Semantic Versioning](https://semver.org/). Each release's GitHub notes are its section below, so a tag
 without a section here fails the release build.
 
+## [1.2.0] - 2026-10-29
+
+The car's own odometer replaces GPS: every reading, regen, engine frame and warning now carries the mileage it happened
+at.
+
+### Added
+
+- **The car's odometer, read from the dashboard.** The instrument cluster broadcasts it in whole miles; the app listens
+  for it for about 1.5 s at the start of each drive and every 5 minutes after, and adds up the engine's vehicle speed in
+  between, so the figure stays within the mile the dash shows. Confirmed on the car: 89,159 mi on 29 Oct.
+- **Mileage on everything:** readings, regens, engine frames and warnings store the odometer at their time, so the log is
+  a timeline by mileage as well as by time. The AI export shows it on every trip, regen, warning and reading (in miles and
+  km), says whether each figure is the car's or an estimate, and lists every odometer read.
+
+### Changed
+
+- **No more GPS.** Distance between regens, the trip summary, the Maintenance tab's mileage and reminders, and fill-ups
+  all use the car's odometer. The Maintenance tab shows it as read from the dashboard, and "Set mileage" goes away once it
+  has been read. The location permission is kept only for the home hub's Wi-Fi check: Android shows apps the Wi-Fi name
+  only with it.
+- **Your history moved onto the car's odometer.** The odometer check you ran on 29 Oct read 89,159 mi, so every older
+  row was shifted to match: the log now runs from about 88,812 mi (20 Oct). Those older figures are estimates (the
+  phone's GPS distance, counted back from that reading) and are marked as such in the export.
+- Two phones on the same drive no longer count its distance twice: the car has one odometer.
+
+### Upgrade notes
+
+- The database moves to version 9. History is kept and moved onto the car's odometer; older engine frames get their
+  mileage in the background after the next drive.
+- **Update the home hub first** (`yaris-doctor-hub` with the odometer migration): this version sends the odometer with
+  frames and warnings, which an older hub refuses. The phone then sends its whole history again, now with the car's
+  mileage.
+
 ## [1.1.1] - 2026-10-29
 
 ### Fixed

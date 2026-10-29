@@ -32,12 +32,15 @@ object Prefs {
     const val THINNED_HOURLY_TO = "thinned_hourly_to"
     const val SYNCED_FRAME_ROWID = "synced_frame_rowid"
     const val SYNCED_ALERTS = "synced_alerts"
+    /** Db.fillFrameOdo(): frames from before the car odometer, given theirs up to this rowid; ODO_FILLED once all are. */
+    const val ODO_FILLED_TO = "odo_filled_to"
+    const val ODO_FILLED = "odo_filled"
     const val HUB_FRAMES = "hub_frames"
     /** Trips deleted on the phone that the hub hasn't removed yet, as Sync's formatRanges(); HUB_DELETES: the hub takes them. */
     const val PENDING_DELETES = "pending_deletes"
     const val HUB_DELETES = "hub_deletes"
     const val MODEL_2015 = "model_2015"
-    /** The oil change older builds recorded in Settings (time, GPS odometer); Db's v7 upgrade moves it into the logbook. */
+    /** The oil change older builds recorded in Settings (time, the GPS odometer of the time); Db's v7 upgrade moves it into the logbook. */
     const val OIL_AT = "oil_at"
     const val OIL_ODO = "oil_odo"
     /** Armed in Settings: the next drive runs the odometer probe once (Meter.probe), then clears it. */

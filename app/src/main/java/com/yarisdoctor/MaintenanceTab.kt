@@ -47,8 +47,13 @@ import kotlinx.coroutines.withContext
  */
 class MaintenanceTab(private val a: ComponentActivity, private val ui: Ui) {
 
-    /** One load: the logbook, this phone's GPS odometer, and the regens since the newest oil change (all, cut short). */
-    private class State(val jobs: List<Job>, val odoM: Double, val today: Long, val oilRegens: Pair<Int, Int>?, val fills: List<Fill>)
+    /**
+     * One load: the logbook, the logged odometer, the newest cluster read (time, miles; null before the first), and the
+     * regens since the newest oil change (all, cut short).
+     */
+    private class State(val jobs: List<Job>, val odoM: Double, val cluster: Pair<Long, Long>?, val today: Long, val oilRegens: Pair<Int, Int>?, val fills: List<Fill>) {
+        val odoIsCar get() = cluster != null
+    }
 
     private var state: State? = null
     private val body = ui.column()
@@ -73,7 +78,7 @@ class MaintenanceTab(private val a: ComponentActivity, private val ui: Ui) {
                     // Under 10 min, as regen_interrupted counts: each stopped burn's after injection still thins the oil
                     since.size to since.count { it.end!! - it.start < 10 * 60_000L }
                 }
-                State(jobs, db.odometer(), LocalDate.now().toEpochDay(), regens, db.fills())
+                State(jobs, db.odometer(), db.lastClusterRead(), LocalDate.now().toEpochDay(), regens, db.fills())
             }
             state = s
             render(s)
@@ -88,7 +93,7 @@ class MaintenanceTab(private val a: ComponentActivity, private val ui: Ui) {
         fuel(s)
 
         body.addView(section("Coming up"))
-        val due = upcoming(s.jobs, s.odoM, s.today)
+        val due = upcoming(s.jobs, s.odoM, s.today, s.odoIsCar)
         body.addView(
             if (due.isEmpty()) ui.text(Type.BODY_SM, R.color.muted, "Nothing yet. Log a job with a reminder, or plan one.")
             else ui.group(*due.map { dueRow(it, s, units) }.toTypedArray()),
@@ -106,24 +111,33 @@ class MaintenanceTab(private val a: ComponentActivity, private val ui: Ui) {
         )
     }
 
-    /** The dark instrument card: the car's odometer as the one big number, and where it comes from. */
+    /**
+     * The dark instrument card: the car's odometer as the one big number, and where it comes from. Once the cluster has
+     * been read it is the car's own odometer, so there is nothing to set by hand.
+     */
     private fun mileageCard(s: State, units: Units): View {
-        val car = carKm(s.jobs, s.odoM)
+        val car = carKm(s.jobs, s.odoM, s.odoIsCar)
         val from = anchor(s.jobs)
+        val source = when {
+            s.cluster != null -> "The car's odometer, read from the dashboard (${"%,d".format(s.cluster.second)} mi on ${date(dayOf(s.cluster.first))}), plus the speed since"
+            from == null -> "Read from the dashboard on the next drive. Until then, enter it by hand."
+            else -> "Your reading of ${units.distanceFromKmText(from.km!!, grouped = true)} on ${date(from.day!!)}, plus the distance since"
+        }
         return ui.column(
             ui.eyebrow("Mileage", R.color.on_instrument_soft),
             ui.text(Type.STAT, R.color.on_instrument, ui.signal(car?.let { units.distanceFromKmText(it, grouped = true) } ?: "Not set").first)
                 .apply { setPadding(0, ui.px(14), 0, ui.px(6)) },
-            ui.text(Type.BODY_SM, R.color.on_instrument_soft, if (from == null) "Enter the odometer from the dashboard. GPS adds every drive the app logs."
-                else "Your reading of ${units.distanceFromKmText(from.km!!, grouped = true)} on ${date(from.day!!)}, plus GPS since"),
+            ui.text(Type.BODY_SM, R.color.on_instrument_soft, source),
         ).apply {
             background = ui.shape(R.color.instrument, 20)
             setPadding(ui.px(20), ui.px(18), ui.px(20), ui.px(20))
-            addView(button("Set mileage") {
+            if (s.cluster == null) addView(button("Set mileage") {
                 edit(Job(0, s.today, MILEAGE, "", true, car?.let { (it * 1000).roundToLong() / 1000.0 }, null, null, null))
             }, LinearLayout.LayoutParams(-2, -2).apply { topMargin = ui.px(16) })
         }
     }
+
+    private fun dayOf(t: Long) = java.time.Instant.ofEpochMilli(t).atZone(java.time.ZoneId.systemDefault()).toLocalDate().toEpochDay()
 
     /** Fuel: what was spent this month and year, the average price per litre, and the newest fill-ups. */
     private fun fuel(s: State) {
@@ -216,7 +230,7 @@ class MaintenanceTab(private val a: ComponentActivity, private val ui: Ui) {
             dialog.dismiss()
             saveFill { db ->
                 // Where the meter saw the tank fill on that day, so logging it after driving on doesn't move it (re-saving an
-                // older line corrects it too). Without that, the GPS odometer only means something on the day it was read:
+                // older line corrects it too). Without that, the logged odometer only means something on the day it was read:
                 // kept for an unmoved line, read now for today
                 val odoM = db.fillOdometer(day, l)
                     ?: if (f.id != 0L && f.day == day) f.odoM else if (day == LocalDate.now().toEpochDay()) db.odometer() else null
@@ -317,7 +331,7 @@ class MaintenanceTab(private val a: ComponentActivity, private val ui: Ui) {
                 val kind = KINDS[i]
                 // Its kind's last interval, so a reminder is set once and carried on
                 val last = s.jobs.filter { it.done && it.kind == kind && kind != OTHER }.maxWithOrNull(NEWEST)
-                val car = carKm(s.jobs, s.odoM)?.let { (it * 1000).roundToLong() / 1000.0 }
+                val car = carKm(s.jobs, s.odoM, s.odoIsCar)?.let { (it * 1000).roundToLong() / 1000.0 }
                 edit(Job(0, s.today, kind, "", true, car, null, last?.everyKm ?: defaultEveryKm(kind), last?.everyMonths))
             }
             .setNegativeButton("Cancel", null)
@@ -396,7 +410,7 @@ class MaintenanceTab(private val a: ComponentActivity, private val ui: Ui) {
         val box = ui.column().apply {
             setPadding(ui.px(24), ui.px(8), ui.px(24), 0)
             if (!mileage) addView(chips, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = ui.px(16) })
-            // A reading anchors the mileage only on its own day (the GPS odometer is today's), so it is always today
+            // A reading anchors the mileage only on its own day (the logged odometer is today's), so it is always today
             if (!mileage) {
                 addView(ui.eyebrow("Date").apply { setPadding(0, 0, 0, ui.px(8)) })
                 addView(dateRow)
@@ -431,7 +445,7 @@ class MaintenanceTab(private val a: ComponentActivity, private val ui: Ui) {
             val toKm = { v: Long -> v * units.distancePerUnit / 1000 }
             dialog.dismiss()
             save { db ->
-                // The GPS odometer is kept for a done line written on its own day: it anchors the mileage and counts the distance
+                // The logged odometer is kept for a done line written on its own day: it anchors the mileage and counts the distance
                 val odoM = when {
                     !done -> null
                     j.done && j.odoM != null && j.day == day -> j.odoM

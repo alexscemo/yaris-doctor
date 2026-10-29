@@ -26,7 +26,10 @@ class DriveSessionTest {
     inner class ScriptLink(private val script: (Long) -> Map<String, String>?) : ObdLink {
         var inits = 0
         val sent = mutableListOf<String>()
+        /** What `AT MA` hears: the cluster's 0x611 odometer frames. */
+        var bus = emptyList<String>()
         override fun init() { inits++ }
+        override fun monitor(ms: Long): List<String> { t += ms; return bus }
         override fun send(cmd: String, timeoutMs: Long): String? {
             t += 100
             sent += cmd
@@ -38,8 +41,11 @@ class DriveSessionTest {
         var frames = 0
         val lids = HashSet<String>()
         val open = HashSet<String>()
-        override fun frames(t: Long, replies: Map<String, String>) { frames++; lids += replies.keys }
-        override fun syncAlerts(t: Long, active: List<Finding>): List<Finding> {
+        val frameOdo = mutableListOf<Double>()
+        val odoReads = mutableListOf<List<Number>>()
+        override fun frames(t: Long, replies: Map<String, String>, odoM: Double) { frames++; lids += replies.keys; frameOdo += odoM }
+        override fun odometerRead(t: Long, miles: Long, before: Double, after: Double) { odoReads += listOf(t, miles, before, after) }
+        override fun syncAlerts(t: Long, active: List<Finding>, odoM: Double): List<Finding> {
             open.retainAll(active.map { it.key }.toSet())
             return active.filter { open.add(it.key) }
         }
@@ -99,13 +105,42 @@ class DriveSessionTest {
         }
         val meter = DriveSession(store, effects, model2015 = false, maintenance = { null }, now = { t }, sleep = { t += it }, meterHooks = hooks)
         // AT commands answer OK; the fake has one ECU, so "2129" stands in for the meter's reply
-        val link = ScriptLink { if (it < 20_000) car() + mapOf("AT S" to "OK", "AT C" to "OK", "2129" to "61295A") else null }
+        val link = ScriptLink { if (it < 20_000) car() + mapOf("AT S" to "OK", "AT C" to "OK", "AT H" to "OK", "2129" to "61295A") else null }
         meter.drive(link) { true }
         assertEquals(1, probes.size)
         assertEquals("ODO:7E0:2128", probes[0].keys.first())
         assertEquals(4, link.inits) // the probe resets the dongle after its listen, then each of the 3 dead cycles at the end
         assertTrue(Meter.FUEL in store.lids)
         assertEquals(1, link.sent.count { it == "2129" }) // once a minute, and the drive lasted 20 s
+    }
+
+    private fun meterSession() = DriveSession(store, effects, model2015 = false, maintenance = { null }, now = { t }, sleep = { t += it },
+        meterHooks = object : MeterHooks {
+            override fun probeArmed() = false
+            override fun probed(t: Long, results: Map<String, String>) {}
+        })
+
+    @Test fun theClusterOdometerStartsTheDriveAndSpeedAddsUpBetweenReads() {
+        val drive = meterSession().apply { odoM = 143_000_000.0 } // an old GPS figure, far from the car's
+        val link = ScriptLink { if (it < 60_000) car() + mapOf("AT S" to "OK", "AT C" to "OK", "AT H" to "OK", "210D" to "610D48") else null } // 72 km/h
+        link.bus = listOf("6112100000400015C47", "STOPPED") // 89,159 mi
+        drive.drive(link) { true }
+        val read = store.odoReads.single() // the first cycle reads it; the next is 5 min away
+        assertEquals(89_159L, read[1])
+        assertEquals(143_000_000.0, read[2].toDouble(), 1e-6)
+        assertEquals((89_159 + 0.5) * MILE_M, read[3].toDouble(), 1e-6) // outside the mile on the first read: its middle
+        // ~60 s at 72 km/h (20 m/s) after that: about 1.2 km more, give or take the cycles around the listen
+        assertEquals(1_200.0, drive.odoM - read[3].toDouble(), 100.0)
+        assertTrue(store.frameOdo.zipWithNext().all { (a, b) -> b >= a - MILE_M }) // frames carry the odometer as it goes
+        assertEquals("AT H0", link.sent[link.sent.indexOf("AT CRA 611") + 1]) // headers off again before the engine resumes
+    }
+
+    @Test fun aClusterThatNeverBroadcastsIsAskedThreeTimesAtMost() {
+        val drive = meterSession()
+        val link = ScriptLink { if (it < 40 * 60_000) car() + mapOf("AT S" to "OK", "AT C" to "OK", "AT H" to "OK") else null }
+        drive.drive(link) { true }
+        assertTrue(store.odoReads.isEmpty())
+        assertEquals(3, link.sent.count { it == "AT CRA 611" })
     }
 
     @Test fun aQuickProbeOfASilentEcuEndsAfterOneDeadCycle() {

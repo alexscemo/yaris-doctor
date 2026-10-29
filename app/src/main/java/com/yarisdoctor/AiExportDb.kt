@@ -52,6 +52,7 @@ private fun aiExportMeta(db: Db, appVersion: String, model2015: Boolean, zone: Z
         alerts = count("alert"),
         frames = count("frame"),
         linkRows = count("link"),
+        odoRealFrom = db.odoRealFrom(),
     )
 }
 
@@ -67,23 +68,28 @@ private class AiExportSource(private val db: Db) : AiExport.Source {
             emit(AiExport.TripRow(
                 index = i + 1, start = trip.start, end = trip.end, metres = trip.metres,
                 sootStart = sootStart, sootEnd = sootEnd, regens = trip.regens, warnings = warnings(trip),
+                odoStart = db.odoAt(trip.start), odoEnd = db.odoAt(trip.end),
             ))
         }
     }
 
     override fun regens(emit: (AiExport.RegenRow) -> Unit) {
         db.withSigns(db.regens()).forEachIndexed { i, r ->
-            emit(AiExport.RegenRow(i + 1, r.start, r.end, r.gapM, r.sootStart, r.sootEnd, r.floor, r.peakTemp))
+            emit(AiExport.RegenRow(i + 1, r.start, r.end, r.gapM, r.sootStart, r.sootEnd, r.floor, r.peakTemp, db.odoAt(r.start), r.end?.let(db::odoAt)))
         }
     }
 
     override fun alerts(emit: (AiExport.AlertRow) -> Unit) = db.readableDatabase.rawQuery(
-        "SELECT key, level, text, start_t, end_t FROM alert ORDER BY start_t, key", null,
+        "SELECT key, level, text, start_t, end_t, odo_start, odo_end FROM alert ORDER BY start_t, key", null,
     ).use { c ->
         while (c.moveToNext()) emit(AiExport.AlertRow(
             c.getString(0), if (c.getInt(1) >= 2) "critical" else "warning", c.getString(2), c.getLong(3),
-            if (c.isNull(4)) null else c.getLong(4),
+            if (c.isNull(4)) null else c.getLong(4), if (c.isNull(5)) null else c.getDouble(5), if (c.isNull(6)) null else c.getDouble(6),
         ))
+    }
+
+    override fun odometerReads(emit: (AiExport.OdoRow) -> Unit) = db.readableDatabase.rawQuery("SELECT t, miles, odo_m FROM odometer ORDER BY t", null).use { c ->
+        while (c.moveToNext()) emit(AiExport.OdoRow(c.getLong(0), c.getLong(1), c.getDouble(2)))
     }
 
     override fun samples(emit: (AiExport.SampleRow) -> Unit) = samples("sample", emit)

@@ -1,6 +1,5 @@
 package com.yarisdoctor
 
-import android.Manifest.permission.ACCESS_FINE_LOCATION
 import android.Manifest.permission.BLUETOOTH_CONNECT
 import android.annotation.TargetApi
 import android.app.AlarmManager
@@ -17,13 +16,8 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager.PERMISSION_GRANTED
 import android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE
-import android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
-import android.location.Location
-import android.location.LocationListener
-import android.location.LocationManager
 import android.os.Build
 import android.os.Bundle
-import android.os.Looper
 import android.os.PowerManager
 import android.os.SystemClock
 import android.util.Log
@@ -50,13 +44,13 @@ import java.util.concurrent.atomic.AtomicBoolean
 /**
  * Always-on foreground service. Idle: probes the dongle once a minute (alarm-driven so it survives CPU sleep).
  * Connected: hands the dongle to [DriveSession], which polls the ECU and logs to SQLite. This class keeps the Android
- * side: the Bluetooth socket, GPS distance, the wakelock, the notifications and the edge light.
+ * side: the Bluetooth socket, the wakelock, the notifications and the edge light. Distance is the car's own odometer
+ * (DriveSession), not GPS.
  */
 class DpfService : Service() {
 
     @Volatile private var running = true
     @Volatile private var socket: Closeable? = null
-    private var lastFix: Location? = null
     private val db by lazy { container.db() }
     private val nm by lazy { getSystemService(NotificationManager::class.java) }
     private val alarms by lazy { getSystemService(AlarmManager::class.java) }
@@ -89,14 +83,6 @@ class DpfService : Service() {
     // Outlives a dongle session, so a regen and a drive's alerts survive a dropped Bluetooth link
     private lateinit var drive: DriveSession // made in onCreate: the model year and the odometer need the context
 
-    private val gps = LocationListener { l ->
-        if (l.accuracy <= 25f) {
-            val prev = lastFix
-            // Speed gate drops GPS drift while parked
-            if (prev != null && l.speed > 1f) drive.odoM += prev.distanceTo(l)
-            lastFix = l
-        }
-    }
 
     /**
      * The drive's notifications, its edge light and the screens' live reading. Called on the worker thread; EdgeLight
@@ -137,25 +123,20 @@ class DpfService : Service() {
         nm.createNotificationChannel(NotificationChannel(CH_SERVICE, "Background logger", NotificationManager.IMPORTANCE_MIN))
         nm.createNotificationChannel(NotificationChannel(CH_REGEN, "DPF regeneration", NotificationManager.IMPORTANCE_HIGH))
         nm.createNotificationChannel(NotificationChannel(CH_HEALTH, "Health warnings", NotificationManager.IMPORTANCE_LOW))
-        val types = FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE or
-            (if (checkSelfPermission(ACCESS_FINE_LOCATION) == PERMISSION_GRANTED) FOREGROUND_SERVICE_TYPE_LOCATION else 0)
-        try {
-            startForeground(ID_SERVICE, status("Waiting for dongle"), types)
-        } catch (e: SecurityException) {
-            // Location type refused (e.g. started at boot without "Allow all the time"): log without GPS
-            startForeground(ID_SERVICE, status("Waiting for dongle"), FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE)
-        }
+        // Connected device only: distance comes from the car's odometer, so the service never uses location (the
+        // Wi-Fi name check for the hub needs the location permission, but not a location service type)
+        startForeground(ID_SERVICE, status("Waiting for dongle"), FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE)
         // The model year is read once: Settings restarts the service on a change
         // The logbook is always the real one, Debug mode or not
         drive = DriveSession(db, effects, Prefs.model2015(this), {
             val real = container.real
             val today = LocalDate.now().toEpochDay()
-            maintenanceDue(upcoming(real.jobs(), real.odometer(), today), today)
+            maintenanceDue(upcoming(real.jobs(), real.odometer(), today, real.odoRealFrom() != null), today)
         }, meterHooks = object : MeterHooks {
             override fun probeArmed() = Prefs.bool(this@DpfService, Prefs.ODO_PROBE, false)
             override fun probed(t: Long, results: Map<String, String>) {
                 val real = container.real
-                real.odoProbe(t, results, carKm(real.jobs(), real.odometer()))
+                real.odoProbe(t, results, carKm(real.jobs(), real.odometer(), real.odoRealFrom() != null))
                 Prefs.put(this@DpfService, Prefs.ODO_PROBE, false)
             }
         }).apply { odoM = db.odometer() }
@@ -214,6 +195,8 @@ class DpfService : Service() {
             // or nothing new). Off the worker, so a long upload never keeps the next dongle probe waiting.
             syncInBackground()
             try { thin() } catch (e: Exception) { Log.d(TAG, "thinning failed: $e") }
+            // Once, after the v9 upgrade: frames from before it get the odometer at their time, in chunks
+            try { container.real.fillFrameOdo() } catch (e: Exception) { Log.d(TAG, "frame odometer fill failed: $e") }
             if (pauseAtHome()) {
                 // No dongle search and no notification at home; HomeWatch starts a fresh instance once the phone leaves
                 HomeWatch.schedule(this)
@@ -266,13 +249,11 @@ class DpfService : Service() {
             wake.acquire()
             val elm = if (spp != null) Elm(spp.inputStream, spp.outputStream) else Elm(ble!!.inputStream, ble.outputStream)
             elm.init()
-            startGps()
             nm.notify(ID_SERVICE, status("Logging"))
             val started = System.currentTimeMillis()
             try {
                 drive.drive(elm) { running }
             } finally {
-                stopGps()
                 try { db.linkStats(started, elm.timings) } catch (e: Exception) { Log.d(TAG, "link stats not saved: $e") }
             }
         }
@@ -348,17 +329,6 @@ class DpfService : Service() {
     }
 
     private fun alertId(key: String) = ID_ALERT + (key.hashCode() and 0xFFFF)
-
-    private fun startGps() {
-        if (checkSelfPermission(ACCESS_FINE_LOCATION) != PERMISSION_GRANTED) return
-        getSystemService(LocationManager::class.java)
-            .requestLocationUpdates(LocationManager.GPS_PROVIDER, 2000L, 0f, gps, Looper.getMainLooper())
-    }
-
-    private fun stopGps() {
-        getSystemService(LocationManager::class.java).removeUpdates(gps)
-        lastFix = null
-    }
 
     /** The icon, colour and tap-to-open every notification here shares. */
     private fun notification(channel: String) = Notification.Builder(this, channel)

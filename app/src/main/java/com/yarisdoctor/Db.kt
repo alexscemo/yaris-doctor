@@ -11,6 +11,7 @@ import com.yarisdoctor.domain.car.PID_LENGTHS
 import com.yarisdoctor.domain.drive.CONSUMPTION_MS
 import com.yarisdoctor.domain.drive.Consumption
 import com.yarisdoctor.domain.drive.Meter
+import com.yarisdoctor.domain.drive.Odometer
 import com.yarisdoctor.domain.drive.consumption
 import com.yarisdoctor.domain.drive.Poller
 import com.yarisdoctor.domain.drive.mergeRegens
@@ -43,10 +44,10 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 /** [name] null = in-memory database (Debug mode), gone when closed. Created by [AppContainer]: one per database per process. */
-class Db internal constructor(private val ctx: Context, name: String?) : SQLiteOpenHelper(ctx, name, null, 8), DriveStore {
+class Db internal constructor(private val ctx: Context, name: String?) : SQLiteOpenHelper(ctx, name, null, 9), DriveStore {
 
     override fun onCreate(db: SQLiteDatabase) {
-        // odo_m: GPS distance accumulated by this app (metres), our stand-in for the odometer
+        // odo_m: the car's odometer (metres), from the cluster's whole-mile reading plus vehicle speed (see Odometer)
         db.execSQL("CREATE TABLE sample(t INTEGER, soot INTEGER, temp INTEGER, regen INTEGER, odo_m REAL)")
         db.execSQL("CREATE TABLE regen(id INTEGER PRIMARY KEY, start_t INTEGER, end_t INTEGER, odo_start REAL, odo_end REAL, soot_start INTEGER, soot_end INTEGER)")
         db.execSQL(SAMPLE_T_INDEX)
@@ -56,6 +57,7 @@ class Db internal constructor(private val ctx: Context, name: String?) : SQLiteO
         createLink(db)
         createMaintenance(db)
         createFuel(db)
+        createOdometer(db)
     }
 
     override fun onUpgrade(db: SQLiteDatabase, old: Int, new: Int) {
@@ -76,9 +78,120 @@ class Db internal constructor(private val ctx: Context, name: String?) : SQLiteO
         }
         // v8: fill-ups
         if (old < 8) createFuel(db)
+        // v9: the car's own odometer replaces GPS distance; frames and warnings carry it too
+        if (old < 9) {
+            addColumn(db, "frame", "odo_m REAL")
+            addColumn(db, "alert", "odo_start REAL")
+            addColumn(db, "alert", "odo_end REAL")
+            createOdometer(db)
+            toCarOdometer(db)
+        }
     }
 
-    /** Fill-ups ([Fill]): day is an epoch day, cents what was paid, odo_m this phone's GPS odometer when logged that day. */
+    /**
+     * A log from before v9 (upgraded, or a v8 backup just restored) onto the car's odometer: warnings get theirs from the
+     * readings, and a cluster read the odometer probe already heard (0x611) moves the whole history at once; without one
+     * the first live read does it. Frames can be a million rows, so [fillFrameOdo] does them later, off the main thread.
+     */
+    private fun toCarOdometer(db: SQLiteDatabase) {
+        db.execSQL("UPDATE alert SET odo_start = ${odoAtSql("alert.start_t")}, odo_end = CASE WHEN end_t IS NULL THEN NULL ELSE ${odoAtSql("alert.end_t")} END")
+        Prefs.put(ctx, Prefs.ODO_FILLED, false)
+        Prefs.put(ctx, Prefs.ODO_FILLED_TO, 0L)
+        firstProbeRead(db)?.let { (t, miles) ->
+            val before = db.rawQuery("SELECT ${odoAtSql("?1")}", arrayOf(t.toString())).use { if (it.moveToFirst() && !it.isNull(0)) it.getDouble(0) else null }
+            if (before != null) firstRead(db, t, miles, before, Odometer.snap(before, miles, firstOfDrive = true))
+        }
+    }
+
+    /** [DatabaseBackup.restore] put back a snapshot from before v9 in [db]'s open transaction: its rows are GPS figures, not the car's odometer. */
+    internal fun restoredFromBeforeOdometer(db: SQLiteDatabase) {
+        db.execSQL("DELETE FROM odometer") // the reads of the log it replaced: a different scale from the restored rows
+        toCarOdometer(db)
+    }
+
+    /**
+     * Real cluster reads ([Meter.odometer]): [miles] as the dash showed it and the drive's odometer after [Odometer.snap].
+     * Rows logged before the first one are estimates: the old GPS distance, moved onto the car's odometer by [firstRead].
+     */
+    private fun createOdometer(db: SQLiteDatabase) =
+        db.execSQL("CREATE TABLE IF NOT EXISTS odometer(t INTEGER PRIMARY KEY, miles INTEGER, odo_m REAL)")
+
+    /** ALTER TABLE ADD COLUMN, skipped when [table] already has it (it can't be re-run). */
+    private fun addColumn(db: SQLiteDatabase, table: String, column: String) {
+        val has = db.rawQuery("PRAGMA table_info($table)", null).use { c -> List(c.count) { c.moveToNext(); c.getString(1) } }
+        if (column.substringBefore(' ') !in has) db.execSQL("ALTER TABLE $table ADD COLUMN $column")
+    }
+
+    /** The first 0x611 odometer frame the probe heard, as (time, miles), or null. */
+    private fun firstProbeRead(db: SQLiteDatabase): Pair<Long, Long>? =
+        db.rawQuery("SELECT t, hex FROM frame WHERE lid IN (?, ?) ORDER BY t", arrayOf("${Meter.PROBE}:611", "${Meter.PROBE}:ALL")).use {
+            while (it.moveToNext()) {
+                val miles = it.getString(1).split(' ', ':').firstNotNullOfOrNull(Meter::odoMiles)
+                if (miles != null) return it.getLong(0) to miles
+            }
+            null
+        }
+
+    /**
+     * The first cluster read ever: every row so far (GPS distance, or speed since a fresh install) moves by the step it
+     * took, [after] - [before], onto the car's odometer, and the hub gets all of it again. Its later reads only narrow the mile.
+     */
+    private fun firstRead(db: SQLiteDatabase, t: Long, miles: Long, before: Double, after: Double) {
+        val step = after - before
+        db.execSQL("UPDATE sample SET odo_m = odo_m + ?", arrayOf(step))
+        db.execSQL("UPDATE regen SET odo_start = odo_start + ?1, odo_end = odo_end + ?1", arrayOf(step))
+        db.execSQL("UPDATE frame SET odo_m = odo_m + ? WHERE odo_m IS NOT NULL", arrayOf(step))
+        db.execSQL("UPDATE alert SET odo_start = odo_start + ?1, odo_end = odo_end + ?1", arrayOf(step))
+        db.execSQL("UPDATE maintenance SET odo_m = odo_m + ? WHERE odo_m IS NOT NULL", arrayOf(step))
+        db.execSQL("UPDATE fuel SET odo_m = odo_m + ? WHERE odo_m IS NOT NULL", arrayOf(step))
+        db.insert("odometer", null, ContentValues().apply { put("t", t); put("miles", miles); put("odo_m", after) })
+        // The hub keeps the old figures until each row is sent again; frames go once fillFrameOdo() is done
+        Prefs.put(ctx, Prefs.SYNCED_ROWID, 0L)
+        Prefs.put(ctx, Prefs.SYNCED_REGENS, null as String?)
+        Prefs.put(ctx, Prefs.SYNCED_ALERTS, null as String?)
+        if (Prefs.bool(ctx, Prefs.ODO_FILLED, false)) Prefs.put(ctx, Prefs.SYNCED_FRAME_ROWID, 0L)
+    }
+
+    override fun odometerRead(t: Long, miles: Long, before: Double, after: Double) = tx { db ->
+        val first = db.rawQuery("SELECT 1 FROM odometer LIMIT 1", null).use { !it.moveToFirst() }
+        if (first) firstRead(db, t, miles, before, after)
+        else db.insert("odometer", null, ContentValues().apply { put("t", t); put("miles", miles); put("odo_m", after) })
+        Unit
+    }
+
+    /** This phone's logged odometer at [t] (metres): its last reading by then, else its first after; null without readings. */
+    fun odoAt(t: Long): Double? =
+        readableDatabase.rawQuery("SELECT ${odoAtSql("?1")}", arrayOf(t.toString())).use { if (it.moveToFirst() && !it.isNull(0)) it.getDouble(0) else null }
+
+    /** When the cluster was first read: rows before it carry an estimated odometer. Null before the first read. */
+    fun odoRealFrom(): Long? =
+        readableDatabase.rawQuery("SELECT MIN(t) FROM odometer", null).use { if (it.moveToFirst() && !it.isNull(0)) it.getLong(0) else null }
+
+    /** The newest cluster read, as (time, miles), or null. */
+    fun lastClusterRead(): Pair<Long, Long>? =
+        readableDatabase.rawQuery("SELECT t, miles FROM odometer ORDER BY t DESC LIMIT 1", null).use { if (it.moveToFirst()) it.getLong(0) to it.getLong(1) else null }
+
+    /**
+     * Gives frames from before v9 the odometer at their time, from this phone's readings, [FILL_CHUNK] rows per
+     * transaction so a reader never waits long. Resumes where it stopped ([Prefs.ODO_FILLED_TO]); true once done. Then
+     * the hub gets every frame again, now with its odometer.
+     */
+    fun fillFrameOdo(): Boolean {
+        if (Prefs.bool(ctx, Prefs.ODO_FILLED, false)) return true
+        val top = readableDatabase.rawQuery("SELECT COALESCE(MAX(rowid), 0) FROM frame WHERE odo_m IS NULL", null).use { it.moveToFirst(); it.getLong(0) }
+        var from = Prefs.long(ctx, Prefs.ODO_FILLED_TO)
+        while (from < top) {
+            val to = from + FILL_CHUNK
+            writableDatabase.execSQL("UPDATE frame SET odo_m = ${odoAtSql("frame.t")} WHERE rowid > ? AND rowid <= ? AND odo_m IS NULL", arrayOf(from, to))
+            from = to
+            Prefs.put(ctx, Prefs.ODO_FILLED_TO, from)
+        }
+        Prefs.put(ctx, Prefs.ODO_FILLED, true)
+        Prefs.put(ctx, Prefs.SYNCED_FRAME_ROWID, 0L)
+        return true
+    }
+
+    /** Fill-ups ([Fill]): day is an epoch day, cents what was paid, odo_m the car's odometer at the fill-up. */
     private fun createFuel(db: SQLiteDatabase) =
         db.execSQL("CREATE TABLE fuel(id INTEGER PRIMARY KEY, day INTEGER, litres REAL, cents INTEGER, odo_m REAL)")
 
@@ -99,7 +212,7 @@ class Db internal constructor(private val ctx: Context, name: String?) : SQLiteO
     fun deleteFill(id: Long) = writableDatabase.delete("fuel", "id = ?", arrayOf(id.toString()))
 
     /**
-     * This phone's GPS odometer at the stop where the meter saw a fill-up of [litres] on [day] (epoch day, the phone's
+     * The car's odometer at the stop where the meter saw a fill-up of [litres] on [day] (epoch day, the phone's
      * zone), or null when it saw none: the fill-up is usually logged later, after driving on. The reads reach back two
      * days, as the last one before the stop can be from an earlier drive.
      */
@@ -120,7 +233,7 @@ class Db internal constructor(private val ctx: Context, name: String?) : SQLiteO
         }
     }
 
-    /** The logbook ([Job]): day is an epoch day, km the car's odometer, odo_m this phone's GPS odometer when logged. */
+    /** The logbook ([Job]): day is an epoch day, km the odometer as typed, odo_m the logged odometer when written. */
     private fun createMaintenance(db: SQLiteDatabase) =
         db.execSQL("CREATE TABLE maintenance(id INTEGER PRIMARY KEY, day INTEGER, kind TEXT, note TEXT, done INTEGER, km REAL, odo_m REAL, every_km INTEGER, every_months INTEGER)")
 
@@ -185,24 +298,25 @@ class Db internal constructor(private val ctx: Context, name: String?) : SQLiteO
         "SELECT SUM(total_ms * n) / SUM(n) FROM link WHERE t = (SELECT MAX(t) FROM link)", null,
     ).use { if (it.moveToFirst() && !it.isNull(0)) it.getLong(0) else null }
 
+    /** odo_start / odo_end: the car's odometer (metres) when the warning opened and closed. */
     private fun createAlerts(db: SQLiteDatabase) =
-        db.execSQL("CREATE TABLE alert(id INTEGER PRIMARY KEY, key TEXT, level INTEGER, text TEXT, start_t INTEGER, end_t INTEGER)")
+        db.execSQL("CREATE TABLE alert(id INTEGER PRIMARY KEY, key TEXT, level INTEGER, text TEXT, start_t INTEGER, end_t INTEGER, odo_start REAL, odo_end REAL)")
 
     /**
      * Makes the open alert rows match [active]: new keys open a row, keys no longer active get [t] as their end, open
      * ones take the latest text (the numbers in it change). Returns the newly opened findings, to notify.
      */
-    override fun syncAlerts(t: Long, active: List<Finding>): List<Finding> = tx { db ->
+    override fun syncAlerts(t: Long, active: List<Finding>, odoM: Double): List<Finding> = tx { db ->
         val ids = HashMap<String, Long>()
         val texts = HashMap<String, String>()
         db.rawQuery("SELECT id, key, text FROM alert WHERE end_t IS NULL", null).use {
             while (it.moveToNext()) { ids[it.getString(1)] = it.getLong(0); texts[it.getString(1)] = it.getString(2) }
         }
         val d = diffAlerts(texts, active)
-        for (key in d.close) db.execSQL("UPDATE alert SET end_t = ? WHERE id = ?", arrayOf(t, ids.getValue(key)))
+        for (key in d.close) db.execSQL("UPDATE alert SET end_t = ?, odo_end = ? WHERE id = ?", arrayOf(t, odoM, ids.getValue(key)))
         for (f in d.update) db.execSQL("UPDATE alert SET text = ?, level = ? WHERE id = ?", arrayOf(f.text, f.level, ids.getValue(f.key)))
         for (f in d.open) db.insert("alert", null, ContentValues().apply {
-            put("key", f.key); put("level", f.level); put("text", f.text); put("start_t", t)
+            put("key", f.key); put("level", f.level); put("text", f.text); put("start_t", t); put("odo_start", odoM)
         })
         d.open
     }
@@ -218,9 +332,9 @@ class Db internal constructor(private val ctx: Context, name: String?) : SQLiteO
             out.values.toList()
         }
 
-    /** One row per answered request: [lid] ("DD") and the payload after `61 <lid>`, decoded on read with [PIDS]. */
+    /** One row per answered request: [lid] ("DD") and the payload after `61 <lid>`, decoded on read with [PIDS]; odo_m the car's odometer then. */
     private fun createFrames(db: SQLiteDatabase) {
-        db.execSQL("CREATE TABLE frame(t INTEGER, lid TEXT, hex TEXT)")
+        db.execSQL("CREATE TABLE frame(t INTEGER, lid TEXT, hex TEXT, odo_m REAL)")
         db.execSQL("CREATE INDEX frame_lid_t ON frame(lid, t)")
         db.execSQL("CREATE INDEX frame_t ON frame(t)")
     }
@@ -230,14 +344,14 @@ class Db internal constructor(private val ctx: Context, name: String?) : SQLiteO
      * ash record, the calibration ID and the meter's fuel level, kept under their whole codes ("A918", "0904", "M29") so they
      * can't clash with a `21` lid.
      */
-    override fun frames(t: Long, replies: Map<String, String>) = tx { db ->
+    override fun frames(t: Long, replies: Map<String, String>, odoM: Double) = tx { db ->
         for ((code, reply) in replies) {
             val lid = when (code) {
                 in PID_LENGTHS -> code.substring(2)
                 Poller.ASH_RECORD, Poller.CAL_ID, Meter.FUEL -> code
                 else -> continue
             }
-            db.insert("frame", null, ContentValues().apply { put("t", t); put("lid", lid); put("hex", reply.substring(4)) })
+            db.insert("frame", null, ContentValues().apply { put("t", t); put("lid", lid); put("hex", reply.substring(4)); put("odo_m", odoM) })
         }
     }
 
@@ -599,7 +713,7 @@ class Db internal constructor(private val ctx: Context, name: String?) : SQLiteO
         .also { phones = it }
 
     /**
-     * The phones' odometers at a set of instants, read once: one indexed statement per phone over a temp table of the
+     * The car's odometer at a set of instants, read once: one indexed statement per phone over a temp table of the
      * instants. [between] is the car's distance across any two of them. Replaced two queries per phone per regen, which
      * made the Overview's 5 s refresh run hundreds of them.
      */
@@ -607,16 +721,28 @@ class Db internal constructor(private val ctx: Context, name: String?) : SQLiteO
         private val at = instants.distinct().sorted()
         private val index = at.withIndex().associate { (i, t) -> t to i }
         private val devices = phones()
-        private val values: Map<String?, List<Double?>> = if (at.isEmpty()) devices.associateWith { emptyList<Double?>() } else read()
+        private val values: Map<String?, List<Reading?>> = if (at.isEmpty()) devices.associateWith { emptyList<Reading?>() } else read()
 
-        /** Metres the car drove between two instants: each phone's own GPS odometer only grows, so add up their progress. */
-        fun between(t0: Long, t1: Long): Double = devices.sumOf { phone ->
-            val odo = values.getValue(phone)
-            maxOf(0.0, (odo[index.getValue(t1)] ?: 0.0) - (odo[index.getValue(t0)] ?: 0.0))
+        /**
+         * Metres the car drove between two instants. Every phone logs the same car odometer, so the newest reading by
+         * then from any phone is the car's: two phones on one drive count it once, and a hand-over adds up.
+         */
+        fun between(t0: Long, t1: Long): Double {
+            val a = car(index.getValue(t0)) ?: return 0.0
+            val b = car(index.getValue(t1)) ?: return 0.0
+            return maxOf(0.0, b - a)
         }
 
-        /** A phone's odometer at each instant: its last reading by then, else its first reading (it hadn't driven yet). */
-        private fun read(): Map<String?, List<Double?>> {
+        /** The odometer at instant [i]: the newest reading by then from any phone, else the earliest one after (none had driven yet). */
+        private fun car(i: Int): Double? {
+            val r = devices.mapNotNull { values.getValue(it)[i] }
+            return (r.filter { it.byThen }.maxByOrNull { it.t } ?: r.minByOrNull { it.t })?.odo
+        }
+
+        /** A phone's reading for an instant: its last one by then ([byThen]), else its first one. */
+        private inner class Reading(val t: Long, val odo: Double, val byThen: Boolean)
+
+        private fun read(): Map<String?, List<Reading?>> {
             val db = writableDatabase
             // One transaction: another thread's regens() must not clear the temp table between the inserts and the reads
             db.beginTransaction()
@@ -627,13 +753,14 @@ class Db internal constructor(private val ctx: Context, name: String?) : SQLiteO
                 val out = devices.associateWith { phone ->
                     val (from, arg) = if (phone == null) "sample WHERE" to null else "peer_sample WHERE device = ? AND" to phone
                     db.rawQuery(
-                        "SELECT (SELECT odo_m FROM $from t <= odo_at.t ORDER BY t DESC LIMIT 1), (SELECT odo_m FROM $from 1 ORDER BY t LIMIT 1) FROM odo_at ORDER BY i",
-                        if (arg == null) null else arrayOf(arg, arg),
+                        "SELECT (SELECT t FROM $from t <= odo_at.t ORDER BY t DESC LIMIT 1), (SELECT odo_m FROM $from t <= odo_at.t ORDER BY t DESC LIMIT 1), " +
+                            "(SELECT t FROM $from 1 ORDER BY t LIMIT 1), (SELECT odo_m FROM $from 1 ORDER BY t LIMIT 1) FROM odo_at ORDER BY i",
+                        if (arg == null) null else arrayOf(arg, arg, arg, arg),
                     ).use { c ->
-                        val list = ArrayList<Double?>(at.size)
+                        val list = ArrayList<Reading?>(at.size)
                         while (c.moveToNext()) list += when {
-                            !c.isNull(0) -> c.getDouble(0)
-                            !c.isNull(1) -> c.getDouble(1)
+                            !c.isNull(1) -> Reading(c.getLong(0), c.getDouble(1), true)
+                            !c.isNull(3) -> Reading(c.getLong(2), c.getDouble(3), false)
                             else -> null
                         }
                         list
@@ -698,11 +825,11 @@ class Db internal constructor(private val ctx: Context, name: String?) : SQLiteO
             out
         }
 
-    /** Frame rows after [rowid] for the hub, as [rowid, t, lid, hex]. The hub takes 2-character lids only, so not the ash record. */
+    /** Frame rows after [rowid] for the hub, as [rowid, t, lid, hex, odo_m]. The hub takes 2-character lids only, so not the ash record. */
     fun framesAfter(rowid: Long, limit: Int): JSONArray =
-        readableDatabase.rawQuery("SELECT rowid, t, lid, hex FROM frame WHERE rowid > ? AND length(lid) = 2 ORDER BY rowid LIMIT ?", arrayOf(rowid.toString(), limit.toString())).use {
+        readableDatabase.rawQuery("SELECT rowid, t, lid, hex, odo_m FROM frame WHERE rowid > ? AND length(lid) = 2 ORDER BY rowid LIMIT ?", arrayOf(rowid.toString(), limit.toString())).use {
             val out = JSONArray()
-            while (it.moveToNext()) out.put(JSONArray().put(it.getLong(0)).put(it.getLong(1)).put(it.getString(2)).put(it.getString(3)))
+            while (it.moveToNext()) out.put(JSONArray().put(it.getLong(0)).put(it.getLong(1)).put(it.getString(2)).put(it.getString(3)).put(it.json(4)))
             out
         }
 
@@ -711,11 +838,12 @@ class Db internal constructor(private val ctx: Context, name: String?) : SQLiteO
         // ORDER BY rowid DESC LIMIT 1 walks back from the newest row; MAX() with a WHERE would scan the whole table
         readableDatabase.rawQuery("SELECT rowid FROM frame WHERE length(lid) = 2 ORDER BY rowid DESC LIMIT 1", null).use { if (it.moveToFirst()) it.getLong(0) else 0L }
 
-    /** Alerts open or ended after [since], as [id, key, level, text, start, end]; resent whole when they change (text and end do). */
+    /** Alerts open or ended after [since], as [id, key, level, text, start, end, odo_start, odo_end]; resent whole when they change (text and end do). */
     fun alertRows(since: Long): JSONArray =
-        readableDatabase.rawQuery("SELECT id, key, level, text, start_t, end_t FROM alert WHERE end_t IS NULL OR end_t >= ?", arrayOf(since.toString())).use {
+        readableDatabase.rawQuery("SELECT id, key, level, text, start_t, end_t, odo_start, odo_end FROM alert WHERE end_t IS NULL OR end_t >= ?", arrayOf(since.toString())).use {
             val out = JSONArray()
-            while (it.moveToNext()) out.put(JSONArray().put(it.getLong(0)).put(it.getString(1)).put(it.getInt(2)).put(it.getString(3)).put(it.getLong(4)).put(it.json(5)))
+            while (it.moveToNext()) out.put(JSONArray().put(it.getLong(0)).put(it.getString(1)).put(it.getInt(2)).put(it.getString(3)).put(it.getLong(4)).put(it.json(5))
+                .put(it.json(6)).put(it.json(7)))
             out
         }
 
@@ -761,5 +889,11 @@ class Db internal constructor(private val ctx: Context, name: String?) : SQLiteO
             "link" to "link.t BETWEEN a - $TRIP_GAP_MS AND b - $TRIP_GAP_MS",
         )
         private const val SAMPLE_T_INDEX = "CREATE INDEX IF NOT EXISTS sample_t ON sample(t)"
+        /** Frames given their odometer per transaction by [fillFrameOdo]. */
+        private const val FILL_CHUNK = 20_000L
+
+        /** SQL for this phone's odometer at instant [t] (a column or `?`): its last reading by then, else its first after. */
+        private fun odoAtSql(t: String) =
+            "COALESCE((SELECT s.odo_m FROM sample s WHERE s.t <= $t ORDER BY s.t DESC LIMIT 1), (SELECT s.odo_m FROM sample s WHERE s.t > $t ORDER BY s.t LIMIT 1))"
     }
 }

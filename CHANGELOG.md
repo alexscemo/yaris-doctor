@@ -4,7 +4,7 @@ All notable changes to Yaris Doctor. The format follows [Keep a Changelog](https
 versions follow [Semantic Versioning](https://semver.org/). Each release's GitHub notes are its section below, so a tag
 without a section here fails the release build.
 
-## [Unreleased]
+## [1.1.1] - 2026-10-29
 
 ### Fixed
 

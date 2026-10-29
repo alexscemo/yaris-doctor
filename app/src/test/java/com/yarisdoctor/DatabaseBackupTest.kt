@@ -4,6 +4,7 @@ import android.content.Context
 import android.database.Cursor
 import android.database.sqlite.SQLiteDatabase
 import androidx.test.core.app.ApplicationProvider
+import com.yarisdoctor.domain.drive.MILE_M
 import com.yarisdoctor.domain.health.Finding
 import com.yarisdoctor.domain.maintenance.Fill
 import com.yarisdoctor.domain.maintenance.Job
@@ -45,8 +46,8 @@ class DatabaseBackupTest {
         db.sample(3_000, 12, 240, false, 400.0)
         val id = db.regenStart(2_000, 250.0, 30)
         db.regenEnd(id, 2_500, 300.0, 12)
-        db.frames(2_000, mapOf("210C" to "610C0BB8", "21DD" to "61DD00C8"))
-        db.syncAlerts(2_000, listOf(Finding("dpf_temp", 2, "DPF too hot")))
+        db.frames(2_000, mapOf("210C" to "610C0BB8", "21DD" to "61DD00C8"), 0.0)
+        db.syncAlerts(2_000, listOf(Finding("dpf_temp", 2, "DPF too hot")), 0.0)
         db.putPeers(
             JSONArray().put(JSONArray().put("other").put(7).put(1_500).put(11).put(210).put(0).put(50.0)),
             JSONArray().put(JSONArray().put("other").put(7).put(1_500).put(1_900).put(11).put(9)),
@@ -65,7 +66,7 @@ class DatabaseBackupTest {
                 DatabaseBackup.RestoreResult(readings = 3, regens = 1, frames = 2, warnings = 1),
                 DatabaseBackup.restore(fresh, snapshot),
             )
-            assertEquals("restore keeps the schema version", 8, fresh.readableDatabase.version)
+            assertEquals("restore keeps the schema version", 9, fresh.readableDatabase.version)
 
             assertEquals(listOf(1000L, 2000L, 3000L), fresh.rows("SELECT t FROM sample ORDER BY t") { it.getLong(0) })
             assertEquals(listOf(10, 30, 12), fresh.rows("SELECT soot FROM sample ORDER BY t") { it.getInt(0) })
@@ -130,6 +131,35 @@ class DatabaseBackupTest {
         }
     }
 
+    /**
+     * A backup from before the car odometer (schema 8: no odometer on frames or warnings, GPS figures): it restores by
+     * column, and its probe's 0x611 frame moves it onto the car's odometer like the upgrade does.
+     */
+    @Test fun aV8BackupRestoresOntoTheCarsOdometer() {
+        seed(live)
+        live.odoProbe(3_000, mapOf("ODO:611" to "6112100000400015C47"), null)
+        DatabaseBackup.export(live, snapshot)
+        SQLiteDatabase.openDatabase(snapshot.absolutePath, null, SQLiteDatabase.OPEN_READWRITE).use {
+            it.execSQL("CREATE TABLE f8 AS SELECT t, lid, hex FROM frame"); it.execSQL("DROP TABLE frame"); it.execSQL("ALTER TABLE f8 RENAME TO frame")
+            it.execSQL("CREATE TABLE a8 AS SELECT id, key, level, text, start_t, end_t FROM alert"); it.execSQL("DROP TABLE alert"); it.execSQL("ALTER TABLE a8 RENAME TO alert")
+            it.execSQL("DROP TABLE odometer")
+            it.execSQL("PRAGMA user_version = 8")
+        }
+        val target = Db(context, null)
+        try {
+            target.odometerRead(500, 1, 0.0, 2_000.0) // the target's own odometer reads: a different log, so they go
+            assertEquals(3, DatabaseBackup.restore(target, snapshot).readings)
+            val step = (89_159 + 0.5) * MILE_M - 400.0 // the probe heard 89,159 mi when the GPS figure was 400 m
+            assertEquals(listOf(100.0 + step, 250.0 + step, 400.0 + step), target.rows("SELECT odo_m FROM sample ORDER BY t") { it.getDouble(0) })
+            assertEquals(250.0 + step, target.rows("SELECT odo_start FROM alert") { it.getDouble(0) }.single(), 1e-6)
+            assertEquals(3_000L, target.odoRealFrom())
+            assertTrue(target.fillFrameOdo())
+            assertEquals(250.0 + step, target.rows("SELECT odo_m FROM frame WHERE lid = 'DD'") { it.getDouble(0) }.single(), 1e-6)
+        } finally {
+            target.close()
+        }
+    }
+
     @Test fun anEmptyDatabaseExportsAndRestores() {
         DatabaseBackup.export(live, snapshot)
         assertTrue(snapshot.length() > 0)
@@ -137,7 +167,7 @@ class DatabaseBackupTest {
         val fresh = Db(context, null)
         try {
             assertEquals(DatabaseBackup.RestoreResult(0, 0, 0, 0), DatabaseBackup.restore(fresh, snapshot))
-            assertEquals(8, fresh.readableDatabase.version)
+            assertEquals(9, fresh.readableDatabase.version)
         } finally {
             fresh.close()
         }

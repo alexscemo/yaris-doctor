@@ -9,8 +9,8 @@ import java.util.Locale
 
 /**
  * One logbook line. Done: work carried out on [day] (epoch day), at odometer [km] if the owner gave it. Planned: work due
- * on [day] and/or at [km], at least one. [odoM]: this phone's GPS odometer (metres) when a done line was written on its
- * own day; with [km] it anchors the car's mileage ([carKm]). [everyKm] / [everyMonths]: remind again after that much.
+ * on [day] and/or at [km], at least one. [odoM]: the logged odometer (metres) when a done line was written on its
+ * own day; with [km] it anchors the car's mileage ([carKm]) until the cluster's odometer has been read. [everyKm] / [everyMonths]: remind again after that much.
  * Distances are km, whatever the display units.
  */
 data class Job(
@@ -44,16 +44,18 @@ fun title(j: Job): String = if (j.kind == OTHER) j.note.trim().ifEmpty { OTHER }
 /** Later day first, then the line written last. */
 val NEWEST = compareBy<Job>({ it.day }, { it.id })
 
-/** The newest done line with both a reading and the GPS odometer: what [carKm] counts from. */
+/** The newest done line with both a reading and the logged odometer: what [carKm] counts from before the cluster is read. */
 fun anchor(jobs: List<Job>): Job? = jobs.filter { it.done && it.km != null && it.odoM != null }.maxWithOrNull(NEWEST)
 
 /**
- * The car's odometer now, km: the [anchor]'s reading plus this phone's GPS distance since. Null until there is one.
- * Deleting the newest trips winds [odoM] back, so the distance is never negative.
+ * The car's odometer now, km. [odoIsCar]: the cluster's odometer has been read, so the logged [odoM] (metres) is the
+ * car's own. Before that, the [anchor]'s reading plus the distance logged since; null without one. Deleting the newest
+ * trips winds [odoM] back, so the distance is never negative.
  */
-fun carKm(jobs: List<Job>, odoM: Double): Double? = anchor(jobs)?.let { it.km!! + (odoM - it.odoM!!).coerceAtLeast(0.0) / 1000 }
+fun carKm(jobs: List<Job>, odoM: Double, odoIsCar: Boolean = false): Double? =
+    if (odoIsCar) odoM / 1000 else anchor(jobs)?.let { it.km!! + (odoM - it.odoM!!).coerceAtLeast(0.0) / 1000 }
 
-/** Km driven since done line [j]: this phone's GPS when the line has its odometer, else the car's readings; null when unknown. */
+/** Km driven since done line [j]: the logged odometer when the line has it, else the car's readings; null when unknown. */
 fun kmSince(j: Job, odoM: Double, carKm: Double?): Double? = when {
     j.odoM != null -> (odoM - j.odoM).coerceAtLeast(0.0) / 1000
     j.km != null && carKm != null -> (carKm - j.km).coerceAtLeast(0.0)
@@ -70,8 +72,8 @@ data class Due(val job: Job, val dueDay: Long?, val dueKm: Double?, val kmLeft: 
  * Every reminder, overdue first, then soonest. A planned line replaces its kind's interval reminder. A done line that
  * set no interval ends its kind's reminders, so changing the oil without one doesn't keep an older interval running.
  */
-fun upcoming(jobs: List<Job>, odoM: Double, today: Long): List<Due> {
-    val car = carKm(jobs, odoM)
+fun upcoming(jobs: List<Job>, odoM: Double, today: Long, odoIsCar: Boolean = false): List<Due> {
+    val car = carKm(jobs, odoM, odoIsCar)
     val planned = jobs.filter { !it.done }
     val plannedGroups = planned.map(::group).toSet()
     fun due(j: Job, day: Long?, km: Double?, left: Double?) =

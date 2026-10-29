@@ -63,8 +63,7 @@ interface DriveEffects {
 /**
  * Everything one service instance knows about the car between and during dongle sessions: the regen being recorded,
  * the live health checks and which alerts were notified. It outlives a Bluetooth drop shorter than [REGEN_GAP_MS], so a
- * flaky dongle neither splits a regen nor re-notifies a warning. Not thread-safe: the service's worker thread drives
- * it, except [odoM], which the GPS callback writes.
+ * flaky dongle neither splits a regen nor re-notifies a warning. Not thread-safe: the service's worker thread drives it.
  */
 class DriveSession(
     private val store: DriveStore,
@@ -77,8 +76,13 @@ class DriveSession(
     /** Fuel level every [Meter.FUEL_MS] and the odometer probe; null = engine only. */
     private val meterHooks: MeterHooks? = null,
 ) {
-    /** GPS distance on this phone, metres. */
+    /**
+     * The car's odometer, metres: the cluster's whole-mile reading ([Meter.odometer]) plus the vehicle speed since
+     * ([Odometer]). The service starts it from the newest logged reading.
+     */
     @Volatile var odoM = 0.0
+    /** The cluster was read in the drive that is open: the next read narrows the mile rather than starting fresh. */
+    private var odoInDrive = false
 
     private val rec = Recorder(store)
     private var checker = Checker(model2015)
@@ -110,6 +114,7 @@ class DriveSession(
         // No ECU data for REGEN_GAP_MS: the drive is over, so its live alerts end and the next drive notifies afresh
         if (lastSeen > 0 && now() - lastSeen > REGEN_GAP_MS) {
             lastSeen = 0
+            odoInDrive = false
             checker = Checker(model2015)
             effects.driveEnded()
             trend = history() // the engine-stop readings of this drive feed the DPF sensor check
@@ -128,6 +133,10 @@ class DriveSession(
         val meter = Meter(link)
         var fuelAt = Long.MIN_VALUE / 2
         var fuelMisses = 0
+        var odoAt = Long.MIN_VALUE / 2 // so the first cycle reads it
+        var odoMisses = 0
+        var lastKmh = 0.0
+        var lastKmhT = 0L
         var fails = 0
         var seen = false
         var lastSample = 0L
@@ -145,7 +154,13 @@ class DriveSession(
                 fails = 0
                 seen = true
                 lastSeen = t
-                store.frames(t, replies)
+                // Distance between cluster reads: the ECU's vehicle speed, added up cycle by cycle
+                replies["210D"]?.substring(4, 6)?.toIntOrNull(16)?.toDouble()?.let { kmh ->
+                    if (lastKmhT > 0) odoM = Odometer.advance(odoM, lastKmh, kmh, t - lastKmhT)
+                    lastKmh = kmh
+                    lastKmhT = t
+                }
+                store.frames(t, replies, odoM)
                 val soot = replies[PID_SOOT]?.let(::sootOf)
                 val temp = replies[PID_TEMP]?.let(::tempOf)
                 // The bit set without an rpm reply in the same cycle is unknown: ignition off mid-cycle answers 21DF but not 210C (22 Oct, 17:53)
@@ -165,7 +180,19 @@ class DriveSession(
                     if (fuelMisses < 3 && t - fuelAt >= Meter.FUEL_MS) {
                         fuelAt = t
                         val r = meter.fuel()
-                        if (r == null) fuelMisses++ else { fuelMisses = 0; store.frames(t, mapOf(Meter.FUEL to r)) }
+                        if (r == null) fuelMisses++ else { fuelMisses = 0; store.frames(t, mapOf(Meter.FUEL to r), odoM) }
+                    }
+                    // The dash odometer: at the start of the drive, then every few minutes to keep the speed sum honest
+                    if (odoMisses < 3 && t - odoAt >= Meter.ODO_MS) {
+                        odoAt = t
+                        val miles = meter.odometer()
+                        if (miles == null) odoMisses++ else {
+                            odoMisses = 0
+                            val before = odoM
+                            odoM = Odometer.snap(before, miles, firstOfDrive = !odoInDrive)
+                            odoInDrive = true
+                            store.odometerRead(t, miles, before, odoM)
+                        }
                     }
                     if (meterHooks.probeArmed()) meterHooks.probed(t, meter.probe())
                 }
@@ -189,7 +216,7 @@ class DriveSession(
                 publish(rec, r.soot, r.temp, r.regen)
                 val t = now()
                 val frames = sim.frames(r)
-                store.frames(t, frames + (Meter.FUEL to sim.fuel())) // the checker gets only the engine's
+                store.frames(t, frames + (Meter.FUEL to sim.fuel()), odoM) // the checker gets only the engine's
                 checks(t, checker.check(t, frames, rec.inRegen))
                 effects.live(t, r.soot, r.temp, r.regen)
                 // The debug Db lives in RAM: keep 30 min at full rate, older frames one per minute, or a day of it runs out of memory
@@ -221,7 +248,7 @@ class DriveSession(
         val active = live + trend
         // A value back in range: its alert row is closed (kept as history), and the notification it raised goes away
         showing.removeAll { k -> active.none { it.key == k }.also { gone -> if (gone) effects.alertCleared(k) } }
-        for (f in store.syncAlerts(t, active)) {
+        for (f in store.syncAlerts(t, active, odoM)) {
             if (!notified.add(f.key)) continue
             showing += f.key
             effects.alertOpened(f)

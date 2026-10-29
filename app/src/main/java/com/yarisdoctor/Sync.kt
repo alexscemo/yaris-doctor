@@ -143,6 +143,8 @@ object Sync {
                         .apply {
                             if (!first) return@apply
                             put("regens_all", true).put("alerts", alerts).put("defs", pidDefs()).put("rules", ruleDefs()).put("dpf", db.dpfRows())
+                            // odo_m is the car's odometer from here on; before it, an estimate moved onto it from GPS
+                            db.odoRealFrom()?.let { put("odo_real_from", it) }
                             // Trips deleted on the phone: the hub removes this phone's rows in these windows
                             if (deletes.isNotEmpty()) put("deleted", JSONArray(deletes.map { JSONArray().put(it.first).put(it.last) }))
                         })

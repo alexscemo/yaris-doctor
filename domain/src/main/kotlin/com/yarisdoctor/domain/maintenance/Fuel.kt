@@ -7,7 +7,7 @@ import java.time.ZoneId
 import kotlin.math.abs
 
 /**
- * One fill-up: [day] (epoch day), [litres] put in, [cents] paid in the phone's currency. [odoM]: this phone's GPS
+ * One fill-up: [day] (epoch day), [litres] put in, [cents] paid in the phone's currency. [odoM]: the car's
  * odometer at the fill-up, kept so consumption can be worked out later: at the stop where the meter saw the tank rise
  * ([refills]), else when it was logged on its own day.
  */

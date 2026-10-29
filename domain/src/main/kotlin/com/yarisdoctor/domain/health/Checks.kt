@@ -214,7 +214,7 @@ val TREND_RULES = listOf(
     Triple("soot_floor", "Soot high after a regen", "Estimate: soot at $SOOT_FLOOR_HIGH % or more 5 min after the newest regen ended. A burn ends near 10 %, and the figure 5 min on is what the ECU really reads after it. Toyota 1ND-TV manual (2011-2014): the DPF test passes a filter that reads 40 % or less after two forced regens. The owner's car read 38-40 % after each regen while its ash record was wrongly cleared, with regens every ~40 km. A high floor points at a wrong ash record, ash build-up or the pressure sensor."),
     Triple("regen_hot", "Regen ran hot", "The newest regen's peak DPF temperature (Exhaust Temperature B1S2) above Toyota's regen range: 500-700 °C on 2011-2014 cars, 500-750 °C on 2015+ (Settings → Model year), from the 1ND-TV manual. The owner's car peaks at 627-638 °C. A hotter burn (too much soot at once, or too much after injection) can crack the filter."),
     Triple("short_trips", "Regen due on short drives", "Estimate: the next regen is due within $SHORT_TRIP_DUE_KM km (the Next regen tile) and each of the last 3 drives took under $SHORT_TRIP_MIN min. A regen needs 15-20 min of steady driving (carchecker, 1.4 D-4D); started on a short drive it stops early and soot keeps climbing."),
-    Triple("maintenance_due", "Maintenance due", "A reminder in the Maintenance tab fell due: the distance or months set on the last time a job was done, or the date or odometer a job was planned for. Oil changes default to every $OIL_CHANGE_KM km, Toyota's interval, checked in its P252F (oil dilution) procedure: each regen's after injection puts some fuel in the oil. Distance is the car's mileage from the reading you gave plus this phone's GPS, or this phone's GPS alone. Off until a job with a reminder is logged."),
+    Triple("maintenance_due", "Maintenance due", "A reminder in the Maintenance tab fell due: the distance or months set on the last time a job was done, or the date or odometer a job was planned for. Oil changes default to every $OIL_CHANGE_KM km, Toyota's interval, checked in its P252F (oil dilution) procedure: each regen's after injection puts some fuel in the oil. Distance is the car's odometer, read from the instrument cluster (before its first read: the mileage you gave plus the distance logged since). Off until a job with a reminder is logged."),
     Triple("dpf_sensor_zero", "DPF pressure sensor off zero", "The DPF pressure sensor reads over 1 kPa, or under -0.5 kPa, with the engine stopped and the ignition on, when no exhaust flows. Toyota 1ND-TV manual: the displayed value leaves out the ECU's zero-point correction, so it may read about ±0.3 kPa at zero; the owner's car reads 0.3-0.4. A drifting sensor or a split or blocked hose makes the ECU's soot figure wrong."),
 )
 
@@ -255,7 +255,7 @@ class FinishedRegen(val start: Long, val end: Long, val odoStart: Double, val od
 /**
  * [DpfCondition] for each of [regens] (oldest first): restriction in the 5 min after each (a fast-loading filter has
  * already risen a lot by 15), and its rise per km over the last 10 min of driving before the next regen, or before
- * [newestFrame] for the latest one. [restrictions] reads the readings between two instants; [odometer] is the GPS odometer now.
+ * [newestFrame] for the latest one. [restrictions] reads the readings between two instants; [odometer] is the car's odometer now.
  */
 fun dpfConditions(regens: List<FinishedRegen>, newestFrame: Long, odometer: Double, restrictions: (Long, Long) -> List<Double>): List<DpfCondition> =
     regens.mapIndexed { i, r ->

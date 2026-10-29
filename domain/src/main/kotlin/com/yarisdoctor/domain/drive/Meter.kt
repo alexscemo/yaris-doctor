@@ -42,6 +42,17 @@ class Meter(private val link: ObdLink) {
         return out
     }
 
+    /**
+     * The dash odometer in whole miles, from the cluster's CAN broadcast on 0x611 (about once a second), or null when no
+     * frame came in [ODO_LISTEN_MS]. Listens with headers on, then puts headers off and the engine's header back.
+     */
+    fun odometer(): Long? = try {
+        if (link.send("AT H1") != "OK" || link.send("AT CRA 611") != "OK") null
+        else link.monitor(ODO_LISTEN_MS).firstNotNullOfOrNull(::odoMiles)
+    } finally {
+        if (link.send("AT H0") != "OK") link.init() else engine()
+    }
+
     /** Back to the engine ECU; a full init when the dongle didn't take it. */
     private fun engine() {
         if (link.send("AT SH 7E0") != "OK" || link.send("AT CRA 7E8") != "OK") link.init()
@@ -61,6 +72,21 @@ class Meter(private val link: ObdLink) {
 
         /** Litres from the stored payload byte (hex after `61 29`). Confirmed on the car, 29 Oct 2026. */
         fun litres(hex: String): Double? = hex.take(2).toIntOrNull(16)?.let { it * 0.5 }
+
+        /** The cluster odometer is read at the start of a drive and then this often, outside regens (~1.5 s each). */
+        const val ODO_MS = 5 * 60_000L
+        /** 0x611 comes about once a second: long enough for one frame, short enough not to stall the engine log. */
+        const val ODO_LISTEN_MS = 1_500L
+
+        /**
+         * Miles from one monitor line with headers on: `611` + 8 bytes, the first `21`, the odometer in the last 3 (big
+         * endian). Confirmed on the car 29 Oct 2026: `611 21 00 00 04 00 01 5C 47` = 89,159 mi, the dash's 143,487 km.
+         * Lines with another first byte, a cut-off line or ELM chatter (`<DATA ERROR`, `STOPPED`) are null.
+         */
+        fun odoMiles(line: String): Long? {
+            if (line.length != 19 || !line.startsWith("61121") || !line.all { it in '0'..'9' || it in 'A'..'F' }) return null
+            return line.substring(13).toLong(16)
+        }
 
         /** The 0x611 lines in order with repeats dropped: the odometer changes rarely, so this stays short. */
         fun distinct(lines: List<String>) = lines.distinct().take(200).joinToString(" ")

@@ -3,6 +3,7 @@ package com.yarisdoctor
 import android.app.Application
 import android.content.Context
 import androidx.test.core.app.ApplicationProvider
+import com.yarisdoctor.domain.drive.MILE_M
 import com.yarisdoctor.domain.drive.Poller
 import com.yarisdoctor.domain.health.Finding
 import com.yarisdoctor.domain.maintenance.Fill
@@ -17,6 +18,7 @@ import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -52,15 +54,15 @@ class DbTest {
         )
         for ((t, odo) in own) db.sample(t, 50, 250, false, odo)
 
-        // Another phone's log, with its own odometer scale and two regens of its own
+        // Another phone in the same car, logging the same odometer: alongside this one at times, alone at others
         val peer = listOf(
-            B + 5 * MIN to 0.0,
-            B + HOUR to 3_000.0,
-            B + 2 * HOUR + 5 * MIN to 9_000.0,
-            B + 3 * HOUR + 30 * MIN to 15_000.0,
-            B + 10 * HOUR to 15_000.0,
-            B + 19 * HOUR to 15_000.0,
-            B + 20 * HOUR + 30 * MIN to 17_000.0,
+            B + 5 * MIN to 1_500.0,
+            B + HOUR to 14_000.0,
+            B + 2 * HOUR + 5 * MIN to 21_000.0,
+            B + 3 * HOUR + 30 * MIN to 28_000.0,
+            B + 10 * HOUR to 44_000.0,
+            B + 19 * HOUR to 45_000.0,
+            B + 20 * HOUR + 30 * MIN to 47_000.0,
         )
         val samples = JSONArray()
         peer.forEachIndexed { i, (t, odo) -> samples.put(JSONArray().put("P2").put(i + 1).put(t).put(50).put(250).put(0).put(odo)) }
@@ -68,8 +70,10 @@ class DbTest {
             .put(JSONArray().put("P2").put(1).put(B + 2 * HOUR).put(B + 2 * HOUR + 11 * MIN).put(70).put(30))
             .put(JSONArray().put("P2").put(2).put(B + 20 * HOUR).put(B + 20 * HOUR + 9 * MIN).put(75).put(40)))
 
-        fun odoAt(rows: List<Pair<Long, Double>>, t: Long) = rows.lastOrNull { it.first <= t }?.second ?: rows.first().second
-        fun gap(t0: Long, t1: Long) = listOf(own, peer).sumOf { maxOf(0.0, odoAt(it, t1) - odoAt(it, t0)) }
+        // The car's odometer at t: the newest reading by then from either phone, else the first one after
+        val all = (own + peer).sortedBy { it.first }
+        fun odoAt(t: Long) = all.lastOrNull { it.first <= t }?.second ?: all.first().second
+        fun gap(t0: Long, t1: Long) = maxOf(0.0, odoAt(t1) - odoAt(t0))
 
         val expected = listOf(
             Triple(B + 10 * MIN, B + 20 * MIN, null as Double?),
@@ -83,8 +87,9 @@ class DbTest {
         expected.forEachIndexed { i, (_, _, g) ->
             if (g == null) assertNull(actual[i].gapM) else assertEquals(g, actual[i].gapM!!, 1e-9)
         }
-        assertEquals(0.0, actual[4].gapM!!, 1e-9) // both phones were parked: an idle gap counts nothing
-        assertEquals(7_000.0, db.metresSinceRegen()!!, 1e-9) // 5 km here + 2 km there since the last regen ended
+        assertEquals(0.0, actual[4].gapM!!, 1e-9) // parked: an idle gap counts nothing
+        assertEquals(5_000.0, db.metresSinceRegen()!!, 1e-9) // the car went 45 → 50 km since the last regen ended, whichever phone saw it
+        assertEquals(15_000.0, gap(B + 20 * MIN, B + 2 * HOUR), 1e-9) // both phones on that stretch: counted once, not twice
     }
 
     @Test fun tripStartIsTheFirstFrameOfTheNewestRun() {
@@ -98,9 +103,9 @@ class DbTest {
         // Two trips: B..B+2m and B+1h..B+1h+1m
         for (t in listOf(B, B + MIN, B + 2 * MIN, B + HOUR, B + HOUR + MIN)) db.sample(t, 50, 250, false, t - B.toDouble())
         for (t in listOf(B, B + 3 * MIN, B + 30 * MIN, B + HOUR)) db.frame(t, "0C")
-        db.syncAlerts(B + MIN, listOf(Finding("keep", 1, "still on")))
-        db.syncAlerts(B + 2 * MIN, listOf(Finding("keep", 1, "still on"), Finding("gone", 1, "ended")))
-        db.syncAlerts(B + 3 * MIN, listOf(Finding("keep", 1, "still on")))
+        db.syncAlerts(B + MIN, listOf(Finding("keep", 1, "still on")), 0.0)
+        db.syncAlerts(B + 2 * MIN, listOf(Finding("keep", 1, "still on"), Finding("gone", 1, "ended")), 0.0)
+        db.syncAlerts(B + 3 * MIN, listOf(Finding("keep", 1, "still on")), 0.0)
 
         val trips = db.trips()
         assertEquals(2, trips.size)
@@ -237,10 +242,13 @@ class DbTest {
 
     /** One stored frame, as [Db.frames] receives a cycle's replies. */
     private fun Db.frame(t: Long, lid: String, hex: String = "0000") =
-        frames(t, mapOf((if (lid.length == 2) "21$lid" else lid) to "0000$hex"))
+        frames(t, mapOf((if (lid.length == 2) "21$lid" else lid) to "0000$hex"), 0.0)
 
     private fun Db.count(sql: String, args: Array<String>? = null): Int =
         readableDatabase.rawQuery(sql, args).use { it.moveToFirst(); it.getInt(0) }
+
+    private fun Db.doubles(sql: String): List<Double> =
+        readableDatabase.rawQuery(sql, null).use { c -> List(c.count) { c.moveToNext(); c.getDouble(0) } }
 
     private fun Db.string(sql: String, args: Array<String>? = null): String =
         readableDatabase.rawQuery(sql, args).use { it.moveToFirst(); it.getString(0) }
@@ -267,13 +275,70 @@ class DbTest {
         Prefs.put(ctx, Prefs.OIL_ODO, 12_345L)
         val db = Db(ctx, name)
         try {
-            assertEquals(8, db.readableDatabase.version)
+            assertEquals(9, db.readableDatabase.version)
             assertEquals(listOf(Job(1, LocalDate.of(2026, 3, 14).toEpochDay(), OIL, "", true, null, 12_345.0, 15_000, null)), db.jobs())
         } finally {
             db.close()
             ctx.deleteDatabase(name)
             Prefs.put(ctx, Prefs.OIL_AT, 0L)
         }
+    }
+
+    /**
+     * v8 → v9: the odometer probe's 0x611 frame (89,159 mi) moves the GPS history onto the car's odometer, every row by
+     * the same step; warnings get theirs at once, frames later in [Db.fillFrameOdo], and the hub is sent everything again.
+     */
+    @Test fun upgradeMovesTheHistoryOntoTheCarsOdometer() {
+        val name = "upgrade-odo-test.db"
+        ctx.deleteDatabase(name)
+        Db(ctx, name).apply {
+            val w = writableDatabase
+            // The v8 shape of the tables v9 changed
+            w.execSQL("DROP TABLE frame"); w.execSQL("CREATE TABLE frame(t INTEGER, lid TEXT, hex TEXT)")
+            w.execSQL("DROP TABLE alert"); w.execSQL("CREATE TABLE alert(id INTEGER PRIMARY KEY, key TEXT, level INTEGER, text TEXT, start_t INTEGER, end_t INTEGER)")
+            w.execSQL("DROP TABLE odometer")
+            for ((t, odo) in listOf(B to 100.0, B + MIN to 1_100.0, B + 2 * MIN to 2_100.0)) sample(t, 50, 250, false, odo)
+            regenEnd(regenStart(B, 100.0, 80), B + MIN, 1_100.0, 10)
+            w.execSQL("INSERT INTO alert(key, level, text, start_t, end_t) VALUES ('k', 1, 'x', ?, ?)", arrayOf(B + 30_000, B + 90_000))
+            w.execSQL("INSERT INTO frame VALUES (?, '0C', '0BB8')", arrayOf(B + 61_000))
+            w.execSQL("INSERT INTO frame VALUES (?, 'ODO:611', '6112100000400015C47 STOPPED')", arrayOf(B + 2 * MIN))
+            putFill(Fill(0, 100, 30.0, 5_000, 1_100.0))
+            w.version = 8
+            close()
+        }
+        Prefs.put(ctx, Prefs.SYNCED_ROWID, 99L)
+        Prefs.put(ctx, Prefs.ODO_FILLED, false)
+        Prefs.put(ctx, Prefs.ODO_FILLED_TO, 0L)
+        val db = Db(ctx, name)
+        try {
+            assertEquals(9, db.readableDatabase.version)
+            val car = (89_159 + 0.5) * MILE_M // the probe's mile; where in it is unknown, so its middle
+            val step = car - 2_100.0 // the GPS figure at the probe
+            assertEquals(B + 2 * MIN, db.odoRealFrom())
+            assertEquals(car, db.odometer(), 1e-6)
+            assertEquals(listOf(100.0 + step, 1_100.0 + step), db.doubles("SELECT odo_start FROM regen UNION ALL SELECT odo_end FROM regen"), )
+            assertEquals(listOf(100.0 + step, 1_100.0 + step), db.doubles("SELECT odo_start FROM alert UNION ALL SELECT odo_end FROM alert"))
+            assertEquals(1_100.0 + step, db.fills().single().odoM!!, 1e-6)
+            assertEquals(0L, Prefs.long(ctx, Prefs.SYNCED_ROWID)) // the hub gets every row again, now on the car's odometer
+            assertTrue(db.fillFrameOdo())
+            assertEquals(1_100.0 + step, db.doubles("SELECT odo_m FROM frame WHERE lid = '0C'").single(), 1e-6)
+        } finally {
+            db.close()
+            ctx.deleteDatabase(name)
+        }
+    }
+
+    @Test fun theFirstClusterReadMovesEveryRowAndLaterOnesDoNot() {
+        val db = db()
+        db.sample(B, 50, 250, false, 1_000.0)
+        db.frames(B, mapOf("210C" to "610C0BB8"), 1_000.0)
+        db.odometerRead(B + MIN, 89_159, 1_500.0, 1_000_000.0)
+        assertEquals(listOf(1_000.0 + 998_500.0), db.doubles("SELECT odo_m FROM sample"))
+        assertEquals(listOf(1_000.0 + 998_500.0), db.doubles("SELECT odo_m FROM frame"))
+        db.odometerRead(B + 10 * MIN, 89_160, 1_001_000.0, 1_001_100.0) // a later read only narrows the mile
+        assertEquals(listOf(999_500.0), db.doubles("SELECT odo_m FROM sample"))
+        assertEquals(B + MIN, db.odoRealFrom())
+        assertEquals(B + 10 * MIN to 89_160L, db.lastClusterRead())
     }
 
     @Test fun jobsAreUpdatedAndDeletedById() {
@@ -304,7 +369,7 @@ class DbTest {
     @Test fun fuelLevelAndOdometerProbeAreKeptApart() {
         val db = db()
         assertNull(db.fuelLevel())
-        db.frames(5_000, mapOf("M29" to "61295A", "210C" to "610C0BB8"))
+        db.frames(5_000, mapOf("M29" to "61295A", "210C" to "610C0BB8"), 0.0)
         assertEquals(5_000L to 45.0, db.fuelLevel())
         db.odoProbe(6_000, mapOf("ODO:7E0:2128" to "", "ODO:611" to "6110000A1B2C"), 152_340.04)
         assertEquals(listOf(

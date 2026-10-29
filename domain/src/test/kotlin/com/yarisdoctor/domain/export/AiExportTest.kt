@@ -44,7 +44,9 @@ class AiExportTest {
         private val ash: List<AiExport.AshRow> = emptyList(),
         private val cals: List<AiExport.CalRow> = emptyList(),
         private val probes: List<AiExport.ProbeRow> = emptyList(),
+        private val odoReads: List<AiExport.OdoRow> = emptyList(),
     ) : AiExport.Source {
+        override fun odometerReads(emit: (AiExport.OdoRow) -> Unit) = odoReads.forEach(emit)
         override fun trips(emit: (AiExport.TripRow) -> Unit) = trips.forEach(emit)
         override fun regens(emit: (AiExport.RegenRow) -> Unit) = regens.forEach(emit)
         override fun alerts(emit: (AiExport.AlertRow) -> Unit) = alerts.forEach(emit)
@@ -94,7 +96,7 @@ class AiExportTest {
     @Test fun `file is a self-describing markdown document`() {
         val md = render()
         assertTrue(md.startsWith("---\nformat: yaris-doctor-ai-export\n"))
-        assertTrue(md.contains("format_version: 1\n"))
+        assertTrue(md.contains("format_version: 2\n"))
         assertTrue(md.contains("timezone: \"Europe/Rome\"\n"))
         assertTrue(md.contains("model_year: \"2011-2014\"\n"))
         assertTrue(md.contains("  readings_this_phone: 3\n"))
@@ -139,6 +141,23 @@ class AiExportTest {
         assertTrue(md.contains("_No ash record reads logged._"))
         assertTrue(md.contains("_No calibration ID recorded._"))
         assertTrue(md.contains("_No odometer probe run._"))
+    }
+
+    @Test fun `rows carry the odometer and say whether it is the car's or an estimate`() {
+        val car = 89_159.5 * 1609.344
+        val src = Source(
+            trips = listOf(AiExport.TripRow(1, start, start + 600_000, 1234.0, 40, 45, 1, 0, car - 1234.0, car)),
+            alerts = listOf(AiExport.AlertRow("boost_deviation", "warning", "Boost", start + 100_000, start + 200_000, car - 1000.0, car - 500.0)),
+            samples = listOf(AiExport.SampleRow(start, 40, 200, false, car - 1234.0), AiExport.SampleRow(start + 600_000, 41, 205, false, car)),
+            odoReads = listOf(AiExport.OdoRow(start + 600_000, 89_159, car)),
+        )
+        val md = render(meta().copy(odoRealFrom = start + 600_000), src)
+        assertTrue(md.contains("odometer: \"the car's, read from the instrument cluster since 2026-09-01T10:10:00+02:00; earlier rows are estimates\""))
+        assertTrue(md.contains("2026-09-01T10:00:00+02:00,40,200,0,143487.072,89158.733,estimate\n")) // before the first read
+        assertTrue(md.contains("2026-09-01T10:10:00+02:00,41,205,0,143488.306,89159.500,car\n")) // 89,159 mi and half a mile
+        assertTrue(md.contains(",Boost,89158.9,89159.2,estimate\n"))
+        assertTrue(md.contains("2026-09-01T10:10:00+02:00,89159,89159.500\n"))
+        assertTrue(md.contains("| Odometer at the last reading | 89159.5 mi (143488.3 km, car) |"))
     }
 
     @Test fun `odometer probe answers are listed raw`() =

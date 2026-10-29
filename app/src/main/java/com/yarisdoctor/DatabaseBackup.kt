@@ -14,13 +14,16 @@ import java.io.File
 object DatabaseBackup {
 
     /** The tables a snapshot must hold, in the order [restore] copies them. */
-    private val TABLES = listOf("sample", "regen", "frame", "alert", "link", "peer_sample", "peer_regen", "maintenance", "fuel")
+    private val TABLES = listOf("sample", "regen", "frame", "alert", "link", "peer_sample", "peer_regen", "maintenance", "fuel", "odometer")
 
     /** Tables newer than [OLDEST], by the schema version that added them: an older snapshot lacks them. */
-    private val ADDED = mapOf("maintenance" to 7, "fuel" to 8)
+    private val ADDED = mapOf("maintenance" to 7, "fuel" to 8, "odometer" to 9)
 
-    /** The oldest snapshot [restore] takes: its other tables have the same columns as now. */
+    /** The oldest snapshot [restore] takes. Columns added since (v9's odometers) are copied where the snapshot has them. */
     private const val OLDEST = 6
+
+    /** The first schema whose odometers are the car's: an older snapshot is moved onto it after the copy. */
+    private const val CAR_ODOMETER = 9
 
     /** What a restore put back: this phone's readings, its regens, the engine frames and the warnings. */
     data class RestoreResult(val readings: Int, val regens: Int, val frames: Int, val warnings: Int)
@@ -71,6 +74,7 @@ object DatabaseBackup {
      */
     fun restore(db: Db, from: File): RestoreResult {
         validate(db, from)
+        val version = openReadOnly(from).use { it.version }
         val live = db.writableDatabase
         // ATTACH takes a plain filename; the snapshot was closed by validate(), so the path is free
         try {
@@ -85,8 +89,11 @@ object DatabaseBackup {
                     // A snapshot from before the table existed: the phone keeps its own rows (the logbook, fill-ups), rather than none
                     if (!hasTable(live, table, "src")) continue
                     live.execSQL("DELETE FROM main.$table")
-                    live.execSQL("INSERT INTO main.$table SELECT * FROM src.$table")
+                    // By name, the columns both have: a v8 frame or alert has no odometer yet (filled in below)
+                    val cols = columns(live, table, "src").filter { it in columns(live, table, "main") }.joinToString(", ")
+                    live.execSQL("INSERT INTO main.$table ($cols) SELECT $cols FROM src.$table")
                 }
+                if (version < CAR_ODOMETER) db.restoredFromBeforeOdometer(live)
                 live.setTransactionSuccessful()
             } finally {
                 live.endTransaction()
@@ -128,6 +135,9 @@ object DatabaseBackup {
 
     private fun hasTable(db: SQLiteDatabase, table: String, schema: String = "main"): Boolean =
         db.rawQuery("SELECT 1 FROM $schema.sqlite_master WHERE type = 'table' AND name = ?", arrayOf(table)).use { it.moveToFirst() }
+
+    private fun columns(db: SQLiteDatabase, table: String, schema: String): List<String> =
+        db.rawQuery("PRAGMA $schema.table_info($table)", null).use { c -> List(c.count) { c.moveToNext(); c.getString(1) } }
 
     private fun count(db: SQLiteDatabase, table: String): Int =
         db.rawQuery("SELECT COUNT(*) FROM $table", null).use { it.moveToFirst(); it.getInt(0) }

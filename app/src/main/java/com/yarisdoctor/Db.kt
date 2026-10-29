@@ -23,6 +23,8 @@ import com.yarisdoctor.domain.health.dpfConditions
 import com.yarisdoctor.domain.health.OIL_CHANGE_KM
 import com.yarisdoctor.domain.health.restriction
 import com.yarisdoctor.domain.maintenance.Fill
+import com.yarisdoctor.domain.maintenance.matchRefill
+import com.yarisdoctor.domain.maintenance.refills
 import com.yarisdoctor.domain.maintenance.Job
 import com.yarisdoctor.domain.maintenance.OIL
 import com.yarisdoctor.domain.model.Alert
@@ -34,6 +36,7 @@ import com.yarisdoctor.domain.model.Trip
 import com.yarisdoctor.domain.model.TripStats
 import com.yarisdoctor.domain.repo.DriveStore
 import java.time.Instant
+import java.time.LocalDate
 import java.time.ZoneId
 import java.util.Locale
 import org.json.JSONArray
@@ -94,6 +97,28 @@ class Db internal constructor(private val ctx: Context, name: String?) : SQLiteO
     }
 
     fun deleteFill(id: Long) = writableDatabase.delete("fuel", "id = ?", arrayOf(id.toString()))
+
+    /**
+     * This phone's GPS odometer at the stop where the meter saw a fill-up of [litres] on [day] (epoch day, the phone's
+     * zone), or null when it saw none: the fill-up is usually logged later, after driving on. The reads reach back two
+     * days, as the last one before the stop can be from an earlier drive.
+     */
+    fun fillOdometer(day: Long, litres: Double): Double? {
+        val zone = ZoneId.systemDefault()
+        val from = LocalDate.ofEpochDay(day - 2).atStartOfDay(zone).toInstant().toEpochMilli()
+        val to = LocalDate.ofEpochDay(day + 1).atStartOfDay(zone).toInstant().toEpochMilli()
+        val levels = readableDatabase.rawQuery("SELECT t, hex FROM frame WHERE lid = ? AND t >= ? AND t < ? ORDER BY t",
+            arrayOf(Meter.FUEL, from.toString(), to.toString())).use {
+            val out = ArrayList<Pair<Long, Double>>()
+            while (it.moveToNext()) Meter.litres(it.getString(1))?.let { l -> out += it.getLong(0) to l }
+            out
+        }
+        val r = matchRefill(refills(levels), day, litres, zone) ?: return null
+        // The newest reading before the engine came back on: where the car stood at the pump
+        return readableDatabase.rawQuery("SELECT MAX(odo_m) FROM sample WHERE t < ?", arrayOf(r.after.toString())).use {
+            if (it.moveToFirst() && !it.isNull(0)) it.getDouble(0) else null
+        }
+    }
 
     /** The logbook ([Job]): day is an epoch day, km the car's odometer, odo_m this phone's GPS odometer when logged. */
     private fun createMaintenance(db: SQLiteDatabase) =

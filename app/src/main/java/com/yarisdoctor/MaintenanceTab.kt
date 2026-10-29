@@ -215,8 +215,11 @@ class MaintenanceTab(private val a: ComponentActivity, private val ui: Ui) {
             val p = decimal(paid.text.toString())?.takeIf { it <= 10_000 } ?: return@setOnClickListener toast("Paid: the total, e.g. 64.90")
             dialog.dismiss()
             saveFill { db ->
-                // The GPS odometer only means something on the day it was read: kept for an unmoved line, read now for today
-                val odoM = if (f.id != 0L && f.day == day) f.odoM else if (day == LocalDate.now().toEpochDay()) db.odometer() else null
+                // Where the meter saw the tank fill on that day, so logging it after driving on doesn't move it (re-saving an
+                // older line corrects it too). Without that, the GPS odometer only means something on the day it was read:
+                // kept for an unmoved line, read now for today
+                val odoM = db.fillOdometer(day, l)
+                    ?: if (f.id != 0L && f.day == day) f.odoM else if (day == LocalDate.now().toEpochDay()) db.odometer() else null
                 db.putFill(Fill(f.id, day, l, (p * 100).roundToLong(), odoM))
             }
         }

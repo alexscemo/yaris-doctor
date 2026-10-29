@@ -8,7 +8,8 @@ class Meter(private val link: ObdLink) {
 
     /**
      * The meter's `21 29` reply ("6129" + one byte), or null. Techstream's database: "Fuel Input", byte × 0.5 L; the
-     * meter lists LID 29 as supported, but no reply has been seen on the car yet, so it is stored raw (see [litres]).
+     * meter lists LID 29 as supported. Confirmed on the car 29 Oct 2026: 6.5 L before a fill-up, 39 L after (34.7 L put in);
+     * a full tank reads flat at ~39 L and the level swings ~3.5 L while driving. Stored raw (see [litres]).
      */
     fun fuel(): String? = try {
         if (link.send("AT SH 7C0") != "OK" || link.send("AT CRA 7C8") != "OK") null
@@ -58,7 +59,7 @@ class Meter(private val link: ObdLink) {
 
         fun fuelOk(r: String?) = r != null && r.length == 6 && r.startsWith("6129") && r.all { it in '0'..'9' || it in 'A'..'F' }
 
-        /** Litres from the stored payload byte (hex after `61 29`). Unconfirmed on the car. */
+        /** Litres from the stored payload byte (hex after `61 29`). Confirmed on the car, 29 Oct 2026. */
         fun litres(hex: String): Double? = hex.take(2).toIntOrNull(16)?.let { it * 0.5 }
 
         /** The 0x611 lines in order with repeats dropped: the odometer changes rarely, so this stays short. */

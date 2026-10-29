@@ -4,6 +4,19 @@ All notable changes to Yaris Doctor. The format follows [Keep a Changelog](https
 versions follow [Semantic Versioning](https://semver.org/). Each release's GitHub notes are its section below, so a tag
 without a section here fails the release build.
 
+## [Unreleased]
+
+### Fixed
+
+- **Fill-up mileage:** a fill-up logged after driving on was stored at the mileage of the moment you saved it, not where
+  you filled up. It now takes the mileage at the stop where the tank's level jumped, read from the instrument cluster.
+  To correct one logged before this, open it in the Maintenance tab and tap Save.
+
+### Changed
+
+- The fuel level read from the cluster is confirmed on the car: byte × 0.5 L matched a real fill-up (32.5 L seen for
+  34.7 L put in; a full tank reads about 39 L).
+
 ## [1.1.0] - 2026-10-28
 
 Fuel: what's in the tank, what the engine burns, and what you spend on it.

@@ -167,7 +167,7 @@ class DatabaseBackupTest {
         val fresh = Db(context, null)
         try {
             assertEquals(DatabaseBackup.RestoreResult(0, 0, 0, 0), DatabaseBackup.restore(fresh, snapshot))
-            assertEquals(8, fresh.readableDatabase.version)
+            assertEquals(9, fresh.readableDatabase.version)
         } finally {
             fresh.close()
         }

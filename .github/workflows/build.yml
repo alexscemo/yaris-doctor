@@ -23,13 +23,7 @@ jobs:
       # Caches Gradle; the wrapper (8.11.1, committed) decides the version
       - uses: gradle/actions/setup-gradle@v4
 
-      - run: |
-          set +e
-          ./gradlew test lint assembleDebug --continue 2>&1 | tee build.log
-          s=${PIPESTATUS[0]}
-          grep -E '^e: |FAILED|Exception|Error:|expected:<' build.log | head -60 | while IFS= read -r l; do echo "::error::$l"; done
-          find . -path '*build/reports/lint-results*.txt' -exec grep -E 'Error:' {} + | head -20 | while IFS= read -r l; do echo "::error::$l"; done
-          exit $s
+      - run: ./gradlew test lint assembleDebug
       - uses: actions/upload-artifact@v4
         with:
           name: debug-apk

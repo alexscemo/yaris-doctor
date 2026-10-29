@@ -9,6 +9,8 @@ without a section here fails the release build.
 The car's own odometer replaces GPS: every reading, regen, engine frame and warning now carries the mileage it happened
 at.
 
+It also brings 1.1.1's fill-up fix to the phone: that release was published without its APK.
+
 ### Added
 
 - **The car's odometer, read from the dashboard.** The instrument cluster broadcasts it in whole miles; the app listens
@@ -28,6 +30,10 @@ at.
   row was shifted to match: the log now runs from about 88,812 mi (20 Oct). Those older figures are estimates (the
   phone's GPS distance, counted back from that reading) and are marked as such in the export.
 - Two phones on the same drive no longer count its distance twice: the car has one odometer.
+
+### Fixed
+
+- **Releases from a tag typed with a capital V** (`V1.2.0`) now build: they used to be skipped, so the release had no APK.
 
 ### Upgrade notes
 

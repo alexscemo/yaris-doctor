@@ -4,6 +4,32 @@ All notable changes to Yaris Doctor. The format follows [Keep a Changelog](https
 versions follow [Semantic Versioning](https://semver.org/). Each release's GitHub notes are its section below, so a tag
 without a section here fails the release build.
 
+## [1.2.1] - 2026-10-30
+
+Regens are counted properly: two on one trip are no longer shown as one, and the regen flag comes from a steadier signal.
+
+### Fixed
+
+- **Two regens on one trip showed as one.** The regen list treated a later burn as the same one carrying on after an
+  ignition cycle whenever its soot hadn't dropped. A second burn now has to start within 5 points of where the first
+  ended. This is worked out when the list is read, so your history corrects itself: the two burns on the morning of
+  29 Oct now show separately.
+
+### Changed
+
+- **A new source for the regen flag.** It now reads After Injection Period, Toyota's own regen sign, instead of the VN
+  Turbo bit, which dropped out for seconds mid-burn and came on at every engine stop. Replayed over the 38 trips logged
+  from 21 to 29 Oct, it finds all 11 burns, one row each, and nothing else. Injection can pause for up to about 70 s
+  during a burn, so a regen ends after 90 s without it, with its end set back to the last injection. Stopping the engine
+  ends it at once.
+- The health check comparing the regen flag with that signal is gone, because they are now the same thing.
+
+### Upgrade notes
+
+- Regens logged before this version keep the times the old flag gave them.
+- The home hub has the same two-regens fix in its own update (`yaris-doctor-hub`). This version also works with the
+  older hub, which keeps showing those two burns as one until it is updated.
+
 ## [1.2.0] - 2026-10-29
 
 The car's own odometer replaces GPS: every reading, regen, engine frame and warning now carries the mileage it happened

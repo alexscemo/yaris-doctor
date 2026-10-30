@@ -14,7 +14,8 @@ class Recorder(private val db: RegenLog) {
     var lastT = 0L
         private set
 
-    fun record(t: Long, soot: Int?, temp: Int?, regen: Boolean?, odoM: Double) {
+    /** The end* values are where a closing regen really ended, when the signal only says so later. */
+    fun record(t: Long, soot: Int?, temp: Int?, regen: Boolean?, odoM: Double, endT: Long = t, endOdoM: Double = odoM, endSoot: Int? = soot) {
         lastT = t
         val isRegen = regen ?: inRegen // keep last state on a failed read, like DPFViewer
         db.sample(t, soot, temp, isRegen, odoM)
@@ -23,7 +24,7 @@ class Recorder(private val db: RegenLog) {
             regenStart = t
             regenSootStart = soot
         } else if (!isRegen && inRegen) {
-            db.regenEnd(regenId, t, odoM, soot)
+            db.regenEnd(regenId, endT, endOdoM, endSoot)
             regenId = -1
         }
     }

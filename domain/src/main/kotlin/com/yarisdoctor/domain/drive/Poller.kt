@@ -86,7 +86,7 @@ class Poller(private val send: (String) -> String?) {
             // EGR target (2C) and actual position (EA) are compared by egr_tracking
             "212C", "21EA")
         /** Two per cycle, in turn. */
-        val MEDIUM = listOf("2104", "2105", "210B", "210F", "2111", "2124", "2134", "2142", "2149", "214A", "214C", "21AD", "21DA", "21DE", "21E6", "21EE")
+        val MEDIUM = listOf("2104", "2105", "210B", "210F", "2111", "2124", "2134", "2142", "2149", "214A", "214C", "21DA", "21DE", "21DF", "21E6", "21EE")
         /** Counters and learned values: once a session, then every [SLOW_MS] ([ASH_MS] for the ash record). */
         val SLOW = listOf("211F", "2121", "2130", "2131", "2133", "214D", "214E", "21E1", "A918")
 

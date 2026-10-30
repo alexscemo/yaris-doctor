@@ -517,7 +517,7 @@ class Db internal constructor(private val ctx: Context, name: String?) : SQLiteO
         return TripStats(m, s0, s1, count("SELECT COUNT(*) FROM regen WHERE start_t >= ?"), count("SELECT COUNT(DISTINCT key) FROM alert WHERE start_t >= ?"))
     }
 
-    /** Deletes closed regens shorter than a minute that covered no distance: the engine-stop blip of the 21DF bit, not a burn. */
+    /** Deletes closed regens shorter than a minute that covered no distance: the engine-stop blip of the 21DF bit older builds logged, not a burn. */
     override fun dropStopBlips() = writableDatabase.execSQL(
         "DELETE FROM regen WHERE end_t IS NOT NULL AND end_t - start_t < 60000 AND COALESCE(odo_end, odo_start, 0) - COALESCE(odo_start, 0) < 50",
     )

@@ -19,7 +19,7 @@ interface DriveStore : RegenLog {
      */
     fun odometerRead(t: Long, miles: Long, before: Double, after: Double) {}
 
-    /** Deletes closed regens under a minute with no distance: the engine-stop blip of the regen bit, not a burn. */
+    /** Deletes closed regens under a minute with no distance: the engine-stop blip of the regen bit older builds logged, not a burn. */
     fun dropStopBlips()
 
     /** The newest [n] regens with their soot floor and peak temperature filled in, oldest first. */

@@ -65,7 +65,7 @@ class Sim(
                 "0C" -> put(0, rpm * 4, 2)
                 "0D" -> put(0, kmh)
                 "DD" -> put(17, (r.soot / 2).coerceIn(0, 255))
-                "DF" -> { put(9, if (r.regen) 2 else 0); put(14, if (r.regen) 1 else 0) } // byte 16 of the reply: the regen flag
+                "DF" -> { put(9, if (r.regen) 2 else 0); put(14, if (r.regen) 1 else 0) } // byte 16 of the reply: the bit older builds logged
                 "AD" -> {
                     put(6, if (r.regen) 500 else 0, 2) // After Injection Period, µs: Toyota's own regen sign
                     put(20, injectionRaw(rpm, kmh), 2) // Injection Volume, so the consumption tile moves

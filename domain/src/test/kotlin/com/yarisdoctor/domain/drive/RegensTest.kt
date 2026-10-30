@@ -61,6 +61,15 @@ class RegensTest {
         assertEquals(listOf(0L, 11 * m), merged.map { it.start })
     }
 
+    @Test fun mergeSameBurnKeepsASecondBurnWhenTheSootJumped() {
+        val m = 60_000L
+        val merged = mergeSameBurn(listOf(
+            Regen(0, 13 * m, null, 100, 10),
+            Regen(42 * m, 56 * m, null, 90, 10), // the 29 Oct drive: two full burns, 29 min apart
+        ))
+        assertEquals(listOf(0L, 42 * m), merged.map { it.start })
+    }
+
     @Test fun mergeSameBurnKeepsBurnsOverHalfAnHourApart() {
         val m = 60_000L
         val merged = mergeSameBurn(listOf(

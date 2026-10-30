@@ -169,28 +169,6 @@ class ChecksTest {
         assertEquals(setOf("soot_critical"), found(true, 180))
     }
 
-    @Test fun regenFlagMustAgreeWithAfterInjection() {
-        val inject = replies(Triple("AD", 6, 0x01), Triple("AD", 7, 0xF4)) // 500 µs
-        val none = replies()
-        /** Feeds a cycle every 18 s (the AD read interval) for [mins]; [aip] picks the reply per cycle. Returns the last findings. */
-        fun run(regen: Boolean, mins: Int, aip: (Int) -> Map<String, String>): Set<String> {
-            val c = Checker()
-            var f = emptySet<String>()
-            for (i in 0..mins * 60 / 18) f = keys(c.check(i * 18_000L, aip(i), regen))
-            return f
-        }
-        // Agreeing: a regen with the odd 0 read (overrun), or no regen and no after injection
-        assertTrue("regen_flag_check" !in run(true, 10) { if (it % 4 == 0) none else inject })
-        assertTrue("regen_flag_check" !in run(false, 10) { none })
-        // A wrong regen byte: the ECU after-injects for a whole regen while the flag stays off, dips included
-        assertTrue("regen_flag_check" in run(false, 6) { if (it % 4 == 0) none else inject })
-        // ... but a short purge doesn't warn
-        assertTrue("regen_flag_check" !in run(false, 10) { if (it in 5..8) inject else none })
-        // Flag stuck on with no after injection
-        assertTrue("regen_flag_check" in run(true, 6) { none })
-        assertTrue("regen_flag_check" !in run(true, 4) { none })
-    }
-
     @Test fun ecuOverfillFlagWarns() {
         val c = Checker()
         val overfill = replies(Triple("E6", 3, 0x41 or 0x20)) // bit 26 = 0x20 of payload byte 3
@@ -293,7 +271,7 @@ class ChecksTest {
         }
         for ((key, _, about) in TREND_RULES) assertTrue(key, about.length <= 600)
         assertEquals("every cycle", Poller.pollRate("0C"))
-        assertEquals("every 8 cycles", Poller.pollRate("AD"))
+        assertEquals("every 8 cycles", Poller.pollRate("DF"))
         assertEquals("every 5 min", Poller.pollRate("E1"))
     }
 

@@ -84,7 +84,7 @@ class DriveSessionTest {
     }
 
     @Test fun aCycleWithoutAnRpmReplyKeepsTheRegenStateOnTheScreens() {
-        // From 10 s on, 21DF still answers and 210C doesn't: the recorder keeps the burn open, and so must the screens
+        // From 10 s on, 21AD still answers and 210C doesn't: the recorder keeps the burn open, and so must the screens
         session.drive(ScriptLink { if (it < 20_000) car(regen = true).let { r -> if (it < 10_000) r else r - "210C" } else null }) { true }
         assertTrue(session.inRegen)
         assertTrue(effects.live.last().regen)
@@ -160,27 +160,70 @@ class DriveSessionTest {
         assertTrue(store.frames > 5)
     }
 
-    @Test fun aRegenOpensAndClosesWithTheFlag() {
-        val link = ScriptLink { when { it < 20_000 -> car(soot = 80, temp = 600, regen = true); it < 40_000 -> car(soot = 16); else -> null } } // even: the frame holds soot / 2
+    @Test fun aRegenClosesAtItsLastAfterInjectionOnceTheHoldHasPassed() {
+        val link = ScriptLink {
+            when {
+                it < 20_000 -> car(soot = 80, temp = 600, regen = true)
+                it < 40_000 -> car(soot = 16, temp = 600, regen = true) // even: the frame holds soot / 2
+                it < 140_000 -> car(soot = 40)
+                else -> null
+            }
+        }
         session.drive(link) { true }
         val r = log.regens.single()
         assertEquals(80, r[2])
-        assertEquals(16, r[5])
+        assertEquals(16, r[5]) // the soot at the burn's end, not after the hold
+        assertTrue(r[3] as Long in 37_000L..40_000L) // a cycle takes ~1.5 s on this fake clock
         assertFalse(session.inRegen)
         assertTrue("regen" in effects.events)
         assertEquals("hidden", effects.events.last())
     }
 
-    @Test fun theRegenBitWithTheEngineStoppedIsNotARegen() {
+    @Test fun aPauseInAfterInjectionDoesNotSplitTheBurn() {
+        // The ECU stops after-injecting on overrun for up to ~70 s mid-burn
+        val link = ScriptLink { if (it in 20_000 until 90_000) car() else if (it < 120_000) car(regen = true) else null }
+        session.drive(link) { true }
+        assertEquals(1, log.regens.size)
+        assertTrue(session.inRegen)
+    }
+
+    @Test fun theOldTurboBitAloneIsNotARegen() {
+        val link = ScriptLink { if (it < 20_000) car() + ("21DF" to car(regen = true).getValue("21DF")) else null }
+        session.drive(link) { true }
+        assertTrue(log.regens.isEmpty())
+    }
+
+    @Test fun aRegenClosesAtOnceWhenTheEngineStops() {
+        val link = ScriptLink { if (it < 20_000) car(regen = true) else if (it < 30_000) car() + ("210C" to "610C0000") else null }
+        session.drive(link) { true }
+        assertFalse(session.inRegen)
+        assertTrue(log.regens.single()[3] as Long in 17_000L..20_000L) // a cycle takes ~1.5 s on this fake clock
+    }
+
+    @Test fun aQuickRestartAfterAnEngineStopIsNotARegen() {
+        val link = ScriptLink {
+            when {
+                it < 20_000 -> car(regen = true)
+                it < 30_000 -> car() + ("210C" to "610C0000")
+                it < 50_000 -> car() // running again, inside what would have been the hold, with no after injection
+                else -> null
+            }
+        }
+        session.drive(link) { true }
+        assertEquals(1, log.regens.size)
+        assertFalse(session.inRegen)
+    }
+
+    @Test fun afterInjectionWithTheEngineStoppedIsNotARegen() {
         val link = ScriptLink { if (it < 20_000) car(regen = true) + ("210C" to "610C0000") else null }
         session.drive(link) { true }
         assertTrue(log.regens.isEmpty())
         assertFalse("regen" in effects.events)
     }
 
-    @Test fun theRegenBitWithoutAnRpmReplyNeitherOpensNorClosesARegen() {
+    @Test fun afterInjectionWithoutAnRpmReplyNeitherOpensNorClosesARegen() {
         session.drive(ScriptLink { if (it < 20_000) car(regen = true) - "210C" else null }) { true }
-        assertTrue(log.regens.isEmpty()) // ignition off mid-cycle: 21DF answered, 210C didn't
+        assertTrue(log.regens.isEmpty()) // ignition off mid-cycle: 21AD answered, 210C didn't
         session.drive(ScriptLink { if (it < 40_000) car(regen = true).let { r -> if (it < 30_000) r else r - "210C" } else null }) { true }
         assertEquals(1, log.regens.size)
         assertTrue(session.inRegen) // a missed rpm read mid-regen keeps it open

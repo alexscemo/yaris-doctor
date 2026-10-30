@@ -29,7 +29,6 @@ class Checker(private val model2015: Boolean = false) {
     private val coolant = ArrayDeque<Pair<Long, Double>>()      // last 2 min
     private var now = 0L
     private var inRegen = false
-    private var injectedAt = Long.MIN_VALUE / 2 // last read with After Injection Period above 0
 
     /** Latest value of [name] if read in the last few minutes (slow items are read every 5). */
     private fun v(name: String): Double? = values[name]?.takeIf { now - it.first <= STALE_MS }?.second
@@ -51,7 +50,6 @@ class Checker(private val model2015: Boolean = false) {
             if (values[p.name]?.first == t) continue
             p.decode(reply.substring(4))?.let { values[p.name] = t to it }
         }
-        values["After Injection Period"]?.let { (rt, x) -> if (x > 0) injectedAt = rt }
         v("Coolant Temp")?.let { coolant.addLast(t to it) }
         while (coolant.isNotEmpty() && t - coolant.first().first > 120_000) coolant.removeFirst()
 
@@ -65,8 +63,6 @@ class Checker(private val model2015: Boolean = false) {
 
     companion object {
         private const val STALE_MS = 6 * 60_000L
-        /** After injection drops to 0 for single reads mid-regen (overrun, idle): up to 55 s on the owner's car, read every ~18 s. */
-        private const val INJECT_GAP_MS = 90_000L
         private fun f0(x: Double) = "%.0f".format(x)
         private fun f1(x: Double) = "%.1f".format(x)
 
@@ -179,15 +175,6 @@ class Checker(private val model2015: Boolean = false) {
             Rule("rough_idle", "ECU: rough running", WARN, 0, "The ECU flags rough running on one of the four cylinders.", listOf("Rough Idle #1", "Rough Idle #2", "Rough Idle #3", "Rough Idle #4")) {
                 val bad = (1..4).filter { on("Rough Idle #$it") }
                 if (bad.isEmpty()) null else "The ECU detects rough running on cylinder ${bad.joinToString(", ")}."
-            },
-            Rule("regen_flag_check", "Regen flag disagrees with the ECU", WARN, 300_000, "The app's regen flag (21DF byte 16) and After Injection Period disagree for 5 min with the engine running: after injection with the flag off, or the flag on with none for 90 s. Toyota 1ND-TV manual: after injection is 0 except during PM, NOx or sulphur regeneration, so it is Toyota's own regen sign; NOx purges last seconds. Mid-regen it drops to 0 for up to 55 s on the owner's car, and it is read every ~18 s. A car whose ECU puts the regen bit elsewhere shows up here.", listOf("After Injection Period", "Engine Speed")) {
-                if (v("After Injection Period") == null || !running) return@Rule null
-                val injecting = now - injectedAt <= INJECT_GAP_MS
-                when {
-                    injecting && !inRegen -> "The ECU is after-injecting (a regen) but the app's regen flag is off: regens on this car may go unrecorded."
-                    inRegen && !injecting -> "The app's regen flag is on but the ECU isn't after-injecting: the app may be recording regens that aren't happening."
-                    else -> null
-                }
             },
             Rule("dtc", "Stored fault codes", WARN, 0, "One or more fault codes stored in the engine ECU, including history codes.", listOf("# Codes(Include History)")) { v("# Codes(Include History)")?.takeIf { it > 0 }?.let { "${f0(it)} fault code${if (it > 1) "s are" else " is"} stored in the engine ECU." } },
         )

@@ -22,9 +22,9 @@ fun mergeRegens(rows: List<Regen>): List<Regen> {
 
 /**
  * [rows] sorted by start. Two finished regens are the same burn split by an ignition cycle when the second starts within
- * [gapMs] of the first's end and its soot carries on from the first's (not materially lower: the ECU's floor reading is a
- * few points off). A burn does not restart within half an hour of stopping, so a drop means a real second burn. Open
- * regens are never merged. The merged row keeps the first start and soot start, the second end and soot end.
+ * [gapMs] of the first's end and its soot carries on from the first's (within 5 points: the ECU's floor reading is a few
+ * off). A drop or a jump means a real second burn: on 29 Oct one ended at 10 % and the next started at 90 %, 29 min later.
+ * Open regens are never merged. The merged row keeps the first start and soot start, the second end and soot end.
  */
 fun mergeSameBurn(rows: List<Regen>, gapMs: Long = 30 * 60_000L): List<Regen> {
     val out = mutableListOf<Regen>()
@@ -32,7 +32,7 @@ fun mergeSameBurn(rows: List<Regen>, gapMs: Long = 30 * 60_000L): List<Regen> {
         val last = out.lastOrNull()
         val end = last?.end
         val sameBurn = last != null && end != null && r.end != null && r.start - end in 0..gapMs &&
-            last.sootEnd != null && r.sootStart != null && r.sootStart >= last.sootEnd - 5
+            last.sootEnd != null && r.sootStart != null && r.sootStart - last.sootEnd in -5..5
         if (sameBurn) out[out.lastIndex] = last.copy(
             end = r.end,
             sootEnd = r.sootEnd,

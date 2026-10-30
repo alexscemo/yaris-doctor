@@ -1,5 +1,6 @@
 package com.yarisdoctor.domain.drive
 
+import com.yarisdoctor.domain.car.AFTER_INJECTION_HOLD_MS
 import com.yarisdoctor.domain.car.PID_REGEN
 import com.yarisdoctor.domain.car.PID_SOOT
 import com.yarisdoctor.domain.car.PID_TEMP
@@ -90,6 +91,10 @@ class DriveSession(
     private val notified = HashSet<String>()  // alert keys notified this drive: a value flapping around its limit notifies once
     private val showing = HashSet<String>()   // of those, the ones whose notification is still up
     private var lastSeen = 0L // last cycle the ECU answered
+    private var holdUntil = Long.MIN_VALUE
+    private var injectedAt = 0L // last cycle with after injection, and the odometer and soot then
+    private var injectedOdoM = 0.0
+    private var injectedSoot: Int? = null
 
     val inRegen get() = rec.inRegen
 
@@ -163,11 +168,10 @@ class DriveSession(
                 store.frames(t, replies, odoM)
                 val soot = replies[PID_SOOT]?.let(::sootOf)
                 val temp = replies[PID_TEMP]?.let(::tempOf)
-                // The bit set without an rpm reply in the same cycle is unknown: ignition off mid-cycle answers 21DF but not 210C (22 Oct, 17:53)
-                val regen = replies[PID_REGEN]?.let(::regenOf)?.let { on -> if (!on) false else replies["210C"]?.let { !engineStopped(it) } }
+                val regen = burning(t, replies, soot)
                 // The DPF log keeps its old pace (5 s, 1 s in regen); a regen start or end is written at once
                 if (t - lastSample >= (if (rec.inRegen) 1000 else 5000) || (regen != null && regen != rec.inRegen)) {
-                    publish(rec, soot, temp, regen)
+                    publish(rec, soot, temp, regen, injectedAt, injectedOdoM, injectedSoot)
                     lastSample = t
                 }
                 checks(t, checker.check(t, replies, rec.inRegen))
@@ -233,11 +237,31 @@ class DriveSession(
         }
     }
 
-    private fun publish(rec: Recorder, soot: Int?, temp: Int?, regen: Boolean?) {
+    /**
+     * Whether a burn is on, or null when this cycle can't tell: ignition off mid-cycle answers some requests but not 210C
+     * (22 Oct, 17:53). The burn's real end is the last after injection, kept for when [AFTER_INJECTION_HOLD_MS] has passed.
+     */
+    private fun burning(t: Long, replies: Map<String, String>, soot: Int?): Boolean? {
+        val injecting = replies[PID_REGEN]?.let(::regenOf) ?: return null
+        val rpm = replies["210C"] ?: return null
+        if (engineStopped(rpm)) {
+            holdUntil = Long.MIN_VALUE // a quick restart must not find the hold still running
+            return false
+        }
+        if (injecting) {
+            injectedAt = t
+            injectedOdoM = odoM
+            injectedSoot = soot ?: injectedSoot
+            holdUntil = t + AFTER_INJECTION_HOLD_MS
+        }
+        return t <= holdUntil
+    }
+
+    private fun publish(rec: Recorder, soot: Int?, temp: Int?, regen: Boolean?, endT: Long = now(), endOdoM: Double = odoM, endSoot: Int? = soot) {
         val was = rec.inRegen
-        rec.record(now(), soot, temp, regen, odoM)
+        rec.record(now(), soot, temp, regen, odoM, endT, endOdoM, endSoot)
         if (was && !rec.inRegen) {
-            store.dropStopBlips() // a blip that got past engineStopped() must not count as a regen in the interval checks
+            store.dropStopBlips() // a blip must not count as a regen in the interval checks
             trend = history() // a regen just finished: interval and length are known
         }
         if (rec.inRegen) effects.regen(rec.regenStart, rec.regenSootStart, soot, temp) else effects.regenHidden()

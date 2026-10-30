@@ -36,7 +36,7 @@ class SimTest {
         assertEquals("600.0 °C", v("Exhaust Temperature B1S2"))
         assertEquals(600, tempOf(frames.getValue("21F1")))
         assertEquals(64, sootOf(frames.getValue("21DD")))
-        assertEquals(true, regenOf(frames.getValue("21DF")))
+        assertEquals(true, regenOf(frames.getValue("21AD")))
     }
 
     @Test fun idleFixtureMatchesTheTable() {
